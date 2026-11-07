@@ -13,10 +13,10 @@ class InsertPatchInterior(AbstractFVActionSet):
 
     Copies solver._patch_interior, i.e. the result of
     exahype2.api.fv.actionsets.UpdateCellInterior, into the patch interior
-    of solver._patch. Afterwards, the first entry of solver._max_eigenvalue_and_time_step_sizes
-    holds the maximum of its first entry (the maximum eigenvalue of the
-    shell) and its third entry (the maximum eigenvalue of the patch
-    interior), i.e. the maximum eigenvalue of the whole patch (@see
+    of solver._patch. The patch
+    then is the updated patch of the whole cell, so
+    exahype2.api.fv.actionsets.ComputeMaxEigenvalue can determine its
+    maximum eigenvalue (@see
     exahype2.api.fv.RusanovWithOptimisticExplicitEuler).
 
     If the patch interior is updated by a task (@see
@@ -62,7 +62,6 @@ class InsertPatchInterior(AbstractFVActionSet):
         if operation_name == peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
             unknowns = self._solver.unknowns
             interior_size = self.patch_size - 2 * self.overlap
-            max_eigenvalue = f"fineGridCell{self._solver._max_eigenvalue_and_time_step_sizes.name}"
             if self.task_number is not None:
                 result = wait_for_patch_interior_update(self._solver, self.task_number)
             result += f"""
@@ -74,8 +73,6 @@ class InsertPatchInterior(AbstractFVActionSet):
       fineGridCell{self._solver._patch.name}.value[patchVolumeSerialised*{unknowns}+j] = fineGridCell{self._solver._patch_interior.name}.value[interiorVolumeSerialised*{unknowns}+j];
     }}
   }}
-
-  {max_eigenvalue}.setMaxEigenvalue( 0, std::max( {max_eigenvalue}.getMaxEigenvalue(0), {max_eigenvalue}.getMaxEigenvalue(2) ) );
 """
         return result
 

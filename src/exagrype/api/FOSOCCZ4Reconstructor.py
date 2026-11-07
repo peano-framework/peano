@@ -209,6 +209,7 @@ class FOSOCCZ4Reconstructor:
             f"fineGridCell{derivatives.patch.name}.value);"
         )
 
+        ## Stages is the Runge-Kutta stages or 1 for FV
         for stage in range(stages):
             stage_input = solver._patch if stage == 0 else solver._stage_input
             suffix = f" stage {stage}" if per_stage else ""

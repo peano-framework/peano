@@ -12,6 +12,8 @@ from .ProjectPatchOntoFaces import ProjectPatchOntoFaces
 from .UpdateCell import UpdateCell
 from .UpdateCellGPU import UpdateCellGPU
 from .ComputeGlobalCFLCondition import ComputeGlobalCFLCondition
+from .ComputeMaxEigenvalue import ComputeMaxEigenvalue
+from .ReduceMaxEigenvalue import ReduceMaxEigenvalue
 from .UpdateCellInterior import UpdateCellInterior
 from .UpdateCellShell import UpdateCellShell
 from .InsertPatchInterior import InsertPatchInterior

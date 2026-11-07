@@ -46,31 +46,26 @@ and innovation programme under grant agreement No 671698 (ExaHyPE).
   - \subpage page_exahype2_numerics_Runge-Kutta
   - \subpage page_exahype2_numerics_ADER-DG
 - Core functionality, numerics and ingredients
-  - \subpage page_exahype2_solver_manipulate_solver_steps
   - \subpage exahype2_dg
-  - \subpage exahype2_dg_DG_AMR
   - \subpage documentation_exahype2_dsl
   - \subpage page_exahype_tracer
-  - \subpage page_exahype_boundary_conditions
   - \subpage page_exahype_amr
   - \subpage benchmarks_peano4_interpolation_restriction_performance
 - Postprocessing and data analysis
   - \subpage page_exahype_visualisation
   - \subpage page_exahype_checkpointing
   - \subpage page_exahype_extend-visualisation
-- Advanced features
-  - \subpage page_exahype2_coupling
 - HPC  
   - \subpage page_exahype_domain-decomposition
   - \subpage page_exahype_multicore
-  - \subpage page_exahype_gpu
   - \subpage page_exahype_runtime_analysis
   - \subpage page_exahype_performance_optimisation
 - Programmer's guide
   - \subpage page_exahype_programmers_guide_new_solver
   - \subpage page_exahype_programmers_guide_action_sets
-- How-tos
-  - \subpage page_exahype2_howtos_design-patterns
+  - \subpage page_exahype_programmers_guide_coupling
+  - \subpage page_exahype_programmers_guide_manipulate_solver_steps
+  - \subpage page_exahype_programmers_microbenchmarks
 - Utilities
   - \subpage exahype2_enumerator
 - Related pages
@@ -78,6 +73,10 @@ and innovation programme under grant agreement No 671698 (ExaHyPE).
   - @ref page_tarch_home
 - \subpage page_exahype_faq
 
+
+<br /><br />
+<div style="background-color: #cfc ; padding: 10px; border: 1px solid green;">
+These pages are somehow dangling and need a clean-up/revision
 - Kernel benchmarks (assessing kernel core performance)
   - \subpage benchmarks_exahype2_euler_kernel_benchmarks
   - \subpage benchmarks_exahype2_acoustic_kernel_benchmarks
@@ -88,6 +87,8 @@ and innovation programme under grant agreement No 671698 (ExaHyPE).
   - \subpage benchmarks_exahype2_euler_smooth_fd4
 - Shallow water benchmarks
   - \subpage benchmarks_exahype2_shallow_water_artificial_tsunami
+</div>
+
 
 # Building the ExaHyPE 2 extension
 
@@ -117,8 +118,9 @@ ExaHyPE 2 is the follow-up development of the ExaHyPE project which has
 been funded by the EU from 2015--2019.
 The present version is the second generation of the code (ExaHyPE 2) and has
 seen substantial rewrites of core routines.
-However, many paradigms and even code blocks remain the same.
-Migrating from the original ExaHyPE to ExaHyPE 2 thus should be straightforward.
+Actually, we rather have now a version ExaHyPE 2x, which started at some point in the summer 2026,
+when we got AI agents and finally had the tools to do some major refactorings long overdue.
+Many paradigms from the original ExaHyPE project remain the same however.
 
 The original ExaHyPE had been built on top of Peano (third generation) and tried
 to hide as much of Peano away as possible.

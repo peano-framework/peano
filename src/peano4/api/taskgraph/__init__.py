@@ -13,6 +13,9 @@ The task graph abstraction allows users to formalise their solver steps over sma
 An ExaHyPE solver's generator, i.e. the part that translates the pyysical model into a numerical workflow, describes each algorithmic phase (setup, time stepping, plotting)
 as a @ref peano4.api.taskgraph.Graph of @ref peano4.api.taskgraph.Task instances.
 Each task defines computations over a mesh entity (vertex, face, cell, or global), subject to dependencies between the tasks.
+Global tasks do not touch the mesh. They are tied to a traversal, to the start of a time step or to its end
+(@ref peano4.api.taskgraph.Task.Task.GridEntity). The latter two never cost a mesh traversal of their own.
+Typical examples for a task at the end of the step are the global CFL condition or a synchronisation of several solvers.
 A simple task graph reads as follows:
 
 1. Run over all cells and compute A.

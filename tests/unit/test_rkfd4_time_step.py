@@ -51,30 +51,70 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         "Probe_Reconstruct stage 0",
         "Probe_Reconstruct stage 1",
         "Probe_Reconstruct stage 2",
-        "Probe_Evaluate right hand side stage 0",
-        "Probe_Evaluate right hand side stage 1",
-        "Probe_Evaluate right hand side stage 2",
+        "Probe_Disable load balancing",
+        "Probe_Interpolate hanging faces stage 0",
+        "Probe_Interpolate hanging faces stage 1",
+        "Probe_Interpolate hanging faces stage 2",
+        "Probe_Evaluate Runge-Kutta right hand side stage 0",
+        "Probe_Evaluate Runge-Kutta right hand side stage 1",
+        "Probe_Evaluate Runge-Kutta right hand side stage 2",
         "Probe_Prepare stage 1",
         "Probe_Prepare stage 2",
         "Probe_Complete time step",
         "Probe_Project stage 1 onto faces",
         "Probe_Project stage 2 onto faces",
         "Probe_Project solution onto faces",
+        "Probe_Restrict stage 1 on hanging faces",
+        "Probe_Restrict stage 2 on hanging faces",
+        "Probe_Restrict solution on hanging faces",
+        "Probe_Roll over stage 1 faces",
+        "Probe_Roll over stage 2 faces",
+        "Probe_Roll over solution faces",
+        "Probe_Compute max eigenvalue",
+        "Probe_Reduce max eigenvalue",
         "Probe_Compute time step size",
         "Probe_Dynamic mesh refinement",
     }
+    # The maximum eigenvalue of the new solution is determined before it is projected
+    assert (
+        tasks["Probe_Complete time step"]
+        in tasks["Probe_Compute max eigenvalue"].dependencies
+    )
+    assert (
+        tasks["Probe_Compute max eigenvalue"]
+        in tasks["Probe_Project solution onto faces"].dependencies
+    )
+    # The eigenvalue is stored per cell, a task of its own reduces it, and the
+    # time step size is computed from the outcome
+    assert (
+        tasks["Probe_Compute max eigenvalue"]
+        in tasks["Probe_Reduce max eigenvalue"].dependencies
+    )
+    assert (
+        tasks["Probe_Reduce max eigenvalue"]
+        in tasks["Probe_Compute time step size"].dependencies
+    )
     for stage in [1, 2]:
         assert (
             tasks[f"Probe_Prepare stage {stage}"]
             in tasks[f"Probe_Project stage {stage} onto faces"].dependencies
         )
+        # Every step with several action sets is a chain of tasks
         assert (
             tasks[f"Probe_Project stage {stage} onto faces"]
+            in tasks[f"Probe_Restrict stage {stage} on hanging faces"].dependencies
+        )
+        assert (
+            tasks[f"Probe_Restrict stage {stage} on hanging faces"]
+            in tasks[f"Probe_Roll over stage {stage} faces"].dependencies
+        )
+        assert (
+            tasks[f"Probe_Roll over stage {stage} faces"]
             in tasks[f"Probe_Reconstruct stage {stage}"].dependencies
         )
     # The boundary values have to be set after the previous stage's roll-over
     assert (
-        tasks["Probe_Project stage 1 onto faces"]
+        tasks["Probe_Roll over stage 1 faces"]
         in tasks["Probe_Apply Dirichlet BCs stage 1"].dependencies
     )
     assert (
@@ -82,9 +122,25 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         in tasks["Probe_Reconstruct stage 1"].dependencies
     )
     assert (
-        tasks["Probe_Project solution onto faces"]
+        tasks["Probe_Roll over solution faces"]
         in tasks["Probe_Compute time step size"].dependencies
     )
+    # The load balancing is switched off before the first stage only
+    assert (
+        tasks["Probe_Disable load balancing"]
+        in tasks["Probe_Reconstruct stage 0"].dependencies
+    )
+    # Each task of the scheme holds exactly one action set, so that the task
+    # graph compiler can run the tasks of several solvers in parallel
+    for name in [
+        "Probe_Reconstruct stage 1",
+        "Probe_Interpolate hanging faces stage 1",
+        "Probe_Evaluate Runge-Kutta right hand side stage 1",
+        "Probe_Project stage 1 onto faces",
+        "Probe_Restrict stage 1 on hanging faces",
+        "Probe_Roll over stage 1 faces",
+    ]:
+        assert len(tasks[name].action_sets) == 1, name
 
 
 def _tagged(tasks, tag):
@@ -155,16 +211,16 @@ def test_sommerfeld_replaces_roll_over_and_omits_boundary_tasks(tmp_path):
     assert not any("Dirichlet" in name for name in tasks)
     roll_overs = _roll_overs(tasks)
     assert set(roll_overs) == {
-        "Probe_Project stage 1 onto faces",
-        "Probe_Project stage 2 onto faces",
-        "Probe_Project solution onto faces",
+        "Probe_Roll over stage 1 faces",
+        "Probe_Roll over stage 2 faces",
+        "Probe_Roll over solution faces",
     }
     # Kutta's third-order scheme has c = 0, 1/2, 1, i.e. the roll overs
     # advance the ghost grid cells by 1/2, 1/2 and 0 times the time step size
     for name, increment in [
-        ("Probe_Project stage 1 onto faces", "0.5"),
-        ("Probe_Project stage 2 onto faces", "0.5"),
-        ("Probe_Project solution onto faces", "0.0"),
+        ("Probe_Roll over stage 1 faces", "0.5"),
+        ("Probe_Roll over stage 2 faces", "0.5"),
+        ("Probe_Roll over solution faces", "0.0"),
     ]:
         action_set = roll_overs[name]
         assert isinstance(
@@ -269,7 +325,7 @@ def test_fixed_time_step_size_skips_eigenvalue(tmp_path):
 def test_right_hand_side_uses_stage_time_stamp_and_estimate_slot(tmp_path):
     solver = _solver(rk_order=4, boundary=None)
     tasks = _construct_time_step(solver, tmp_path, periodic_BC=(True, True, True))
-    [action_set] = tasks["Probe_Evaluate right hand side stage 2"].action_sets
+    [action_set] = tasks["Probe_Evaluate Runge-Kutta right hand side stage 2"].action_sets
     body = action_set.get_body_of_operation(
         peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
     )
@@ -317,3 +373,20 @@ def test_stage_input_is_loaded_once_after_each_store(tmp_path):
             tasks[f"Probe_Prepare stage {stage}"].cell_data_access[solver._stage_input]
             == Access.WRITE
         )
+
+
+@pytest.mark.parametrize("time_step_size", [None, 0.01])
+def test_time_step_size_acts_at_the_end_of_the_time_step_and_needs_no_traversal(
+    tmp_path, time_step_size
+):
+    solver = _solver(rk_order=2, boundary=None, time_step_size=time_step_size)
+    tasks = _construct_time_step(solver, tmp_path, periodic_BC=(True, True, True))
+    task = tasks["Probe_Compute time step size"]
+    assert task.entity == peano4.api.taskgraph.Task.GridEntity.GLOBAL_END_OF_STEP
+    assert not task.cell_data
+    # Nothing, not even the refinement, waits for a task that runs at the very end
+    assert not any(
+        task in other.dependencies for other in tasks.values()
+    )
+    # The mesh refinement is independent of the time step size
+    assert task not in tasks["Probe_Dynamic mesh refinement"].dependencies

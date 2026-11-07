@@ -34,6 +34,25 @@ class Graph:
         """
         return [task for task in self.tasks if any(tag in task.tags for tag in tags)]
 
+    def sink_tasks(self) -> List[Task]:
+        """!
+
+        Return all tasks which no other task of this graph depends on
+
+        These are the last tasks of the graph. A graph that forks, e.g.
+        because two solvers each add their own chain of tasks, has more than
+        one of them. Make a task depend on all of them to run it after the
+        whole graph, e.g. to synchronise the solvers
+        (@ref page_exahype_programmers_guide_coupling). The tasks are
+        returned in the order in which they have been added to the graph.
+
+        """
+        return [
+            task
+            for task in self.tasks
+            if not any(task in other.dependencies for other in self.tasks)
+        ]
+
     def insert_after(self, anchors: Union[Task, List[Task]], task: Task):
         """!
 
@@ -126,6 +145,13 @@ class Graph:
         graphs here are small) rather than caching it, so adding further
         tasks/dependencies after an earlier call is always reflected.
 
+        Tasks of the kind GLOBAL_START_OF_STEP come first and tasks of the
+        kind GLOBAL_END_OF_STEP come last (@ref peano4.api.taskgraph.Task.Task.GridEntity).
+        This keeps the order topological, as the former may not depend on
+        other tasks and no task but another end-of-step task may depend on
+        the latter. Within each of the three parts, the order is the one of
+        the traversal.
+
         """
         order: List[Task] = []
         visited = set()
@@ -139,7 +165,16 @@ class Graph:
 
         for task in self.tasks:
             visit(task)
-        return order
+        Entity = Task.GridEntity
+        return (
+            [task for task in order if task.entity == Entity.GLOBAL_START_OF_STEP]
+            + [
+                task
+                for task in order
+                if task.entity not in (Entity.GLOBAL_START_OF_STEP, Entity.GLOBAL_END_OF_STEP)
+            ]
+            + [task for task in order if task.entity == Entity.GLOBAL_END_OF_STEP]
+        )
 
     def log_as_text(self, title: str = "Task graph"):
         """!
@@ -271,6 +306,8 @@ class Graph:
             Task.GridEntity.FACE: "tab:orange",
             Task.GridEntity.CELL: "tab:green",
             Task.GridEntity.GLOBAL: "tab:purple",
+            Task.GridEntity.GLOBAL_START_OF_STEP: "tab:red",
+            Task.GridEntity.GLOBAL_END_OF_STEP: "tab:brown",
         }
 
         # A state's box grows with its content: a fixed-height header

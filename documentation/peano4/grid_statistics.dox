@@ -112,8 +112,8 @@ logInfo(
 exahype2.api.fv.actionsets.ComputeGlobalCFLCondition
 (src/exahype2/api/fv/actionsets/ComputeGlobalCFLCondition.py) is a worked
 example: it reads the finest mesh size from the statistics and combines it
-with a solver-tracked maximum eigenvalue into a globally admissible CFL time
-step size.
+with the solver's reduced maximum eigenvalue (@ref exahype2.api.fv.actionsets.ReduceMaxEigenvalue)
+into a globally admissible CFL time step size.
 
 
 ### Reducing your own data

@@ -2,6 +2,7 @@
 # use, please see the copyright notice at www.peano-framework.org
 from typing import List
 
+import re
 import peano4.api
 import peano4.api.solversteps
 
@@ -82,7 +83,12 @@ def translate(graph: Graph, identifier: str, peano_project: "peano4.api.Project"
         # lower-case the rest of the word, which mangles existing camel
         # case and acronyms (e.g. "EulerFVSmooth" would become
         # "Eulerfvsmooth", "CFL" would become "Cfl").
-        task_name = "_".join(word[:1].upper() + word[1:] for word in task.name.split())
+        # Words are separated by anything that C++ identifiers do not allow, too
+        task_name = "_".join(
+            word[:1].upper() + word[1:]
+            for word in re.split(r"[^0-9A-Za-z_]+", task.name)
+            if word
+        )
         step = peano4.api.solversteps.Step(
             name=f"{identifier}_{task_name}",
             add_user_defined_actions=False,

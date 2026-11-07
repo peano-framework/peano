@@ -10,9 +10,13 @@ Peano's @ref page_tutorials_overview "generic description how to generate web do
     
 
 This tutorial runs through the basic steps of any multigrid application. For this, we assume that you have followed the @ref page_installation_home "installation instructions" already. We furthermore assume that the following extensions have been added:
+
      --enable-blockstructured --enable-particles --enable-loadbalancing --enable-finiteelements --enable-mghype --enable-exaparty --enable-exahype
+
 If you have a parallel code, you furthermore need
+
      --enable-loadbalancing
+
 This is for domain decomposition as we discuss later. Typically, we kick off with a new director for our project. Within this directory, we start with a plain Python script. In this guide, we work with a Jupyter notebook rather than a script. MGHyPE codes need to know where to find the MGHyPE and Peano Python sources. For this, we can either add the Python sources to our environment, or export the path variable prior to invoking our script/kicking off our Jupyter notebook, or we set the path hard-coded in our script. To be honest, this last approach is likely the least elegant one, as it hard-codes the pathes, but it works:
 
 

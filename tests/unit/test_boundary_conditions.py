@@ -214,9 +214,11 @@ def test_sommerfeld_keeps_old_face_data_alive(scheme, tmp_path):
     setup, time_step = _realisation(
         scheme_factory, grid_construction_factory, solver, [False] * 3, tmp_path
     )
-    assert _accesses_to_persistent_face_data(solver, time_step) == {
-        peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE
-    }
+    # The roll over of the rkfd4 scheme declares the data as temporary, as the
+    # head of its chain of tasks declares it for the whole traversal
+    accesses = _accesses_to_persistent_face_data(solver, time_step)
+    accesses.discard(peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
+    assert accesses == {peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE}
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)

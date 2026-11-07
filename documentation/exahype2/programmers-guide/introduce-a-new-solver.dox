@@ -108,6 +108,77 @@ then the cell predicates are broken.
 mandatory; plotters are optional.
 
 
+# Build chains of single action set tasks
+
+When your numerical scheme needs several action sets in a row, e.g. to reconstruct
+a patch with its halo, interpolate the hanging faces and evaluate the
+right-hand side, create one task per action set and let each depend on its
+predecessor. Do not pack the action sets into one combined task.
+The Runge-Kutta scheme @ref exahype2.api.rkfd4.CentralDifferencesWithRungeKutta
+does it this way.
+
+## Why
+
+The task graph compiler @ref peano4.api.taskgraph.compiler.FuseSteps
+fuses independent tasks of one dependency layer into a node, and it marks the
+action sets of a node as parallel (they may then be invoked concurrently by
+the traversal) only if every task in the node holds exactly one action
+set. A task with several action sets is a sequence, and the compiler cannot
+express a sequence as a parallel strand next to another task. It fuses the
+tasks into the same traversal, but invokes their action sets one after the other.
+
+This is irrelevant as long as a project hosts a single solver. It matters as soon as
+solvers share a task graph, which is the entire point of
+@ref page_exahype_programmers_guide_coupling "coupling":
+With super-tasks, the reconstruction of solver A and the reconstruction of
+solver B end up as a sequence in the same traversal. With chains, they
+form an `a`/`b` pair per layer and overlap.
+The layers are numbered by the depth in the dependency graph. If chains
+differ in length, an action set of one solver pairs with a different action set of the
+other one. This is still parallel.
+
+@dot
+digraph G {
+  rankdir=LR; node [shape=box, fontsize=10];
+  subgraph cluster_a { label="Solver A"; R1 [label="Reconstruct"]; I1 [label="Interpolate"]; E1 [label="Evaluate RHS"]; R1 -> I1 -> E1; }
+  subgraph cluster_b { label="Solver B"; R2 [label="Reconstruct"]; I2 [label="Interpolate"]; E2 [label="Evaluate RHS"]; R2 -> I2 -> E2; }
+  { rank=same; R1; R2 }
+  { rank=same; I1; I2 }
+  { rank=same; E1; E2 }
+}
+@enddot
+
+The chains of two solvers. Each row is one dependency layer. Its action sets run in parallel.
+
+## What you have to take care of
+
+- **Data qualifiers.** If the action sets share cell data, the
+  first task keeps the load part of the original qualifier, the last task keeps
+  the store part, and all tasks in between load and store.
+  The fused traversal merges the qualifiers back into the original one, and a compiler that
+  does not fuse still hands the data on.
+  @ref exahype2.api.rkfd4.CentralDifferencesWithRungeKutta provides a helper for this.
+- **Face data that a chain shares.** Do not let several tasks of a chain write it:
+  The compiler treats a writer as conflicting with every other user of the same face data within one
+  traversal and would not fuse the tasks, i.e. you pay additional mesh sweeps.
+- **Temporary data rely on fusion.** If the tasks of a chain share data that is declared
+  temporary, e.g. the projected face data of the Runge-Kutta scheme, the compiler has to
+  fuse the tasks into one traversal. Otherwise, the data are lost between the traversals.
+  We learned this the hard way: When only the last task of the projection chain
+  (the roll over) declared that it writes the faces of the current time step,
+  the projection and the restriction did not conflict with the reconstruction of the same
+  stage, which reads these faces. The compiler fused them backwards into the previous traversal and
+  only the roll over started a new one. It read an uninitialised update patch, and the next
+  stage started with NaNs. The remedy is to declare the persistent data on the first task of
+  the chain, so it conflicts with the reader before it, and to declare it as temporary
+  on the others. The merged qualifier is the one of the first task.
+  Check the compiled graph of your scheme (log it with the text verbosity of the
+  generator script) whether all tasks of a chain end up in one traversal.
+- **Names of the tasks.** The compiler turns them into the names of C++ enumerators.
+  It splits them at everything that is not allowed in an identifier, i.e. you
+  can use hyphens and the like. Give the first task of a group the name that other
+  code looks it up with, and describe extra tasks by what they do.
+
 # Reference implementation to copy from
 
 Rather than starting from a blank page, base a new discretisation on the

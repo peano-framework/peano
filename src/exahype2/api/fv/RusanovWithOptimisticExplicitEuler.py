@@ -23,6 +23,10 @@ from .actionsets import ProjectPatchOntoFaces
 from .actionsets import RollOverUpdatedFaceWithSommerfeldBoundaryConditions
 from .actionsets import UpdateCell
 from .actionsets import ComputeGlobalCFLCondition
+from .actionsets import ComputeMaxEigenvalue
+from .actionsets import ReduceMaxEigenvalue
+from .MaxEigenvalueReduction import add_max_eigenvalue_reduction
+from .RusanovWithExplicitEuler import maxEigenvalueOverPatch2D, maxEigenvalueOverPatch3D
 from .actionsets import UpdateCellInterior
 from .actionsets import UpdateCellShell
 from .actionsets import InsertPatchInterior
@@ -47,22 +51,19 @@ from .actionsets import ReadjustTimeStepSizeForOptimisticGlobalTimestepping
 #   each axis, i.e. never the halo. Their input hence is the NV^d patch
 #   without halo (_patch), so they can run before the halo data has arrived.
 #   Their output is the patch interior only, i.e. a (NV-2H)^d patch
-#   (_patch_interior), and their maximum eigenvalue is the one of the patch
-#   interior.
+#   (_patch_interior).
 # - The shell kernels tile the shell into rectangular strips (2d) or slabs
 #   (3d) and run the update once per strip with its own set of temporary
 #   variables, as the DSL has no loops. They write the shell of the NV^d
-#   output only, and their maximum eigenvalue is the one of the shell.
+#   output only.
+#
+# None of the kernels returns an eigenvalue. The maximum eigenvalue is a kernel
+# of its own (@ref exahype2.api.fv.RusanovWithExplicitEuler.maxEigenvalueOverPatch2D),
+# which runs over the whole patch once it is updated.
 #
 # The 3d kernels test for the PDE terms by the same names as
 # timeStepWithRusanov2D, i.e. volumetricSource, flux, nonconservativeProduct and
 # maxEigenvalue.
-#
-# The DataBlocks holding the eigenvalues per volume are declared over
-# zero-based ranges, e.g. [0, NV-H-(H)] instead of [H, NV-H]. DSLHyPE's unary
-# max() iterates over the declared range of its argument, but indexes the
-# argument's compact storage as if this range started at zero. A range that
-# does not start at zero hence makes max() read past the end of the storage.
 
 
 ## Rusanov update of the interior of a 2d patch.
@@ -72,7 +73,6 @@ def timeStepWithRusanov2DOnPatchInterior(patchData: "::exahype2::CellData<double
     dt = DataBlock([[0, N]], "patchData.dt", "double")
     h = DataBlock([[0, N]], "patchData.cellSize", "tarch::la::Vector<2, double>")
     x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<2, double>")
-    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
 
     input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, N]], "patchData.QIn")
     output = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [H, NV-H], [H, NV-H], [0, N]], "patchData.QOut")
@@ -116,11 +116,6 @@ def timeStepWithRusanov2DOnPatchInterior(patchData: "::exahype2::CellData<double
        nonconservative_y = DataBlock([[0, NumberOfUnknowns], [H, NV-H], [H, NV-H+1], [0, N]], eval("nonconservativeProduct", average_y, delta_y, x, h, t, dt, 1))
        output[0:NumberOfUnknowns, H:NV-H, H:NV-H] = output[0:NumberOfUnknowns, H:NV-H, H:NV-H] + 0.5 * NV * dt / h(1) * (-nonconservative_y[:, H:NV-H, H:NV-H] - nonconservative_y[:, H:NV-H, H+1:NV-H+1])
 
-    if maxEigenvalue:
-      maxEigenvaluesX2 = DataBlock([[0, 1], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, H:NV-H, H:NV-H], x, 0))
-      maxEigenvaluesY2 = DataBlock([[0, 1], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, H:NV-H, H:NV-H], x, 1))
-      maxEigenvaluesPerVolume = max(maxEigenvaluesX2, maxEigenvaluesY2)
-      maxEigenvalues = max(maxEigenvaluesPerVolume)
 
 ## Rusanov update of the shell of a 2d patch.
 def timeStepWithRusanov2DOnShell(patchData: "::exahype2::CellData<double, double>&") -> "void":
@@ -129,7 +124,6 @@ def timeStepWithRusanov2DOnShell(patchData: "::exahype2::CellData<double, double
     dt = DataBlock([[0, N]], "patchData.dt", "double")
     h = DataBlock([[0, N]], "patchData.cellSize", "tarch::la::Vector<2, double>")
     x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<2, double>")
-    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
 
     input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [-H, NV + H], [-H, NV + H], [0, N]], "patchData.QIn")
     output = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, N]], "patchData.QOut")
@@ -294,31 +288,6 @@ def timeStepWithRusanov2DOnShell(patchData: "::exahype2::CellData<double, double
        nonconservative_yXHigh = DataBlock([[0, NumberOfUnknowns], [NV-H, NV], [H, NV-H+1], [0, N]], eval("nonconservativeProduct", average_yXHigh, delta_yXHigh, x, h, t, dt, 1))
        output[0:NumberOfUnknowns, NV-H:NV, H:NV-H] = output[0:NumberOfUnknowns, NV-H:NV, H:NV-H] + 0.5 * NV * dt / h(1) * (-nonconservative_yXHigh[:, NV-H:NV, H:NV-H] - nonconservative_yXHigh[:, NV-H:NV, H+1:NV-H+1])
 
-    if maxEigenvalue:
-      # Reduce per shell part, as max() over one DataBlock overwrites its target
-      maxEigenvaluesX2YLow = DataBlock([[0, 1], [0, NV], [0, H], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:H], x, 0))
-      maxEigenvaluesY2YLow = DataBlock([[0, 1], [0, NV], [0, H], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:H], x, 1))
-      maxEigenvaluesPerVolumeYLow = max(maxEigenvaluesX2YLow, maxEigenvaluesY2YLow)
-      maxEigenvalueYLow = DataBlock([[0, N]], 0.0)
-      maxEigenvalueYLow = max(maxEigenvaluesPerVolumeYLow)
-      maxEigenvaluesX2YHigh = DataBlock([[0, 1], [0, NV], [0, NV-(NV-H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, NV-H:NV], x, 0))
-      maxEigenvaluesY2YHigh = DataBlock([[0, 1], [0, NV], [0, NV-(NV-H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, NV-H:NV], x, 1))
-      maxEigenvaluesPerVolumeYHigh = max(maxEigenvaluesX2YHigh, maxEigenvaluesY2YHigh)
-      maxEigenvalueYHigh = DataBlock([[0, N]], 0.0)
-      maxEigenvalueYHigh = max(maxEigenvaluesPerVolumeYHigh)
-      maxEigenvaluesX2XLow = DataBlock([[0, 1], [0, H], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:H, H:NV-H], x, 0))
-      maxEigenvaluesY2XLow = DataBlock([[0, 1], [0, H], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:H, H:NV-H], x, 1))
-      maxEigenvaluesPerVolumeXLow = max(maxEigenvaluesX2XLow, maxEigenvaluesY2XLow)
-      maxEigenvalueXLow = DataBlock([[0, N]], 0.0)
-      maxEigenvalueXLow = max(maxEigenvaluesPerVolumeXLow)
-      maxEigenvaluesX2XHigh = DataBlock([[0, 1], [0, NV-(NV-H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, NV-H:NV, H:NV-H], x, 0))
-      maxEigenvaluesY2XHigh = DataBlock([[0, 1], [0, NV-(NV-H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, NV-H:NV, H:NV-H], x, 1))
-      maxEigenvaluesPerVolumeXHigh = max(maxEigenvaluesX2XHigh, maxEigenvaluesY2XHigh)
-      maxEigenvalueXHigh = DataBlock([[0, N]], 0.0)
-      maxEigenvalueXHigh = max(maxEigenvaluesPerVolumeXHigh)
-      maxEigenvalues = max(maxEigenvalueYLow, maxEigenvalueYHigh)
-      maxEigenvalues = max(maxEigenvalues, maxEigenvalueXLow)
-      maxEigenvalues = max(maxEigenvalues, maxEigenvalueXHigh)
 
 ## Rusanov update of the interior of a 3d patch.
 def timeStepWithRusanov3DOnPatchInterior(patchData: "::exahype2::CellData<double, double>&") -> "void":
@@ -327,7 +296,6 @@ def timeStepWithRusanov3DOnPatchInterior(patchData: "::exahype2::CellData<double
     dt = DataBlock([[0, N]], "patchData.dt", "double")
     h = DataBlock([[0, N]], "patchData.cellSize", "tarch::la::Vector<3, double>")
     x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<3, double>")
-    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
 
     input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, NV], [0, N]], "patchData.QIn")
     output = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [H, NV-H], [H, NV-H], [H, NV-H], [0, N]], "patchData.QOut")
@@ -385,13 +353,6 @@ def timeStepWithRusanov3DOnPatchInterior(patchData: "::exahype2::CellData<double
        nonconservative_z = DataBlock([[0, NumberOfUnknowns], [H, NV-H], [H, NV-H], [H, NV-H+1], [0, N]], eval("nonconservativeProduct", average_z, delta_z, x, h, t, dt, 2))
        output[0:NumberOfUnknowns, H:NV-H, H:NV-H, H:NV-H] = output[0:NumberOfUnknowns, H:NV-H, H:NV-H, H:NV-H] + 0.5 * NV * dt / h(2) * (-nonconservative_z[:, H:NV-H, H:NV-H, H:NV-H] - nonconservative_z[:, H:NV-H, H:NV-H, H+1:NV-H+1])
 
-    if maxEigenvalue:
-      maxEigenvaluesX2 = DataBlock([[0, 1], [0, NV-H-(H)], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, H:NV-H, H:NV-H, H:NV-H], x, 0))
-      maxEigenvaluesY2 = DataBlock([[0, 1], [0, NV-H-(H)], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, H:NV-H, H:NV-H, H:NV-H], x, 1))
-      maxEigenvaluesZ2 = DataBlock([[0, 1], [0, NV-H-(H)], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, H:NV-H, H:NV-H, H:NV-H], x, 2))
-      maxEigenvaluesXY = max(maxEigenvaluesX2, maxEigenvaluesY2)
-      maxEigenvaluesPerVolume = max(maxEigenvaluesXY, maxEigenvaluesZ2)
-      maxEigenvalues = max(maxEigenvaluesPerVolume)
 
 ## Rusanov update of the shell of a 3d patch.
 def timeStepWithRusanov3DOnShell(patchData: "::exahype2::CellData<double, double>&") -> "void":
@@ -400,7 +361,6 @@ def timeStepWithRusanov3DOnShell(patchData: "::exahype2::CellData<double, double
     dt = DataBlock([[0, N]], "patchData.dt", "double")
     h = DataBlock([[0, N]], "patchData.cellSize", "tarch::la::Vector<3, double>")
     x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<3, double>")
-    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
 
     input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [-H, NV + H], [-H, NV + H], [-H, NV + H], [0, N]], "patchData.QIn")
     output = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, NV], [0, N]], "patchData.QOut")
@@ -729,55 +689,6 @@ def timeStepWithRusanov3DOnShell(patchData: "::exahype2::CellData<double, double
        nonconservative_zXHigh = DataBlock([[0, NumberOfUnknowns], [NV-H, NV], [H, NV-H], [H, NV-H+1], [0, N]], eval("nonconservativeProduct", average_zXHigh, delta_zXHigh, x, h, t, dt, 2))
        output[0:NumberOfUnknowns, NV-H:NV, H:NV-H, H:NV-H] = output[0:NumberOfUnknowns, NV-H:NV, H:NV-H, H:NV-H] + 0.5 * NV * dt / h(2) * (-nonconservative_zXHigh[:, NV-H:NV, H:NV-H, H:NV-H] - nonconservative_zXHigh[:, NV-H:NV, H:NV-H, H+1:NV-H+1])
 
-    if maxEigenvalue:
-      # Reduce per shell part, as max() over one DataBlock overwrites its target
-      maxEigenvaluesX2ZLow = DataBlock([[0, 1], [0, NV], [0, NV], [0, H], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:NV, 0:H], x, 0))
-      maxEigenvaluesY2ZLow = DataBlock([[0, 1], [0, NV], [0, NV], [0, H], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:NV, 0:H], x, 1))
-      maxEigenvaluesZ2ZLow = DataBlock([[0, 1], [0, NV], [0, NV], [0, H], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:NV, 0:H], x, 2))
-      maxEigenvaluesXYZLow = max(maxEigenvaluesX2ZLow, maxEigenvaluesY2ZLow)
-      maxEigenvaluesPerVolumeZLow = max(maxEigenvaluesXYZLow, maxEigenvaluesZ2ZLow)
-      maxEigenvalueZLow = DataBlock([[0, N]], 0.0)
-      maxEigenvalueZLow = max(maxEigenvaluesPerVolumeZLow)
-      maxEigenvaluesX2ZHigh = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV-(NV-H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:NV, NV-H:NV], x, 0))
-      maxEigenvaluesY2ZHigh = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV-(NV-H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:NV, NV-H:NV], x, 1))
-      maxEigenvaluesZ2ZHigh = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV-(NV-H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:NV, NV-H:NV], x, 2))
-      maxEigenvaluesXYZHigh = max(maxEigenvaluesX2ZHigh, maxEigenvaluesY2ZHigh)
-      maxEigenvaluesPerVolumeZHigh = max(maxEigenvaluesXYZHigh, maxEigenvaluesZ2ZHigh)
-      maxEigenvalueZHigh = DataBlock([[0, N]], 0.0)
-      maxEigenvalueZHigh = max(maxEigenvaluesPerVolumeZHigh)
-      maxEigenvaluesX2YLow = DataBlock([[0, 1], [0, NV], [0, H], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:H, H:NV-H], x, 0))
-      maxEigenvaluesY2YLow = DataBlock([[0, 1], [0, NV], [0, H], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:H, H:NV-H], x, 1))
-      maxEigenvaluesZ2YLow = DataBlock([[0, 1], [0, NV], [0, H], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, 0:H, H:NV-H], x, 2))
-      maxEigenvaluesXYYLow = max(maxEigenvaluesX2YLow, maxEigenvaluesY2YLow)
-      maxEigenvaluesPerVolumeYLow = max(maxEigenvaluesXYYLow, maxEigenvaluesZ2YLow)
-      maxEigenvalueYLow = DataBlock([[0, N]], 0.0)
-      maxEigenvalueYLow = max(maxEigenvaluesPerVolumeYLow)
-      maxEigenvaluesX2YHigh = DataBlock([[0, 1], [0, NV], [0, NV-(NV-H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, NV-H:NV, H:NV-H], x, 0))
-      maxEigenvaluesY2YHigh = DataBlock([[0, 1], [0, NV], [0, NV-(NV-H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, NV-H:NV, H:NV-H], x, 1))
-      maxEigenvaluesZ2YHigh = DataBlock([[0, 1], [0, NV], [0, NV-(NV-H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:NV, NV-H:NV, H:NV-H], x, 2))
-      maxEigenvaluesXYYHigh = max(maxEigenvaluesX2YHigh, maxEigenvaluesY2YHigh)
-      maxEigenvaluesPerVolumeYHigh = max(maxEigenvaluesXYYHigh, maxEigenvaluesZ2YHigh)
-      maxEigenvalueYHigh = DataBlock([[0, N]], 0.0)
-      maxEigenvalueYHigh = max(maxEigenvaluesPerVolumeYHigh)
-      maxEigenvaluesX2XLow = DataBlock([[0, 1], [0, H], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:H, H:NV-H, H:NV-H], x, 0))
-      maxEigenvaluesY2XLow = DataBlock([[0, 1], [0, H], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:H, H:NV-H, H:NV-H], x, 1))
-      maxEigenvaluesZ2XLow = DataBlock([[0, 1], [0, H], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, 0:H, H:NV-H, H:NV-H], x, 2))
-      maxEigenvaluesXYXLow = max(maxEigenvaluesX2XLow, maxEigenvaluesY2XLow)
-      maxEigenvaluesPerVolumeXLow = max(maxEigenvaluesXYXLow, maxEigenvaluesZ2XLow)
-      maxEigenvalueXLow = DataBlock([[0, N]], 0.0)
-      maxEigenvalueXLow = max(maxEigenvaluesPerVolumeXLow)
-      maxEigenvaluesX2XHigh = DataBlock([[0, 1], [0, NV-(NV-H)], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, NV-H:NV, H:NV-H, H:NV-H], x, 0))
-      maxEigenvaluesY2XHigh = DataBlock([[0, 1], [0, NV-(NV-H)], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, NV-H:NV, H:NV-H, H:NV-H], x, 1))
-      maxEigenvaluesZ2XHigh = DataBlock([[0, 1], [0, NV-(NV-H)], [0, NV-H-(H)], [0, NV-H-(H)], [0, N]], eval("maxEigenvalue", output[:, NV-H:NV, H:NV-H, H:NV-H], x, 2))
-      maxEigenvaluesXYXHigh = max(maxEigenvaluesX2XHigh, maxEigenvaluesY2XHigh)
-      maxEigenvaluesPerVolumeXHigh = max(maxEigenvaluesXYXHigh, maxEigenvaluesZ2XHigh)
-      maxEigenvalueXHigh = DataBlock([[0, N]], 0.0)
-      maxEigenvalueXHigh = max(maxEigenvaluesPerVolumeXHigh)
-      maxEigenvalues = max(maxEigenvalueZLow, maxEigenvalueZHigh)
-      maxEigenvalues = max(maxEigenvalues, maxEigenvalueYLow)
-      maxEigenvalues = max(maxEigenvalues, maxEigenvalueYHigh)
-      maxEigenvalues = max(maxEigenvalues, maxEigenvalueXLow)
-      maxEigenvalues = max(maxEigenvalues, maxEigenvalueXHigh)
 
 class RusanovWithOptimisticExplicitEuler(Solver.NumericalScheme):
     """!
@@ -944,6 +855,7 @@ class RusanovWithOptimisticExplicitEuler(Solver.NumericalScheme):
         # Set in construct_output(): the generated kernels live in the project
         # namespace, as their names are solver-specific
         self.kernel_namespace = None
+        self.max_eigenvalue_kernel_call = None
         self.cfl_constant = cfl_constant
         self.damp_time_step_size = damp_time_step_size
         self.spawn_optimistic_calculations_as_task = spawn_optimistic_calculations_as_task
@@ -957,6 +869,15 @@ class RusanovWithOptimisticExplicitEuler(Solver.NumericalScheme):
         solvers' kernels do not clash.
         """
         return self._solver.name + "_timeStepWithRusanov"
+
+    @property
+    def max_eigenvalue_kernel_function_name(self) -> str:
+        """!
+        Name of the generated kernel which determines the maximum eigenvalue
+        over the whole patch. It is a kernel of its own, i.e. none of the
+        time step kernels returns an eigenvalue (@ref exahype2.api.fv.actionsets.ComputeMaxEigenvalue).
+        """
+        return self._solver.name + "_maxEigenvalueOverPatch"
 
     def __create_data_structures(self):
         """!
@@ -983,35 +904,29 @@ class RusanovWithOptimisticExplicitEuler(Solver.NumericalScheme):
           into _patch_overlap_current_time_step by
           exahype2.api.fv.actionsets.RollOverUpdatedFace once the update is
           complete.
-        - _max_eigenvalue_and_time_step_sizes: four doubles per cell, named
+        - _max_eigenvalue_and_time_step_sizes: three doubles per cell, named
           after the solver followed by MaxEigenvalueAndTimeStepSizes (e.g.
           EulerFVSmoothMaxEigenvalueAndTimeStepSizes).
           exahype2.api.fv.RusanovWithExplicitEuler calls the corresponding
-          data _max_eigenvalue. exahype2.api.fv.actionsets.UpdateCell and
+          data _max_eigenvalue. exahype2.api.fv.actionsets.ComputeMaxEigenvalue,
+          exahype2.api.fv.actionsets.ReduceMaxEigenvalue and
           exahype2.api.fv.actionsets.ComputeGlobalCFLCondition are shared
           with that scheme and hence are handed this data explicitly.
-          It is modelled via DaStGen2 as an array of cardinality four. The
+          It is modelled via DaStGen2 as an array of cardinality three. The
           array is a peano4.api.dastgen2.Peano4SmartPointerDoubleArray,
-          i.e. the values reside on the heap. The four entries are used as
+          i.e. the values reside on the heap. The three entries are used as
           follows:
-          - Entry 0 holds the maximum eigenvalue of the patch.
-            exahype2.api.fv.actionsets.UpdateCell writes the one of the
-            whole patch into it, while
-            exahype2.api.fv.actionsets.UpdateCellShell writes the one of
-            the shell only. exahype2.api.fv.actionsets.InsertPatchInterior
-            eventually replaces it with the maximum of entries 0 and 2, so
-            it then holds the one of the whole patch, too.
-            exahype2.api.fv.actionsets.ComputeGlobalCFLCondition reduces
-            entry 0 of all cells into the next time step size.
+          - Entry 0 holds the maximum eigenvalue of the whole patch, as
+            written by exahype2.api.fv.actionsets.ComputeMaxEigenvalue after
+            the patch has been updated, either in one go
+            (exahype2.api.fv.actionsets.UpdateCell) or as shell plus patch
+            interior. exahype2.api.fv.actionsets.ReduceMaxEigenvalue reduces
+            entry 0 of all cells.
           - Entry 1 holds the estimated time step size of the patch
-            interior update, i.e. entry 3 times damp_time_step_size, as
+            interior update, i.e. entry 2 times damp_time_step_size, as
             written by
             exahype2.api.fv.actionsets.SpawnTaskToUpdateCellInterior.
-          - Entry 2 holds the maximum eigenvalue of the patch interior, as
-            written by exahype2.api.fv.actionsets.UpdateCellInterior when
-            exahype2.api.fv.actionsets.SpawnTaskToUpdateCellInterior
-            updates the patch interior.
-          - Entry 3 holds the time step size the solver could have chosen
+          - Entry 2 holds the time step size the solver could have chosen
             in the current time step if it had not been enforced to use a
             smaller one, i.e. the admissible time step size, as written by
             exahype2.api.fv.actionsets.ReadjustTimeStepSizeForOptimisticGlobalTimestepping.
@@ -1089,8 +1004,10 @@ class RusanovWithOptimisticExplicitEuler(Solver.NumericalScheme):
         )
         self._solver._max_eigenvalue_and_time_step_sizes = peano4.api.datamodel.DaStGen2(self._solver.name + "MaxEigenvalueAndTimeStepSizes")
         self._solver._max_eigenvalue_and_time_step_sizes.data.add_attribute(
-            peano4.api.dastgen2.Peano4SmartPointerDoubleArray("maxEigenvalue", 4)
+            peano4.api.dastgen2.Peano4SmartPointerDoubleArray("maxEigenvalue", 3)
         )
+
+        add_max_eigenvalue_reduction(self._solver)
 
         self._solver._optimistic_cell_update_task_number = None
         if self.spawn_optimistic_calculations_as_task:
@@ -1215,6 +1132,7 @@ Patch overlap data
         self._solver.compute_kernel_call = self.__construct_kernel_call(Target.Serial, False)
         self._solver.compute_kernel_call_on_patch_interior = self.__construct_kernel_call(Target.Serial, False, self.kernel_function_name + "OnPatchInterior")
         self._solver.compute_kernel_call_on_shell = self.__construct_kernel_call(Target.Serial, False, self.kernel_function_name + "OnShell")
+        self.max_eigenvalue_kernel_call = self.__construct_kernel_call(Target.Serial, False, self.max_eigenvalue_kernel_function_name)
         self.__create_time_step_functions(peano_project.directory)
         
         reconstruction_task           = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reconstruct", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
@@ -1223,7 +1141,9 @@ Patch overlap data
         insert_patch_interior_task    = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Insert patch interior", entity=peano4.api.taskgraph.Task.GridEntity.CELL, may_spawn_background_tasks=False)
         discard_patch_interior_task   = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Discard patch interior", entity=peano4.api.taskgraph.Task.GridEntity.CELL, may_spawn_background_tasks=False)
         project_on_faces_task         = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Project on faces", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
-        compute_cfl_condition_task    = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.CELL, may_spawn_background_tasks=False)
+        compute_eigenvalue_task       = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute max eigenvalue", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        reduce_eigenvalue_task        = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reduce max eigenvalue", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        compute_cfl_condition_task    = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL_END_OF_STEP, may_spawn_background_tasks=False)
         spawn_patch_interior_task     = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Spawn patch interior update", entity=peano4.api.taskgraph.Task.GridEntity.CELL, may_spawn_background_tasks=False)
 
         time_step.add_task(reconstruction_task)
@@ -1231,6 +1151,8 @@ Patch overlap data
         time_step.add_task(update_cell_shell_task)
         time_step.add_task(insert_patch_interior_task)
         time_step.add_task(discard_patch_interior_task)
+        time_step.add_task(compute_eigenvalue_task)
+        time_step.add_task(reduce_eigenvalue_task)
         time_step.add_task(project_on_faces_task)
         time_step.add_task(compute_cfl_condition_task)
         time_step.add_task(spawn_patch_interior_task)
@@ -1267,7 +1189,7 @@ Patch overlap data
         dynamic_mesh_refinement_task.add_action_set(
             toolbox.loadbalancing.api.actionsets.LoadBalancing(enable_load_balancing=True)
         )
-        dynamic_mesh_refinement_task.add_dependency(compute_cfl_condition_task)
+        dynamic_mesh_refinement_task.add_dependency(reduce_eigenvalue_task)
         dynamic_mesh_refinement_task.add_dependency(project_on_faces_task)
         # No other task depends on the discard, so we have to make it a
         # predecessor explicitly, as the dynamic mesh refinement has to be
@@ -1351,7 +1273,6 @@ Patch overlap data
             UpdateCell(
                 self._solver,
                 guard=traditional_guard,
-                max_eigenvalue=self._solver._max_eigenvalue_and_time_step_sizes,
             )
         )
         update_cell_task.tags.add(Solver.SolutionUpdateTaskTag)
@@ -1401,27 +1322,50 @@ Patch overlap data
         )
         insert_patch_interior_task.tags.add(Solver.SolutionUpdateTaskTag)
 
-        ## Both branches: reduce the cells' maximum eigenvalues into the next
-        ## time step size. Runs in parallel to the projection onto the faces
-        compute_cfl_condition_task.add_dependency(update_cell_task)
-        compute_cfl_condition_task.add_dependency(insert_patch_interior_task)
-        # The spawn has to see the solver's time stamp and time step size
-        # before the CFL condition advances them
-        compute_cfl_condition_task.add_dependency(spawn_patch_interior_task)
-        compute_cfl_condition_task.use_cell(self._solver._max_eigenvalue_and_time_step_sizes, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
-        compute_cfl_condition_task.add_action_set(
-            ComputeGlobalCFLCondition(
+        ## Both branches: determine the maximum eigenvalue of the updated patch,
+        ## store it per cell and reduce it over all cells. The patch is
+        ## updated completely by the traditional update or, in the optimistic
+        ## branch, once the patch interior is inserted. The pair runs in
+        ## parallel to the spawn of the next time step's patch interior update.
+        ## The projection onto the faces follows it, so the update, the
+        ## eigenvalue and the reduction fold into one mesh traversal
+        compute_eigenvalue_task.add_dependency(update_cell_task)
+        compute_eigenvalue_task.add_dependency(insert_patch_interior_task)
+        compute_eigenvalue_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
+        compute_eigenvalue_task.use_cell(self._solver._max_eigenvalue_and_time_step_sizes, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
+        compute_eigenvalue_task.add_action_set(
+            ComputeMaxEigenvalue(
                 self._solver,
-                self.cfl_constant,
-                self.patch_size,
+                guard=cell_guard,
+                max_eigenvalue=self._solver._max_eigenvalue_and_time_step_sizes,
+            )
+        )
+        reduce_eigenvalue_task.add_dependency(compute_eigenvalue_task)
+        reduce_eigenvalue_task.use_cell(self._solver._max_eigenvalue_and_time_step_sizes, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
+        reduce_eigenvalue_task.add_action_set(
+            ReduceMaxEigenvalue(
+                self._solver,
                 guard=cell_guard,
                 max_eigenvalue=self._solver._max_eigenvalue_and_time_step_sizes,
             )
         )
 
+        ## Both branches: derive the next time step size from the reduced
+        ## eigenvalue. This acts in unprepareTraversal() at the end of the
+        ## time step only. The spawn has to see the solver's time stamp and
+        ## time step size before the CFL condition advances them
+        compute_cfl_condition_task.add_dependency(reduce_eigenvalue_task)
+        compute_cfl_condition_task.add_dependency(spawn_patch_interior_task)
+        compute_cfl_condition_task.add_action_set(
+            ComputeGlobalCFLCondition(
+                self._solver,
+                self.cfl_constant,
+                self.patch_size,
+            )
+        )
+
         ## Both branches: project the new data onto the faces. Also roll over the solution
-        project_on_faces_task.add_dependency(update_cell_task)
-        project_on_faces_task.add_dependency(insert_patch_interior_task)
+        project_on_faces_task.add_dependency(reduce_eigenvalue_task)
         project_on_faces_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         project_on_faces_task.use_face(self._solver._patch_overlap_update, peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
         project_on_faces_task.use_face(
@@ -1528,6 +1472,20 @@ Patch overlap data
             function_name=self.kernel_function_name,
             output_directory=output_directory,
         )
+        # The maximum eigenvalue over the whole patch is a kernel of its own
+        for dimensions, function in [(2, maxEigenvalueOverPatch2D), (3, maxEigenvalueOverPatch3D)]:
+            dslhype.translate_dslhype_function(
+                function = function,
+                function_namespace = self.kernel_namespace,
+                template_parameters=template_parameters,
+                functor_parameters=functor_parameters,
+                pde_terms=self._solver.pde_terms,
+                output_file_name=f"{self._solver.name}_rusanov{dimensions}d",
+                target=dslhype.Target.Serial,
+                stateless=False,
+                function_name=self.max_eigenvalue_kernel_function_name,
+                output_directory=output_directory,
+            )
         # Kernels on the patch interior and on the shell
         for function, file_suffix, function_suffix in [
             (timeStepWithRusanov2DOnPatchInterior, "_rusanov2d_patch_interior", "OnPatchInterior"),

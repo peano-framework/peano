@@ -13,9 +13,13 @@ class ComputeMaxEigenvalue(AbstractRKFD4ActionSet):
 
     The action set runs after the final linear combination of a Runge-Kutta
     step, i.e. it sees the solution of the next time step in solver._patch.
-    It stores the maximum eigenvalue in solver._max_eigenvalue, from where
-    exahype2.api.rkfd4.actionsets.ComputeTimeStepSize reduces it into the
-    next time step size.
+    It stores the maximum eigenvalue in the cell data solver._max_eigenvalue.
+    It does nothing else: the reduction over the cells is a task of its own
+    (@ref exahype2.api.rkfd4.actionsets.ReduceMaxEigenvalue), and
+    exahype2.api.rkfd4.actionsets.ComputeTimeStepSize derives the next time
+    step size from its outcome. Why: The eigenvalue per cell stays available
+    for others, and the cell update, the eigenvalue and the reduction are
+    independent steps of the task graph that the compiler can overlap.
 
     """
 

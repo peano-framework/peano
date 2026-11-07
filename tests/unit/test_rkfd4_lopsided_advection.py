@@ -52,8 +52,11 @@ def test_central_differences_are_the_default(tmp_path):
     tasks = _tasks(solver, tmp_path)
     assert [
         type(action_set)
-        for action_set in tasks["Probe_Evaluate right hand side stage 1"].action_sets
-    ] == [exahype2.api.rkfd4.actionsets.EvaluateRightHandSide]
+        for action_set in tasks[
+            "Probe_Evaluate Runge-Kutta right hand side stage 1"
+        ].action_sets
+    ] == [exahype2.api.rkfd4.actionsets.EvaluateRungeKuttaRightHandSide]
+    assert "Probe_Add lopsided advection stage 1" not in tasks
 
 
 def test_lopsided_advection_runs_after_central_differences(tmp_path):
@@ -66,12 +69,18 @@ def test_lopsided_advection_runs_after_central_differences(tmp_path):
     assert scheme.advected_quantities == [0, 1]
     tasks = _tasks(solver, tmp_path)
     for stage in range(2):
-        action_sets = tasks[f"Probe_Evaluate right hand side stage {stage}"].action_sets
-        assert [type(action_set) for action_set in action_sets] == [
-            exahype2.api.rkfd4.actionsets.EvaluateRightHandSide,
-            exahype2.api.rkfd4.actionsets.AddLopsidedAdvection,
+        # One task per action set, so the compiler can run them in parallel to
+        # the tasks of other solvers. They form a chain.
+        evaluation = tasks[f"Probe_Evaluate Runge-Kutta right hand side stage {stage}"]
+        advection = tasks[f"Probe_Add lopsided advection stage {stage}"]
+        assert [type(a) for a in evaluation.action_sets] == [
+            exahype2.api.rkfd4.actionsets.EvaluateRungeKuttaRightHandSide
         ]
-        body = action_sets[1].get_body_of_operation(
+        assert [type(a) for a in advection.action_sets] == [
+            exahype2.api.rkfd4.actionsets.AddLopsidedAdvection
+        ]
+        assert advection.dependencies == [evaluation]
+        body = advection.action_sets[0].get_body_of_operation(
             peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
         )
         assert "::exahype2::fd::addLopsidedAdvection(" in body
@@ -172,11 +181,15 @@ def test_dissipation_runs_after_lopsided_advection(tmp_path):
     )
     assert solver.numerical_scheme.overlap == 3
     tasks = _tasks(solver, tmp_path)
-    assert [
-        type(action_set)
-        for action_set in tasks["CCZ4_Evaluate right hand side stage 0"].action_sets
-    ] == [
-        exahype2.api.rkfd4.actionsets.EvaluateRightHandSide,
-        exahype2.api.rkfd4.actionsets.AddLopsidedAdvection,
-        exagrype.api.actionsets.AddKreissOligerDissipation,
+    chain = [
+        "CCZ4_Evaluate Runge-Kutta right hand side stage 0",
+        "CCZ4_Add lopsided advection stage 0",
+        "CCZ4_Add Kreiss-Oliger dissipation stage 0",
     ]
+    assert [[type(a) for a in tasks[name].action_sets] for name in chain] == [
+        [exahype2.api.rkfd4.actionsets.EvaluateRungeKuttaRightHandSide],
+        [exahype2.api.rkfd4.actionsets.AddLopsidedAdvection],
+        [exagrype.api.actionsets.AddKreissOligerDissipation],
+    ]
+    assert tasks[chain[1]].dependencies == [tasks[chain[0]]]
+    assert tasks[chain[2]].dependencies == [tasks[chain[1]]]

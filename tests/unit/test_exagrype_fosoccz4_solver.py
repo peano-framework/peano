@@ -174,8 +174,8 @@ def test_reconstructor_takes_turns_with_each_stage_of_the_solver(tmp_path):
         if stage > 0:
             # The reconstructor follows what the solver's reconstruction followed
             assert any(
-                dependency.name.startswith("SO_Project stage")
-                or dependency.name.startswith("SO_Project solution")
+                dependency.name.startswith("SO_Roll over stage")
+                or dependency.name.startswith("SO_Roll over solution")
                 for dependency in derivatives.dependencies
             )
             assert f"SO_Prepare stage {stage}" in {

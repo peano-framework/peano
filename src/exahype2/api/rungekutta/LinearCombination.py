@@ -72,8 +72,12 @@ def generate_linear_combination_kernel(namespace, output_directory):
     The kernel ends up in kernels/rungekutta_linear_combination.h in the
     output directory. It is a function template over NumberOfDoFs,
     NumberOfUnknowns, NumberOfAuxiliaryVariables and NumberOfEstimates within
-    namespace. It does not depend on any solver, so several solvers within
-    one project can share it: Each of them generates the very same file.
+    namespace. It does not depend on any solver, nor on the Runge-Kutta
+    scheme (the weights and the number of estimates enter at the call site),
+    so several solvers within one project can share it. Each of them calls
+    this routine, but only the first call generates the file: The DSLHyPE
+    translation appends to existing files, i.e. a second generation would
+    define the function template twice.
 
     @param namespace: [str]
       Namespace of the generated function template, usually the Peano
@@ -84,6 +88,12 @@ def generate_linear_combination_kernel(namespace, output_directory):
       project's directory.
 
     """
+    header = os.path.join(
+        output_directory, "kernels", LINEAR_COMBINATION_KERNEL_FILE + ".h"
+    )
+    if os.path.exists(header):
+        return
+
     dslhype.translate_dslhype_function(
         function=linearCombinationOfRungeKuttaEstimates,
         function_namespace=namespace,

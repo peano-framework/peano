@@ -77,12 +77,16 @@ def test_dissipation_runs_after_right_hand_side_in_each_stage(tmp_path):
     solver = _solver(quantities=["lapse", "phi"], rk_order=2)
     tasks = _construct_time_step(solver, tmp_path)
     for stage in range(2):
-        action_sets = tasks[f"CCZ4_Evaluate right hand side stage {stage}"].action_sets
-        assert [type(action_set) for action_set in action_sets] == [
-            exahype2.api.rkfd4.actionsets.EvaluateRightHandSide,
-            exagrype.api.actionsets.AddKreissOligerDissipation,
+        evaluation = tasks[f"CCZ4_Evaluate Runge-Kutta right hand side stage {stage}"]
+        dissipation = tasks[f"CCZ4_Add Kreiss-Oliger dissipation stage {stage}"]
+        assert [type(a) for a in evaluation.action_sets] == [
+            exahype2.api.rkfd4.actionsets.EvaluateRungeKuttaRightHandSide
         ]
-        body = _body(action_sets[1])
+        assert [type(a) for a in dissipation.action_sets] == [
+            exagrype.api.actionsets.AddKreissOligerDissipation
+        ]
+        assert dissipation.dependencies == [evaluation]
+        body = _body(dissipation.action_sets[0])
         assert "::exagrype::ccz4::addKreissOligerDissipation(" in body
         assert "constexpr int dissipativeQuantities[] = { 16, 24 };" in body
         # Estimate slot of the stage: stage * 59 unknowns * 5^3 grid cells

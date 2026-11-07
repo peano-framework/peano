@@ -16,11 +16,15 @@ class AddKreissOligerDissipation(exahype2.api.rkfd4.actionsets.AbstractRKFD4Acti
     The action set reads the input of the stage with its halo
     (solver._patch_with_halo) and adds the dissipation to the stage's slot
     of solver._rhs_estimates via exagrype::ccz4::addKreissOligerDissipation().
-    It has to run after exahype2.api.rkfd4.actionsets.EvaluateRightHandSide,
-    which overwrites the slot, within the same task. @ref
+    It has to run after exahype2.api.rkfd4.actionsets.EvaluateRungeKuttaRightHandSide,
+    which overwrites the slot. As every action set of the scheme has a task of
+    its own, the dissipation task depends on the evaluation task. @ref
     exagrype.api.FD4WithKODissipation arranges this.
 
     """
+
+    TASK_NAME = "Add Kreiss-Oliger dissipation"
+    """! Name of the task which hosts the action set (@ref exahype2.api.rkfd4.CentralDifferencesWithRungeKutta) """
 
     def __init__(
         self, solver, stage: int, sigma: float, quantities: List[int], guard: str

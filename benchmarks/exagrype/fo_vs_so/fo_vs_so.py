@@ -1,4 +1,4 @@
-"""
+r"""!
 
 First-order vs. second-order reconstructed CCZ4: gauge wave benchmark
 
@@ -57,16 +57,124 @@ points (patch size 9 and 3^k patches per axis, i.e. cells is 27, 81, ... (Peano 
 compiled into the executable, so each combination is built in a directory of
 its own (run-scheme-formulation-cells).
 
-    python3 fo_vs_so.py                         # all combinations, table at the end
-    python3 fo_vs_so.py run FV SO 27            # one combination
-    python3 fo_vs_so.py compare                 # re-print the table from existing runs
+    python3 fo_vs_so.py                         # same as --mode=run-and-compare
+    python3 fo_vs_so.py --mode=build            # generate and compile all combinations
+    python3 fo_vs_so.py --mode=run              # generate, compile and run all combinations
+    python3 fo_vs_so.py --mode=run-and-compare  # run, then print the table
+    python3 fo_vs_so.py --mode=compare-only     # re-print the table from existing runs
 
-The environment variable FO_VS_SO_RELEASE=1 selects the release build, end time
-0.1, and silences the generator logging. The default is the debug build.
-FO_VS_SO_SIZES=27 overrides the grid sizes.
+The script loops sequentially, within one Python process, over all schemes,
+grid sizes and formulations.
+
+The option --build-mode=debug|release selects the build (default release; debug
+also enables the generator logging). --schemes (default FD4,FV), --sizes (default 27,81), --end-time (default
+0.1) and --cfl (CFL constant of the Finite Volume scheme, default 0.9) override
+the remaining settings.
+
+@page benchmarks_exagrype_fo_vs_so First-order vs hybrid First-order second-order CCZ4 formulation
+
+\tableofcontents
+
+This page has yet to be written.
+
+
+See the benchmark benchmarks/exagrype/fo_vs_so. It runs the gauge wave
+with both solvers and prints the maximum and relative L2 difference of the 25
+evolved unknowns at the end of the run.
+
+Setup (`python3 fo_vs_so.py`, i.e. release build, end time 0.1): gauge wave on the
+periodic unit cube, 27 grid points per axis (patch size 9, 3 patches per axis), fourth-order
+Finite Differences with classic Runge-Kutta 4 and lopsided advection, no dissipation,
+adaptive time step size (CFL), end time 0.1 (about 33 time steps). Both solvers
+use the same numerical scheme. We compare the 25 evolved unknowns at the end of the
+run. The last column shows how far the first-order solution moved away from its
+initial condition, i.e. the scale of the dynamics.
+
+| unknown | max abs. difference SO vs. FO | relative L2 difference | max abs. change of FO in the run |
+|---|---|---|---|
+| G (xx, yy, zz) | 7.6e-6 / 4.1e-6 / 4.1e-6 | 3.4e-6 / 1.8e-6 / 1.8e-6 | 4.2e-2 / 2.1e-2 / 2.1e-2 |
+| K (xx, yy, zz) | 7.7e-5 / 4.1e-5 / 4.1e-5 | 2.3e-4 | 1.4e-1 / 7.9e-2 / 7.9e-2 |
+| lapse | 2.5e-6 | 1.0e-6 | 3.1e-2 |
+| phi | 2.0e-6 | 8.7e-7 | 1.1e-2 |
+| traceK | 1.3e-4 | 2.4e-4 | 2.3e-1 |
+| Z (x) | 5.0e-5 | 7.7e-5 | 3.1e-1 |
+| theta | 3.6e-5 | (not meaningful) | 1.9e-5 |
+| all others (off-diagonals, shift, b, Z_y, Z_z) | 0 | 0 | 0 |
+
+**Reading the table.** The two solvers agree to 1e-6 to 1e-4 in absolute terms,
+which is two to four orders of magnitude below the change of the solution within
+the run. The metric, the lapse and phi agree best (relative 1e-6), the extrinsic
+curvature and its trace worst (relative 2e-4). The remaining entries are
+identically zero for both (the gauge wave does not excite them). Theta (a measure of the
+Hamilton constraint violation) is tiny in the first-order run (it changes by 1.9e-5
+at most), and the two solvers differ by 3.6e-5, i.e. by more than the first-order
+solver's theta moves. The relative difference is therefore not meaningful. We have
+no reference solution for theta yet, so we cannot say which solver is closer to the
+truth.
+
+**Caveats.** One resolution, one end time, one test case. The comparison measures
+how close SO is to FO, not how accurate either of them is. A convergence study
+against the analytical gauge wave (@ref benchmarks_exagrype_gauge_wave), a
+longer run, and a black hole run are still missing.
+
+**Cost.** In the release build with 8 OpenMP threads (machine shared with other
+jobs, so treat with care), one reported TimeStep phase took about 0.15 s for the
+first-order solver and about 0.21 s for the second-order solver on this mesh,
+i.e. SO is about 40% slower per step. This is expected: SO reconstructs the
+derivatives in an extra mesh sweep per Runge-Kutta stage, exchanges an extra
+halo of 34 values per stage, and gathered/scattered the 59 entries in every PDE term
+evaluation (it does not anymore, the kernels take the primary and the secondary
+entries as two pointers). We did not profile it. SO stores fewer values per stage (25 instead of
+59 for the stage input, the right-hand-side estimates and the halo patch). A
+first, finer run (729 patches of 9^3 points) was killed by the operating system
+for the first-order solver (out of memory, 15 GB machine shared with other
+processes), while the second-order solver ran through with a resident set of
+about 3.5 GB. This is an observation, not a measurement.
+
+
+## Grid sizes and Finite Volumes
+
+The benchmark script now takes the scheme (FD4 or FV), the formulation (FO or SO) and the grid
+size (`python3 fo_vs_so.py`, `--build-mode=debug` for debug builds). Peano refines to at least three patches
+per axis and then in powers of three, and a patch has 9 points per axis, i.e. valid grids are 27^3 and 81^3
+points (a first attempt with 9, 18 and 45 points silently ran on the next larger grid). Setup otherwise as above: gauge wave, periodic unit cube,
+RK4 with lopsided advection, end time 0.1 (the last step overshoots, the time stamp is given). We also compare the lapse of
+both solvers against the analytical lapse
+\f$ \sqrt{1-0.1\sin(4\pi(x-t))} \f$. The wall time is the one of the whole run (setup, plots and about 33 (27^3) or
+100 (81^3) time steps; machine shared with other jobs, 8 threads, treat with care).
+
+| scheme | grid | t | max abs. diff. SO vs. FO (25 unknowns) | max abs. diff. of the lapse | rel. L2 lapse error FO | rel. L2 lapse error SO | wall time FO | wall time SO |
+|---|---|---|---|---|---|---|---|---|
+| FD4 | 27^3 | 0.102 | 1.3e-4 | 2.5e-6 | 1.1e-6 | 1.6e-6 | 4.8 s | 5.6 s |
+| FD4 | 81^3 | 0.101 | 1.6e-6 | 3.1e-8 | 1.4e-8 | 2.2e-8 | 300 s | 377 s |
+
+**Reading the table.** The 27^3 row reproduces the numbers of the first table
+(the largest difference is the one of traceK). Refining the grid by a factor of three reduces the
+difference between the two solvers by a factor of about 80, and the error of each solver against the analytical lapse
+by about 80 (FO) and 75 (SO), i.e. \f$ 3^4 \f$: both formulations converge with fourth order, and the SO solver stays within a factor of
+1.5 of the first-order solver's error. On the finer grid, SO is about 25% slower than FO per run (about 15% on the 27^3 grid, where setup and plots matter more).
+
+### Finite Volumes
+
+The FV variant (second-order central differences, one reconstruction task per step) builds,
+generates and runs, but we could **not** obtain a meaningful FV comparison. The reason is not
+the reconstructor: the Finite Volume time step kernel in 3d that exahype2.api.fv.RusanovWithExplicitEuler generates
+contains neither the non-conservative product, the source, nor the maximum eigenvalue. The kernel template guards these blocks with
+`if nonconservativeProduct:`, `if volumetricSource:`, `if maxEigenvalue:` (and `if flux:`), but
+the DSL parser compares the guard with the class names of the PDE terms
+(NonconservativeProduct, VolumetricSource, MaxEigenvalue, Flux, see exahype2.api.dslhype2.Parser._parse_if()), so the blocks are dropped. The generated kernel
+then only applies the Rusanov diffusion to the unknowns, and it never writes the maximum eigenvalue of the cell,
+so the global time step size is derived from uninitialised memory (time step sizes of 1e-280 or infinity after a few steps,
+for the first-order solver as well). This is a generic Finite Volume issue, independent of CCZ4, and it
+is why the FV runs of both formulations "worked" with an error of about 2e-2 against the analytical lapse (diffusion only) or
+broke down after a few steps. The fix is a rename in the kernel template (2d and 3d); it has not been applied, as it is outside
+of the files of this project. Once done, rerun `python3 fo_vs_so.py` and add the FV rows
+here.
+
 
 """
 
+import argparse
 import json
 import os
 import shutil
@@ -81,25 +189,52 @@ import exahype2.api
 import exagrype.api
 
 
-create_release_build = os.environ.get("FO_VS_SO_RELEASE", "0") == "1"
+parser = argparse.ArgumentParser(description="First-order vs. second-order CCZ4")
+parser.add_argument(
+    "--mode",
+    choices=["compare-only", "run-and-compare", "run", "build"],
+    default="run-and-compare",
+    help="build: generate and compile; run: build and run; "
+    "run-and-compare: build, run, print table; compare-only: print table from existing runs",
+)
+parser.add_argument(
+    "--build-mode",
+    choices=["debug", "release"],
+    default="release",
+    help="Build mode of the generated code. Debug also enables the generator logging.",
+)
+parser.add_argument(
+    "--sizes",
+    type=lambda text: [int(size) for size in text.split(",")],
+    default=[27, 81],
+    help="Comma-separated grid sizes (points per axis)",
+)
+parser.add_argument(
+    "--schemes",
+    type=lambda text: text.split(","),
+    default=["FD4", "FV"],
+    help="Comma-separated numerical schemes to build, run and compare (FD4, FV)",
+)
+parser.add_argument("--end-time", type=float, default=0.1, help="Simulation end time")
+parser.add_argument(
+    "--cfl", type=float, default=0.9, help="CFL constant of the FV scheme"
+)
+arguments = parser.parse_args()
+schemes = arguments.schemes
+for scheme in schemes:
+    if scheme not in ["FD4", "FV"]:
+        parser.error(f"unknown scheme {scheme}, use FD4 and/or FV")
 
-if create_release_build:
+if arguments.build_mode == "release":
     build_mode = peano4.api.output.CompileMode.RELEASE
-    end_time = 0.1
     verbosity = peano4.api.LoggerVerbosity.OFF
-    grid_sizes = [27, 81]
 else:
     build_mode = peano4.api.output.CompileMode.DEBUG
-    end_time = 0.02
     verbosity = peano4.api.LoggerVerbosity.VISUALISATION
-    grid_sizes = [27]
-if "FO_VS_SO_SIZES" in os.environ:
-    grid_sizes = [int(size) for size in os.environ["FO_VS_SO_SIZES"].split(",")]
-
-end_time = float(os.environ.get("FO_VS_SO_END", end_time))
+grid_sizes = arguments.sizes
+end_time = arguments.end_time
 time_in_between_plots = end_time / 2.0
 patch_size = 9
-schemes = ["FD4", "FV"]
 formulations = ["FO", "SO"]
 
 
@@ -107,10 +242,10 @@ def directory_of(scheme, formulation, cells):
     return f"run-{scheme}-{formulation}-{cells}"
 
 
-def build_and_run(scheme, formulation, cells):
+def build(scheme, formulation, cells):
     """!
 
-    Generate, build and run one solver on one grid in its own directory
+    Generate and build one solver on one grid in its own directory
 
     @param scheme: str
       FD4 or FV.
@@ -171,7 +306,7 @@ def build_and_run(scheme, formulation, cells):
         case "FV":
             # No advection, no dissipation: the shift of the gauge wave is zero
             solver.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(
-                solver, patch_size, cfl_constant=float(os.environ.get("FO_VS_SO_CFL", "0.9"))
+                solver, patch_size, cfl_constant=arguments.cfl
             )
             solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
                 solver, volume_size=volume_size
@@ -185,7 +320,8 @@ def build_and_run(scheme, formulation, cells):
     # The reconstructor of the second-order solver is part of the solver
 
     project.compiler = (
-        peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_fusion
+        #peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_fusion
+        peano4.api.taskgraph.compiler.FuseSteps.translate
     )
     project.set_global_simulation_parameters(
         dimensions=3,
@@ -203,6 +339,25 @@ def build_and_run(scheme, formulation, cells):
     peano4_project = project.generate_Peano4_project(verbosity=verbosity)
     peano4_project.generate()
     peano4_project.build(make_clean_first=True)
+
+
+def run(scheme, formulation, cells):
+    """!
+
+    Run the executable built by build() and store its wall time
+
+    @param scheme: str
+      FD4 or FV.
+
+    @param formulation: str
+      FO or SO.
+
+    @param cells: int
+      Grid points per axis.
+
+    """
+    directory = directory_of(scheme, formulation, cells)
+    executable = f"fo-vs-so-{scheme}-{formulation}-{cells}"
     start = time.time()
     if subprocess.call([f"./{executable}"], cwd=directory) != 0:
         sys.exit(f"{scheme} {formulation} {cells} run failed")
@@ -337,15 +492,12 @@ def compare():
         )
 
 
-if len(sys.argv) > 1 and sys.argv[1] == "compare":
-    compare()
-elif len(sys.argv) > 1 and sys.argv[1] == "run":
-    build_and_run(sys.argv[2], sys.argv[3], int(sys.argv[4]))
-else:
+if arguments.mode != "compare-only":
     for scheme in schemes:
         for cells in grid_sizes:
             for formulation in formulations:
-                subprocess.check_call(
-                    [sys.executable, __file__, "run", scheme, formulation, str(cells)]
-                )
+                build(scheme, formulation, cells)
+                if arguments.mode != "build":
+                    run(scheme, formulation, cells)
+if arguments.mode in ["compare-only", "run-and-compare"]:
     compare()

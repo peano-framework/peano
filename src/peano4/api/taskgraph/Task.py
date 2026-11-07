@@ -125,12 +125,41 @@ class Task:
         holding its last dependency
         (@ref peano4.api.taskgraph.compiler.FuseSteps.translate()).
 
+        GLOBAL_START_OF_STEP and GLOBAL_END_OF_STEP are GLOBAL tasks that are
+        tied to the beginning and the end of the whole task graph rather than
+        to the traversal of their dependencies. Both do not require a mesh
+        traversal of their own:
+
+        - A GLOBAL_START_OF_STEP task runs first, i.e. its action sets are the
+          first ones of the first traversal. It may not depend on any task.
+          Other tasks may depend on it, but this is trivial.
+        - A GLOBAL_END_OF_STEP task runs last, i.e. its action sets are the
+          last ones of the last traversal, after all other tasks including
+          the other GLOBAL tasks. Only other GLOBAL_END_OF_STEP tasks may
+          depend on it, which orders them among each other. A typical
+          example is the global CFL condition, which reduces data in
+          unprepareTraversal() only.
+
+        Task graph compilers that do not fuse tasks guarantee the same order
+        (@ref peano4.api.taskgraph.Graph.Graph.ordered_tasks()).
+
         """
 
         VERTEX = 1
         FACE = 2
         CELL = 3
         GLOBAL = 4
+        GLOBAL_START_OF_STEP = 5
+        GLOBAL_END_OF_STEP = 6
+
+        @property
+        def is_global(self) -> bool:
+            """! True for GLOBAL, GLOBAL_START_OF_STEP and GLOBAL_END_OF_STEP """
+            return self in (
+                Task.GridEntity.GLOBAL,
+                Task.GridEntity.GLOBAL_START_OF_STEP,
+                Task.GridEntity.GLOBAL_END_OF_STEP,
+            )
 
     class DataAccess(enum.Enum):
         """!
@@ -221,8 +250,8 @@ class Task:
         self.vertex_data_access: dict = {}
         self.has_to_repeat = task_has_to_repeat
         self.may_spawn_background_tasks = may_spawn_background_tasks
-        assert not (entity == Task.GridEntity.GLOBAL and task_has_to_repeat is not None), (
-            f"Task {name} is GLOBAL and hence may not repeat"
+        assert not (entity.is_global and task_has_to_repeat is not None), (
+            f"Task {name} is global and hence may not repeat"
         )
 
     def add_dependency(self, task: "Task"):
@@ -240,7 +269,7 @@ class Task:
         into every touch-cell/create-cell/... operation.
 
         """
-        assert self.entity != Task.GridEntity.GLOBAL, f"Task {self.name} is GLOBAL and hence may not use cell data"
+        assert not self.entity.is_global, f"Task {self.name} is global and hence may not use cell data"
         self.cell_data.append(submodel)
         self.cell_data_access[submodel] = qualifier
 
@@ -252,7 +281,7 @@ class Task:
         for what qualifier to pass.
 
         """
-        assert self.entity != Task.GridEntity.GLOBAL, f"Task {self.name} is GLOBAL and hence may not use face data"
+        assert not self.entity.is_global, f"Task {self.name} is global and hence may not use face data"
         self.face_data.append(submodel)
         self.face_data_access[submodel] = qualifier
 
@@ -264,7 +293,7 @@ class Task:
         for what qualifier to pass.
 
         """
-        assert self.entity != Task.GridEntity.GLOBAL, f"Task {self.name} is GLOBAL and hence may not use vertex data"
+        assert not self.entity.is_global, f"Task {self.name} is global and hence may not use vertex data"
         self.vertex_data.append(submodel)
         self.vertex_data_access[submodel] = qualifier
 

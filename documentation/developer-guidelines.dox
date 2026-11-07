@@ -1,17 +1,123 @@
 /**
 
-@page page_developer_guidelines_home Developer guidelines and tips
+@page page_developer_guidelines_home Developer guidelines: AI-/agent-based development and tips
 
 \tableofcontents
 
-This page collects design philosophy notes, patterns, idioms and practical tips that
-recur throughout Peano and its extensions. Where the @ref page_architecture_home
+This page collects design philosophy notes, and practical tips that
+help working with Peano and its extensions. Where the @ref page_architecture_home
 "architecture page" explains how the code is organised into layers, this page captures
-*why* certain recurring implementation choices were made, and *how* to work with the
+*why* recurring implementation choices were made, and *how* to work with the
 code base day to day, so both can be reused (or deliberately deviated from) consistently.
 
 
-# Python motivation
+# AI usage
+
+A lot of Peano's conventions are now written down as skills, so they are ready to
+use for AI. The same holds for basic, reoccuring design steps: Some developers obviously
+will write down steps directly in Python or modify existing code, but others will try to 
+rely predominantly on an AI agent.
+
+## Setting up your skills environment
+
+Skills in Peano are scattered all over the place and typically held next to the underlying
+discussion. For example, the skill that creates all the documentation is held next to the 
+documentation discussion in this folder. Most AI agents want all the skills together in their
+own working directory. So when you start a new project, you first of all have to tell your system to 
+become aware of all of these skills.
+
+### Claude Code
+
+Claude holds all the skills in a .skills directory. Therefore, please type in the following 
+lines when you work with Claude code once per session:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Search all the directories of this project for SKILL.md files. If a directory holds a SKILL.md file, create a symlink to this directory in your local .claude/skills/.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If this does not work, exit Claude and invoke the script documentation/load-skills.sh. It is safe to rerun. Afterwards, restart Claude (or open
+a new session) so that the skill list is reloaded. Type ```/skills``` to verify that the skills
+are visible; the conventions skill has to show up as ```peano:format-conventions```. 
+
+
+## Installing all the default skills
+
+Peano employs very few default skills, but there are a few that we'd recommend to use:
+
+1. The automatic source code generation, as it allows you to have a webbrowser open next to your
+   skills terminal and read the outcomes as they drop in. In Claude Code, add this as post-hook:
+   
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   /peano:regen-docs
+   Invoke this skill every time after we alter a C++ or Python or documentation file in the background, i.e. make it a post-hook.
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. Ask the AI agent to always first present a plan before any changes are made.
+
+
+<div style="background-color: #cfc ; padding: 10px; border: 1px solid green;">
+ Even though the documentation generation and some validation scripts might be automatic post-hooks, it makes sense to invoke them
+ manually every now and then, and to read carefully through their details.
+</div>
+
+
+## Skill usage
+
+### Keeping peano:format-conventions alive
+
+The skill `peano:format-conventions` (held in `documentation/conventions/SKILL.md`) encodes
+the rules from @ref page_conventions_home "the conventions page" plus a few code quality
+checks (layering, inheritance depth, C++ documentation in headers, ...). It only helps if
+the agent really applies it, so treat it as a mandatory habit:
+
+1. **Make sure it is linked.** It is picked up by `documentation/load-skills.sh` like every
+   other skill. If `/skills` does not list it, rerun the script and restart the session.
+   A new skill folder is not visible to a session that started before the link was created.
+2. **Invoke it at the end of every work package.** Before you commit, run
+   `/peano:format-conventions`. The skill itself only touches files with significant text
+   changes, so it is cheap to run frequently.
+3. **Make it a rule rather than a memory.** Put a line into the project's `CLAUDE.md` (or your
+   personal memory), such as "After any non-trivial change to C++, Python or .dox files, run
+   /peano:format-conventions before reporting the task as complete."
+4. **Read its findings.** The skill reports flaws instead of silently fixing design issues. Review
+   them, and either fix them or consciously decide to deviate.
+5. **Keep it current.** Whenever the conventions change, edit `conventions.dox` and the skill
+   together. The skill points to `conventions.dox` as the single source of truth for formatting rules.
+   Whenever you add a skill, document it on this page and rerun the loader script.
+
+
+
+## Architecture decision records (ADRs)
+
+Design decisions that shape a subsystem and that code alone does not explain are written
+down as architecture decision records. An ADR lives next to the code it concerns in a folder
+called `adrs`, e.g. `src/exahype2/api/fv/adrs/`. To add one:
+
+1. Create the folder `adrs` in the directory of the affected component if it does not exist yet.
+2. Add a Markdown file `NNNN-short-title.md` with the next free number. State the status and
+   date, the context (what problem, what was there before), the decision and its
+   consequences. Focus on why, not only on what. Never rewrite an accepted ADR: supersede it by a new one
+   that references it.
+3. Reference the ADR from the documentation of the affected classes or pages.
+4. Run `documentation/load-skills.sh`. Besides the skills, it links every `adrs` folder into
+   `.claude/rules/` (as `adr-<path>`), so Claude reads the decisions at the start of the next session.
+   Restart Claude afterwards. As all ADRs are loaded into the context, keep them short.
+
+
+## Create your own skills
+
+With Claude code, we predominantly load the skill-creator which is loaded via
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/anthropic-skills:skill-creator
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+And then tell them which file to write to explicitly. Once finished, you return the load skills command from above, and your are done.
+
+
+
+# Python rationale and remarks
+
+## Motivation
 
 Previous generations of Peano and the first generation of ExaHyPE 2 relied on
 C++ template meta programming to generate code and lacked any Python support.
@@ -22,55 +128,48 @@ knowledge.
 In the age of LLMs, we notably wanted to create a piece of software which is
 easy to use with a language model. For this purpose, Python is hard to beat.
 
+When it comes to certain design flaws/patterns, we decided to hold them within
+a skill rather than to write them down here, as this allows agent-based programming
+to remain consistent with the existing code base:
 
+@include{doc} documentation/conventions/SKILL.md
 
-# Patterns and idioms
+# Hunting bugs
 
-- In the original ExaHyPE 2 rewrite, we did rely a lot on Jinja 2 templates to
-  generate all kind of files. As the code evolved, we decided that we want to
-  move away from Jinja 2 templates as they are hard to maintain and to debug.
-  Notably, they imply that knowledge is scattered between the template and the Python code,
-  while we saw more and more logic migrate from the Python files into the templates.
-- A Python layer only writes into the Python layer below it. Notably, no ExaHyPE 2 api generator writes directly into the Peano 4 layer. This is a design choice to avoid that knowledge is scattered across layers.
+## Assertions
 
-
-# Hunting bugs with the logging
-
-Peano's `tarch::logging` infrastructure (info, warning, error, debug and tracing
-messages, plus log filters to narrow down which classes actually report) is documented
-in full on the @ref tarch_logging "logging, tracing, statistics, profiling and assertions"
-page. This section is not a repeat of that reference; it is the practical workflow to
-follow when you actually have to hunt a bug.
-
-<div style="background-color: #fcc ; padding: 10px; border: 1px solid green;">
 Before you write a single logDebug statement or chase a stack trace, rebuild against one
 of the ```_debug``` or ```_asserts``` archive flavours (see the @ref sec_installation_build_variants "build variants" section of the installation page) and, ideally, link the ```_debug``` variant first. Release archives
 compile assertions out entirely (```-DPeanoDebug=0```), so a bug that trips an invariant will
 either silently corrupt state or segfault miles away from its actual cause. Assertions
 are by far the fastest way to localise a defect - let the code tell you where it broke
 before you start guessing.
-</div>
 
-Once you are linked against a debug/asserts build, a productive way to narrow down a bug is:
 
-1.  **Let assertions fail first.** An assertion failure names the exact file, line and
-    (often) the offending values, and it flushes all pending log output before the rank
-    goes down. Read that flushed log before you touch anything else - the last few debug
-    lines before the assertion usually tell you which @ref glossary_observer "algorithmic step" was in flight.
-2.  **Reproduce with the smallest configuration you can.** Fewer cells, one rank, one
+## Logging
+
+Peano's `tarch::logging` infrastructure (info, warning, error, debug and tracing
+messages, plus log filters to narrow down which classes actually report) is documented
+in full on the @ref tarch_logging "logging, tracing, statistics, profiling and assertions"
+page. This section is not a repeat of that reference; it is the practical workflow to
+follow when you actually have to hunt a bug:
+
+1.  **Reproduce with the smallest configuration you can.** Fewer cells, one rank, one
     thread, a coarse mesh. Peano's traversal order is deterministic for a given setup, so
     a smaller reproducer keeps the same code paths without the noise of a production run.
-3.  **Switch on debug logging for the suspect classes only**, rather than globally. A full
+2.  **Switch on debug logging for the suspect classes only**, rather than globally. A full
     `-DPeanoDebug=4` run on anything but a toy setup produces gigabytes of output you will
     never read. Use a log filter file (see the log filter section on the logging page) to
     whitelist just the classes/namespaces you suspect, e.g. the @ref glossary_observer "observer" or @ref glossary_events_and_action_sets "action set" you
     are debugging plus `peano4::grid` for the traversal itself.
-4.  **Use `tarch::logging::LogFilter::switchProgramPhase()`** if the bug only shows up in
+3.  **Use `tarch::logging::LogFilter::switchProgramPhase()`** if the bug only shows up in
     one phase of a multi-step algorithm (e.g. only during grid construction, not during
     the time stepping). This lets you keep the filter file small and phase-specific instead
     of drowning in logs from unrelated phases.
-5.  **Escalate to `_debug` before you escalate to a debugger.** Peano's logging plus
-    assertions localise the vast majority of bugs on their own; reach for `gdb`/gpu
-    debuggers only once the log trail runs cold.
+    
+## Study the FAQ
+
+Peano offers @ref page_faq_home, which provide often sufficient information and tackle the
+most common issues. After that, escalate the problem on Slack.
 
 */

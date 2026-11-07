@@ -1,3 +1,5 @@
+import pytest
+
 from peano4.api.taskgraph import Graph, Task
 from peano4.api.taskgraph.compiler import FuseSteps
 from peano4.api.solversteps import SynchroniseActionSets, get_task_groups
@@ -268,3 +270,116 @@ def test_face_task_writing_vertex_data_prevents_fusion():
     tasks[0].use_vertex(vertex_data, WRITE)
     tasks[1].use_vertex(vertex_data, READ_AND_DISCARD)
     assert _step_names(graph) == ["S_T0", "S_T1"]
+
+
+START = Task.GridEntity.GLOBAL_START_OF_STEP
+END = Task.GridEntity.GLOBAL_END_OF_STEP
+
+
+def _graph_with_global_tasks(*tasks):
+    graph = Graph()
+    for task in tasks:
+        if not task.action_sets:
+            task.add_action_set(_FakeActionSet(task.name))
+        graph.add_task(task)
+    return graph
+
+
+def _action_sets_per_step(graph):
+    return [
+        [action_set.name for action_set in step.action_sets]
+        for step in FuseSteps.translate(graph, "S", None)
+    ]
+
+
+def test_start_and_end_of_step_tasks_open_and_close_the_first_and_last_traversal():
+    cell_1, cell_2 = Task("c1", CELL), Task("c2", CELL)
+    cell_2.add_dependency(cell_1)
+    # They are the last and first in the graph, but ought to be first and last
+    end = Task("end", END)
+    end.add_dependency(cell_2)
+    start = Task("start", START)
+    graph = _graph_with_global_tasks(end, cell_1, cell_2, start)
+
+    # No traversal of their own
+    assert _action_sets_per_step(graph) == [["start", "c1", "c2", "end"]]
+
+
+def test_end_of_step_tasks_come_after_other_global_tasks_and_follow_their_dependencies():
+    cell = Task("c", CELL)
+    global_task = Task("g", Task.GridEntity.GLOBAL)
+    global_task.add_dependency(cell)
+    first_end = Task("end1", END)
+    second_end = Task("end2", END)
+    second_end.add_dependency(first_end)
+    graph = _graph_with_global_tasks(second_end, first_end, cell, global_task)
+
+    assert _action_sets_per_step(graph) == [["c", "g", "end1", "end2"]]
+
+
+def test_global_tasks_of_the_step_do_not_pull_other_tasks_into_the_traversal():
+    """The start task is not a predecessor that delays: both cell tasks share a layer"""
+    start = Task("start", START)
+    cell_1, cell_2 = Task("c1", CELL), Task("c2", CELL)
+    cell_1.add_dependency(start)
+    cell_2.add_dependency(start)
+    graph = _graph_with_global_tasks(start, cell_1, cell_2)
+
+    assert _action_sets_per_step(graph) == [["start", "c1", "c2"]]
+    assert [step.action_sets[1].parallel for step in FuseSteps.translate(graph, "S", None)] == [True]
+
+
+def test_start_of_step_task_may_not_depend_on_anything():
+    cell = Task("c", CELL)
+    start = Task("start", START)
+    start.add_dependency(cell)
+    graph = _graph_with_global_tasks(cell, start)
+    with pytest.raises(AssertionError, match="may not depend"):
+        FuseSteps.translate(graph, "S", None)
+
+
+def test_only_end_of_step_tasks_may_depend_on_end_of_step_tasks():
+    end = Task("end", END)
+    cell = Task("c", CELL)
+    cell.add_dependency(end)
+    graph = _graph_with_global_tasks(end, cell)
+    with pytest.raises(AssertionError, match="only other GLOBAL_END_OF_STEP"):
+        FuseSteps.translate(graph, "S", None)
+
+
+def test_repeating_first_and_last_traversal_get_their_own_start_and_end_traversal():
+    start = Task("start", START)
+    refine = Task("refine", CELL, task_has_to_repeat="condition")
+    plot = Task("plot", CELL, task_has_to_repeat="again")
+    plot.add_dependency(refine)
+    end = Task("end", END)
+    end.add_dependency(plot)
+    graph = _graph_with_global_tasks(start, refine, plot, end)
+
+    # Otherwise, start and end would run in every repetition
+    assert _action_sets_per_step(graph) == [["start"], ["refine"], ["plot"], ["end"]]
+
+
+def test_start_and_end_of_step_tasks_without_other_tasks():
+    graph = _graph_with_global_tasks(Task("start", START), Task("end", END))
+    assert _action_sets_per_step(graph) == [["start", "end"]]
+
+
+def test_ordered_tasks_put_start_first_and_end_last():
+    cell = Task("c", CELL)
+    end = Task("end", END)
+    end.add_dependency(cell)
+    start = Task("start", START)
+    graph = Graph()
+    for task in [end, cell, start]:
+        graph.add_task(task)
+    assert [task.name for task in graph.ordered_tasks()] == ["start", "c", "end"]
+
+
+def test_global_tasks_may_not_hold_data_or_repeat():
+    for entity in [START, END]:
+        task = Task("t", entity)
+        with pytest.raises(AssertionError):
+            task.use_cell(_FakeSubmodel("Q"), WRITE)
+        with pytest.raises(AssertionError):
+            Task("t", entity, task_has_to_repeat="condition")

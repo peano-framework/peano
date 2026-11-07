@@ -24,20 +24,19 @@ class UpdateCellGPU(AbstractFVActionSet):
     size, which are taken from the solver (getMinTimeStamp() and
     getMinTimeStepSize()) rather than from per-cell bookkeeping.
 
-    The compute kernel returns the maximum eigenvalue over the patch it has
-    just updated. The action set stores it in the cell data
-    solver._max_eigenvalue. exahype2.api.fv.actionsets.ComputeGlobalCFLCondition
-    reduces these values in a subsequent mesh traversal and derives the
-    next time step size from them.
+    The kernel does not return any eigenvalue: exahype2.api.fv.actionsets.ComputeMaxEigenvalue
+    determines it in a task of its own, and
+    exahype2.api.fv.actionsets.ComputeGlobalCFLCondition derives the next
+    time step size from it.
 
     """
 
-    def __init__(self, solver: Solver, guard, max_eigenvalue=None):
+    def __init__(self, solver: Solver, guard):
         """!
 
         @param solver: exahype2.api.Solver
-          Has to have solver._patch, solver._patch_with_halo and
-          solver._max_eigenvalue set - @see
+          Has to have solver._patch and
+          solver._patch_with_halo set - @see
           exahype2.api.fv.RusanovWithExplicitEuler.
 
         @param guard: str
@@ -46,14 +45,9 @@ class UpdateCellGPU(AbstractFVActionSet):
           output of the solver's grid_selector (@see
           peano4.api.toolbox.GridSelector).
 
-        @param max_eigenvalue: peano4.api.datamodel.DaStGen2
-          The cell data the maximum eigenvalue goes into (first entry).
-          Defaults to solver._max_eigenvalue.
-
         """
         AbstractFVActionSet.__init__(self, solver)
         self.guard = guard
-        self._max_eigenvalue = max_eigenvalue if max_eigenvalue is not None else solver._max_eigenvalue
 
     def get_body_of_operation(self, operation_name):
         result = ""
@@ -89,7 +83,6 @@ class UpdateCellGPU(AbstractFVActionSet):
   gpuPatchData.copyBackAndDestroy();
   {code_to_copy_back_kernel_output(solver, "kernelOut", unknowns_out)}
 
-  fineGridCell{self._max_eigenvalue.name}.setMaxEigenvalue( 0, patchData.maxEigenvalue[0] );
 """
         return result
 

@@ -167,7 +167,9 @@ def test_constraint_enforcement_after_each_runge_kutta_stage(tmp_path):
     for anchor, successor, patch in [
         ("Prepare stage 1", "Project stage 1 onto faces", solver._stage_input),
         ("Prepare stage 2", "Project stage 2 onto faces", solver._stage_input),
-        ("Complete time step", "Project solution onto faces", solver._patch),
+        # With adaptive time stepping, the maximum eigenvalue of the constrained
+        # solution comes before the projection
+        ("Complete time step", "Compute max eigenvalue", solver._patch),
     ]:
         clip = tasks[f"Probe_Enforce CCZ4 constraints after {anchor}"]
         assert clip.dependencies == [tasks[f"Probe_{anchor}"]]
@@ -218,8 +220,7 @@ def test_constraint_enforcement_after_both_writers_of_optimistic_finite_volumes(
     [action_set] = clip.action_sets
     assert action_set.guard == solver.grid_selector.createCellGuard()
     for consumer in [
-        "Project on faces",
-        "Compute global CFL condition",
+        "Compute max eigenvalue",
         "Spawn patch interior update",
         "Discard patch interior",
     ]:
@@ -240,7 +241,7 @@ def test_constraint_enforcement_after_plain_finite_volumes(tmp_path):
     )
     clip = tasks["Probe_Enforce CCZ4 constraints after Update cell"]
     assert _enforcements(tasks) == [clip.name]
-    assert tasks["Probe_Project on faces"].dependencies == [clip]
+    assert tasks["Probe_Compute max eigenvalue"].dependencies == [clip]
 
 
 def test_constraint_enforcement_rejects_unknown_scheme(tmp_path):
@@ -261,3 +262,25 @@ def test_constraint_enforcement_rejects_unknown_scheme(tmp_path):
             exagrype.api.FOCCZ4Solver.EnforceCCZ4Constraint.OnlyFinalSolution,
             tmp_path,
         )
+
+
+def test_sink_tasks_of_forking_graph():
+    graph = peano4.api.taskgraph.Graph()
+    a, b, c, d = (_cell_task(name) for name in "abcd")
+    b.add_dependency(a)
+    c.add_dependency(a)
+    d.add_dependency(b)
+    for task in [a, b, c, d]:
+        graph.add_task(task)
+
+    assert graph.sink_tasks() == [c, d]
+
+
+def test_sink_tasks_of_chain_and_empty_graph():
+    graph = peano4.api.taskgraph.Graph()
+    assert graph.sink_tasks() == []
+    a, b = _cell_task("a"), _cell_task("b")
+    b.add_dependency(a)
+    graph.add_task(a)
+    graph.add_task(b)
+    assert graph.sink_tasks() == [b]

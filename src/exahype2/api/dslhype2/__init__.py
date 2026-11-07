@@ -8,6 +8,16 @@ from .Types import *
 from .Parser import Parser
 from .printers.CPPPrinter import CPPPrinter
 from .printers.OMPTargetPrinter import OMPTargetPrinter
-from .printers.MLIRPrinter import MLIRPrinter
 from .kernels import Target
 from .kernels import translate_dslhype_function
+
+
+def __getattr__(name):
+    """!
+    Lazy import of the MLIR printer, so xdsl is only required if it is used.
+    """
+    if name == "MLIRPrinter":
+        from .printers.MLIRPrinter import MLIRPrinter
+
+        return MLIRPrinter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

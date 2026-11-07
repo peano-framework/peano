@@ -33,25 +33,39 @@ The code below sets this graph up:
 reconstruction_task        = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reconstruct and apply BCs",    entity=peano4.api.taskgraph.Task.GridEntity.CELL)
 update_cell_task           = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Update cell",                  entity=peano4.api.taskgraph.Task.GridEntity.CELL)
 project_on_faces_task      = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Project on faces",             entity=peano4.api.taskgraph.Task.GridEntity.CELL)
-compute_cfl_condition_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+compute_eigenvalue_task    = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute max eigenvalue",        entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+reduce_eigenvalue_task     = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reduce max eigenvalue",         entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+compute_cfl_condition_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL_END_OF_STEP)
 
 update_cell_task.add_dependency(reconstruction_task)
-project_on_faces_task.add_dependency(update_cell_task)
-compute_cfl_condition_task.add_dependency(update_cell_task)
+compute_eigenvalue_task.add_dependency(update_cell_task)
+reduce_eigenvalue_task.add_dependency(compute_eigenvalue_task)
+project_on_faces_task.add_dependency(reduce_eigenvalue_task)
+compute_cfl_condition_task.add_dependency(reduce_eigenvalue_task)
 
 time_step.add_task(reconstruction_task)
 time_step.add_task(update_cell_task)
+time_step.add_task(compute_eigenvalue_task)
+time_step.add_task(reduce_eigenvalue_task)
 time_step.add_task(project_on_faces_task)
 time_step.add_task(compute_cfl_condition_task)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The CFL condition has a task of its own: The update task's action set
-(exahype2.api.fv.actionsets.UpdateCell) stores the maximum eigenvalue of
-every patch it updates in the cell. The task "Compute global CFL condition"
-(exahype2.api.fv.actionsets.ComputeGlobalCFLCondition) then reduces these
-values and derives the next global time step size from them. It only
-depends on the update, i.e. it can run in parallel to the projection onto
-the faces.
+The CFL condition is split into three tasks. The update kernel does not
+return an eigenvalue. The task "Compute max eigenvalue"
+(exahype2.api.fv.actionsets.ComputeMaxEigenvalue) invokes a kernel of its own
+on each updated patch and stores the maximum eigenvalue in the cell. The task
+"Reduce max eigenvalue" (exahype2.api.fv.actionsets.ReduceMaxEigenvalue)
+takes the maximum over all cells. The task "Compute global CFL condition"
+(exahype2.api.fv.actionsets.ComputeGlobalCFLCondition) finally derives the
+next global time step size from this maximum in unprepareTraversal(). It
+touches no cell, i.e. it is a Task.GridEntity.GLOBAL_END_OF_STEP task which
+does not need a mesh traversal of its own. The task graph compiler fuses
+update, eigenvalue computation and reduction into one mesh traversal. The
+same pattern is used by the Runge-Kutta Finite Difference scheme
+(exahype2.api.rkfd4.CentralDifferencesWithRungeKutta), where it follows the
+final linear combination. The decision is documented in
+src/exahype2/api/fv/adrs/0001-separate-eigenvalue-kernel-and-reduction.md.
 
 Every Task is tagged with the kind of mesh entity it works on
 (Task.GridEntity.VERTEX/FACE/CELL) and the tasks it depends on. A new

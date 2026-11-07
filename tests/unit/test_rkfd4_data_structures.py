@@ -64,10 +64,26 @@ def test_data_names_carry_solver_name():
     ]
 
 
+def _reduction_methods(solver):
+    return [declaration for declaration, _ in solver._abstract_solver_methods]
+
+
+def test_adaptive_time_step_size_stores_the_eigenvalue_per_cell_and_reduces_it_in_the_solver():
+    """! Per cell, then the reduction is a global datum which the solver hosts """
+    solver, scheme = _scheme()
+    assert scheme.has_adaptive_time_step_size
+    assert solver._max_eigenvalue is not None
+    assert _reduction_methods(solver) == [
+        "void reduceMaxEigenvalue(double eigenvalue);",
+        "double getAndResetMaxEigenvalue();",
+    ]
+
+
 def test_fixed_time_step_size_needs_no_eigenvalue():
     solver, scheme = _scheme(time_step_size=0.01)
     assert not scheme.has_adaptive_time_step_size
     assert solver._max_eigenvalue is None
+    assert _reduction_methods(solver) == []
 
 
 def test_add_data_to_repository_exchanges_current_face_data_only():

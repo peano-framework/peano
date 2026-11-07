@@ -16,10 +16,10 @@ class ComputeTimeStepSize(AbstractRKFD4ActionSet):
     - Fixed time step sizes: the next time step size is the one passed to
       the constructor.
     - Adaptive time step sizes: exahype2.api.rkfd4.actionsets.ComputeMaxEigenvalue
-      stores the maximum eigenvalue of every patch in the cell data
-      solver._max_eigenvalue. touchCellFirstTime() folds each cell's value
-      into the static _maxEigenvalue, and unprepareTraversal() derives the
-      next time step size from the global maximum through the CFL condition
+      reduces the maximum eigenvalue of every patch into the solver. The
+      action set reads and resets it (getAndResetMaxEigenvalue()), takes the
+      maximum over all ranks, and derives the next time step size from it
+      through the CFL condition
       @f$ \\Delta t = C h / (d \\lambda _{max}) @f$, with h the minimal grid
       cell size, d the dimension and C the CFL constant.
 
@@ -38,29 +38,30 @@ class ComputeTimeStepSize(AbstractRKFD4ActionSet):
     getMinTimeStepSize()==getMaxTimeStepSize() always hold, a single
     updateCell() call per time step is enough.
 
+    The action set only acts in unprepareTraversal() and touches no mesh data.
+    The task that hosts it hence is a GLOBAL_END_OF_STEP task
+    (@ref peano4.api.taskgraph.Task.Task.GridEntity), which the task graph
+    compiler fuses into the last traversal of the time step instead of
+    spending a traversal on it. Why the reduction over the cells happens
+    elsewhere: a task that touches cells could not be of this kind.
+
     The class is derived from exahype2.api.fv.actionsets.ComputeGlobalCFLCondition,
     as rkfd4 does not depend on the Finite Volume package. Consult the
-    latter for details on the reduction over threads and ranks.
+    latter for details on the reduction over ranks.
 
     """
 
-    def __init__(
-        self, solver, patch_size, guard, cfl_constant=None, time_step_size=None
-    ):
+    def __init__(self, solver, patch_size, cfl_constant=None, time_step_size=None):
         """!
 
         @param solver: exahype2.api.Solver
-          With adaptive time stepping, solver._max_eigenvalue has to be set.
+          With adaptive time stepping, the solver has to host the reduction of
+          the maximum eigenvalue (@ref exahype2.api.rkfd4.CentralDifferencesWithRungeKutta).
 
         @param patch_size: int
           Number of grid cells per patch and axis. The CFL condition is
           evaluated over the grid cell size, i.e. the mesh cell size divided
           by patch_size.
-
-        @param guard: str
-          C++ boolean expression, evaluated per cell in touchCellFirstTime,
-          guarding whether that cell contributes to the CFL condition. Has
-          to match the guard of exahype2.api.rkfd4.actionsets.ComputeMaxEigenvalue.
 
         @param cfl_constant: float or None
           CFL constant for adaptive time stepping.
@@ -73,7 +74,6 @@ class ComputeTimeStepSize(AbstractRKFD4ActionSet):
         AbstractRKFD4ActionSet.__init__(self, solver)
         if (cfl_constant is None) == (time_step_size is None):
             raise ValueError("Set exactly one of cfl_constant and time_step_size")
-        self.guard = guard
         self.patch_size = patch_size
         self.cfl_constant = cfl_constant
         self.time_step_size = time_step_size
@@ -82,9 +82,6 @@ class ComputeTimeStepSize(AbstractRKFD4ActionSet):
     def is_adaptive(self) -> bool:
         return self.cfl_constant is not None
 
-    def get_body_of_prepareTraversal(self):
-        return "  _maxEigenvalue = 0.0;\n" if self.is_adaptive else ""
-
     def get_body_of_unprepareTraversal(self):
         instance = "repositories::" + self._solver.get_name_of_global_instance()
         if self.is_adaptive:
@@ -92,8 +89,7 @@ class ComputeTimeStepSize(AbstractRKFD4ActionSet):
   const peano4::grid::GridStatistics globalStatistics = peano4::parallel::SpacetreeSet::getInstance().getGridStatistics();
   const double                       globalMinGridCellH = tarch::la::max( globalStatistics.getMinH() ) / {self.patch_size};
 
-  // No semaphore required here, as it is only called once per rank
-  double localMaxEigenvalue  = _maxEigenvalue;
+  double localMaxEigenvalue  = {instance}.getAndResetMaxEigenvalue();
   double globalMaxEigenvalue = localMaxEigenvalue;
   #ifdef Parallel
   tarch::mpi::Rank::getInstance().allReduce(
@@ -129,33 +125,11 @@ class ComputeTimeStepSize(AbstractRKFD4ActionSet):
 """
         )
 
-    def get_attributes(self):
-        if not self.is_adaptive:
-            return ""
-        return """
-  static double                              _maxEigenvalue;
-  static tarch::multicore::BooleanSemaphore  _semaphore;
-"""
-
-    def get_static_initialisations(self, full_qualified_classname):
-        if not self.is_adaptive:
-            return ""
-        return (
-            "double "
-            + full_qualified_classname
-            + "::_maxEigenvalue = 0.0;\n"
-            + "tarch::multicore::BooleanSemaphore "
-            + full_qualified_classname
-            + "::_semaphore;\n"
-        )
-
     def get_includes(self):
         return (
             AbstractRKFD4ActionSet.get_includes(self)
             + """
 #include <algorithm>
-#include "tarch/multicore/BooleanSemaphore.h"
-#include "tarch/multicore/Lock.h"
 #include "tarch/mpi/Rank.h"
 #include "tarch/services/ServiceRepository.h"
 #include "tarch/la/VectorOperations.h"
@@ -163,26 +137,6 @@ class ComputeTimeStepSize(AbstractRKFD4ActionSet):
 #include "peano4/grid/grid.h"
 """
         )
-
-    def get_body_of_operation(self, operation_name):
-        if (
-            self.is_adaptive
-            and operation_name
-            == peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
-        ):
-            return f"""
-  tarch::multicore::Lock lock(_semaphore);
-  _maxEigenvalue = std::max( fineGridCell{self._solver._max_eigenvalue.name}.getMaxEigenvalue(0), _maxEigenvalue );
-"""
-        return ""
-
-    def get_guard_of_operation(self, operation_name):
-        if (
-            operation_name
-            == peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
-        ):
-            return self.guard
-        return "true"
 
     def get_action_set_name(self):
         return __name__.replace(".py", "").replace(".", "_")

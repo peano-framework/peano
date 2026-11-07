@@ -18,7 +18,7 @@ class ReadjustTimeStepSizeForOptimisticGlobalTimestepping(AbstractFVActionSet):
     smaller one (@see exahype2::Solver::getAdmissibleTimeStepSize()):
 
     - If the admissible time step size is zero, i.e. in the very first time
-      step, there is no estimate yet. The action set sets the fourth entry
+      step, there is no estimate yet. The action set sets the third entry
       to zero and does not read the second entry.
     - If the estimate is bigger than the admissible time step size, we have
       overestimated the admissible time step size. The action set
@@ -29,7 +29,7 @@ class ReadjustTimeStepSizeForOptimisticGlobalTimestepping(AbstractFVActionSet):
       time step size (@see exahype2::Solver::enforceTimeStepSize()).
 
     In the latter two cases, the action set stores the admissible time step
-    size in the fourth entry. It is the time step size the solver could have
+    size in the third entry. It is the time step size the solver could have
     chosen, whether or not the estimate is enforced.
 
     """
@@ -57,7 +57,7 @@ class ReadjustTimeStepSizeForOptimisticGlobalTimestepping(AbstractFVActionSet):
             result = f"""
   const double admissibleTimeStepSize = {solver}.getAdmissibleTimeStepSize();
   if ( tarch::la::equals(admissibleTimeStepSize, 0.0) ) {{
-    {data}.setMaxEigenvalue(3, 0.0);
+    {data}.setMaxEigenvalue(2, 0.0);
   }}
   else {{
     const double estimatedTimeStepSize = {data}.getMaxEigenvalue(1);
@@ -67,7 +67,7 @@ class ReadjustTimeStepSizeForOptimisticGlobalTimestepping(AbstractFVActionSet):
     else {{
       {data}.setMaxEigenvalue(1, std::numeric_limits<double>::max());
     }}
-    {data}.setMaxEigenvalue(3, admissibleTimeStepSize);
+    {data}.setMaxEigenvalue(2, admissibleTimeStepSize);
   }}
 """
         return result

@@ -62,6 +62,14 @@ Both see the same 59 entries, but with swapped roles.
   time step (see below).
 
 
+
+<div style="background-color: #cdc ; padding: 10px; border: 1px solid green;">
+ The following text is easier to digest once you read the description on 
+ @ref page_exahype_programmers_guide_coupling and notably the section on 
+ multiplicative coupling there.
+</div>
+
+
 # Design
 
 ## Class structure

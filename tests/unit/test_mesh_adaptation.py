@@ -111,23 +111,30 @@ def test_finite_differences_handle_hanging_faces_in_every_stage(tmp_path):
     solver = _solver("rkfd4")
     tasks = _time_step_tasks(solver, tmp_path)
     for stage in range(2):
-        reconstruction = tasks[f"Probe_Reconstruct stage {stage}"]
-        assert any(
-            isinstance(a, toolbox.blockstructured.api.InterpolateHangingFaces)
-            for a in reconstruction.action_sets
-        )
-    for name in [
-        "Probe_Project stage 1 onto faces",
-        "Probe_Project solution onto faces",
-    ]:
-        kinds = [type(a) for a in tasks[name].action_sets]
-        restriction = kinds.index(toolbox.blockstructured.api.RestrictHangingFaces)
+        interpolation = tasks[f"Probe_Interpolate hanging faces stage {stage}"]
+        assert [type(a) for a in interpolation.action_sets] == [
+            toolbox.blockstructured.api.InterpolateHangingFaces
+        ]
+        # The interpolation follows the reconstruction and precedes the right-hand side
+        assert tasks[f"Probe_Reconstruct stage {stage}"] in interpolation.dependencies
         assert (
-            kinds.index(exahype2.api.rkfd4.actionsets.ProjectPatchOntoFaces)
-            < restriction
+            interpolation
+            in tasks[f"Probe_Evaluate Runge-Kutta right hand side stage {stage}"].dependencies
         )
-        # The roll over has to copy the restricted data
-        assert restriction < len(kinds) - 1
+    # The projection, the restriction and the roll over form a chain of tasks,
+    # as the roll over has to copy the restricted data
+    for suffix in ["stage 1", "solution"]:
+        projection = tasks[f"Probe_Project {suffix} onto faces"]
+        restriction = tasks[f"Probe_Restrict {suffix} on hanging faces"]
+        roll_over = tasks[f"Probe_Roll over {suffix} faces"]
+        assert [type(a) for a in projection.action_sets] == [
+            exahype2.api.rkfd4.actionsets.ProjectPatchOntoFaces
+        ]
+        assert [type(a) for a in restriction.action_sets] == [
+            toolbox.blockstructured.api.RestrictHangingFaces
+        ]
+        assert restriction.dependencies == [projection]
+        assert roll_over.dependencies == [restriction]
 
 
 def test_user_defined_mesh_adaptation_is_kept(tmp_path):

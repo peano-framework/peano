@@ -4,6 +4,7 @@
 
 from . import initialvalues
 from . import actionsets
+from .Euler import Euler
 from .FOCCZ4Solver import FOCCZ4Solver
 from .CCZ4SolverBase import CCZ4SolverBase
 from .FOSOCCZ4Solver import FOSOCCZ4Solver

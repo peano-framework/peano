@@ -51,6 +51,24 @@ def test_2d_and_3d_kernels_test_for_the_same_pde_terms():
     def guards(kernel):
         return set(re.findall(r"^\s*if (\w+):", inspect.getsource(kernel), re.M))
 
-    expected = {"volumetricSource", "flux", "nonconservativeProduct", "maxEigenvalue"}
+    expected = {"volumetricSource", "flux", "nonconservativeProduct"}
     assert guards(explicit.timeStepWithRusanov2D) == expected
     assert guards(explicit.timeStepWithRusanov3D) == expected
+    assert guards(explicit.maxEigenvalueOverPatch2D) == {"maxEigenvalue"}
+    assert guards(explicit.maxEigenvalueOverPatch3D) == {"maxEigenvalue"}
+
+
+def test_time_step_kernels_do_not_return_an_eigenvalue():
+    for kernel in KERNELS:
+        assert "patchData.maxEigenvalue" not in inspect.getsource(kernel), (
+            kernel.__name__
+        )
+        assert "if maxEigenvalue:" not in inspect.getsource(kernel), kernel.__name__
+
+
+def test_eigenvalue_kernels_read_the_patch_without_halo():
+    for kernel in [explicit.maxEigenvalueOverPatch2D, explicit.maxEigenvalueOverPatch3D]:
+        source = inspect.getsource(kernel)
+        assert "patchData.maxEigenvalue" in source
+        assert "H" not in re.findall(r"\b[NH]V?\b", source), kernel.__name__
+        assert len(re.findall(r'eval\("maxEigenvalue", input, x', source)) >= 2

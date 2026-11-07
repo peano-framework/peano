@@ -36,7 +36,11 @@ def _solver(scheme, criterion=True, **bounds):
 
 
 def _last_task(solver, tmp_path):
-    """! The one task of the time step on which no other task depends"""
+    """!
+    The one task of the time step on which no other task depends, apart from
+    the tasks that act at the end of the time step (such as the one that
+    computes the time step size)
+    """
     exahype2_project = types.SimpleNamespace(periodic_BC=[True, True, True])
     peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
     time_step = peano4.api.taskgraph.Graph()
@@ -44,7 +48,12 @@ def _last_task(solver, tmp_path):
     dependencies = {
         id(dependency) for task in time_step.tasks for dependency in task.dependencies
     }
-    [last] = [task for task in time_step.tasks if id(task) not in dependencies]
+    [last] = [
+        task
+        for task in time_step.tasks
+        if id(task) not in dependencies
+        and task.entity != Task.GridEntity.GLOBAL_END_OF_STEP
+    ]
     return last
 
 

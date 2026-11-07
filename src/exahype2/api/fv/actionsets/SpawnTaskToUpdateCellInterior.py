@@ -12,7 +12,7 @@ class SpawnTaskToUpdateCellInterior(AbstractFVActionSet):
     Update the patch interior with a damped time step size
 
     The action set takes the admissible time step size of the current time
-    step, i.e. the fourth entry of solver._max_eigenvalue_and_time_step_sizes
+    step, i.e. the third entry of solver._max_eigenvalue_and_time_step_sizes
     (@see exahype2.api.fv.actionsets.ReadjustTimeStepSizeForOptimisticGlobalTimestepping),
     multiplies it with damp_time_step_size, and stores the result as
     estimated time step size in the second entry. Afterwards, it updates the
@@ -36,8 +36,7 @@ class SpawnTaskToUpdateCellInterior(AbstractFVActionSet):
 
     If the admissible time step size is zero, i.e. in the very first time
     step, there is nothing to estimate from. The action set then does not
-    update the patch interior. It sets the maximum eigenvalue of the patch
-    interior (third entry) to zero and the estimated time step size
+    update the patch interior. It sets the estimated time step size
     (second entry) to the maximum double value, so the next time step
     takes the traditional route.
 
@@ -112,12 +111,11 @@ class SpawnTaskToUpdateCellInterior(AbstractFVActionSet):
             update = self._update_cell_interior.get_body_of_operation(operation_name)
             if self.task_number is None:
                 result = f"""
-  if ( tarch::la::equals({data}.getMaxEigenvalue(3), 0.0) ) {{
+  if ( tarch::la::equals({data}.getMaxEigenvalue(2), 0.0) ) {{
     {data}.setMaxEigenvalue( 1, std::numeric_limits<double>::max() );
-    {data}.setMaxEigenvalue( 2, 0.0 );
   }}
   else {{
-    double dampedTimeStepSize = {self.damp_time_step_size} * {data}.getMaxEigenvalue(3);
+    double dampedTimeStepSize = {self.damp_time_step_size} * {data}.getMaxEigenvalue(2);
     {data}.setMaxEigenvalue( 1, dampedTimeStepSize );
 """ + update + """
   }
@@ -126,13 +124,12 @@ class SpawnTaskToUpdateCellInterior(AbstractFVActionSet):
                 task_number = f"fineGridCell{self.task_number.name}"
                 patch = f"fineGridCell{self._solver._patch.name}"
                 result = f"""
-  if ( tarch::la::equals({data}.getMaxEigenvalue(3), 0.0) ) {{
+  if ( tarch::la::equals({data}.getMaxEigenvalue(2), 0.0) ) {{
     {data}.setMaxEigenvalue( 1, std::numeric_limits<double>::max() );
-    {data}.setMaxEigenvalue( 2, 0.0 );
     {task_number}.setTaskNumber( tarch::multicore::TaskEnumerator::NoNumber );
   }}
   else {{
-    const double dampedTimeStepSize             = {self.damp_time_step_size} * {data}.getMaxEigenvalue(3);
+    const double dampedTimeStepSize             = {self.damp_time_step_size} * {data}.getMaxEigenvalue(2);
     const double timeStampOfPatchInteriorUpdate = {solver}.getMinTimeStamp() + {solver}.getMinTimeStepSize();
     {data}.setMaxEigenvalue( 1, dampedTimeStepSize );
 

@@ -33,6 +33,9 @@ from .actionsets import RollOverUpdatedFaceWithSommerfeldBoundaryConditions
 from .actionsets import UpdateCell
 from .actionsets import UpdateCellGPU
 from .actionsets import ComputeGlobalCFLCondition
+from .actionsets import ComputeMaxEigenvalue
+from .actionsets import ReduceMaxEigenvalue
+from .MaxEigenvalueReduction import add_max_eigenvalue_reduction
 
 from ..VolumetricSource import VolumetricSource
 from ..Flux import Flux
@@ -58,7 +61,6 @@ def timeStepWithRusanov2D(patchData: "::exahype2::CellData<double, double>&") ->
     dt = DataBlock([[0, N]], "patchData.dt", "double")
     h = DataBlock([[0, N]], "patchData.cellSize", "tarch::la::Vector<2, double>")
     x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<2, double>")
-    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
 
     input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [-H, NV + H], [-H, NV + H], [0, N]], "patchData.QIn")
     output = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, N]], "patchData.QOut")
@@ -106,11 +108,6 @@ def timeStepWithRusanov2D(patchData: "::exahype2::CellData<double, double>&") ->
        nonconservative_y = DataBlock([[0, NumberOfUnknowns], [0, NV], [0, NV + H], [0, N]], eval("nonconservativeProduct", average_y, delta_y, x, h, t, dt, 1))
        output[0:NumberOfUnknowns, :, :] = output[0:NumberOfUnknowns, :, :] + 0.5 * NV * dt / h(1) * (-nonconservative_y[:, 0:NV, 0:NV] - nonconservative_y[:, 0:NV, 1:NV+1])
 
-    if maxEigenvalue:
-      maxEigenvaluesX2 = DataBlock([[0, 1], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", output, x, 0))
-      maxEigenvaluesY2 = DataBlock([[0, 1], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", output, x, 1))
-      maxEigenvaluesPerVolume = max(maxEigenvaluesX2, maxEigenvaluesY2)
-      maxEigenvalues = max(maxEigenvaluesPerVolume)
 
 ## Explicit Euler time step with a Rusanov flux over a 3d patch.
 def timeStepWithRusanov3D(patchData: "::exahype2::CellData<double, double>&") -> "void":
@@ -119,7 +116,6 @@ def timeStepWithRusanov3D(patchData: "::exahype2::CellData<double, double>&") ->
     dt = DataBlock([[0, N]], "patchData.dt", "double")
     h = DataBlock([[0, N]], "patchData.cellSize", "tarch::la::Vector<3, double>")
     x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<3, double>")
-    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
 
     input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [-H, NV + H], [-H, NV + H], [-H, NV + H], [0, N]], "patchData.QIn")
     output = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, NV], [0, N]], "patchData.QOut")
@@ -177,12 +173,34 @@ def timeStepWithRusanov3D(patchData: "::exahype2::CellData<double, double>&") ->
        nonconservative_z = DataBlock([[0, NumberOfUnknowns], [0, NV], [0, NV], [0, NV + H], [0, N]], eval("nonconservativeProduct", average_z, delta_z, x, h, t, dt, 2))
        output[0:NumberOfUnknowns, :, :, :] = output[0:NumberOfUnknowns, :, :, :] + 0.5 * NV * dt / h(2) * (-nonconservative_z[:, 0:NV, 0:NV, 0:NV] - nonconservative_z[:, 0:NV, 0:NV, 1:NV+1])
 
+
+## Maximum eigenvalue over a 2d patch without halo (patchData.QIn) into patchData.maxEigenvalue
+def maxEigenvalueOverPatch2D(patchData: "::exahype2::CellData<double, double>&") -> "void":
+    N = Integer("patchData.numberOfCells")
+    x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<2, double>")
+    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
+    input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, N]], "patchData.QIn")
+
     if maxEigenvalue:
-      maxEigenvaluesX2 = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", output, x, 0))
-      maxEigenvaluesY2 = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", output, x, 1))
-      maxEigenvaluesZ2 = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", output, x, 2))
-      maxEigenvaluesXY = max(maxEigenvaluesX2, maxEigenvaluesY2)
-      maxEigenvaluesPerVolume = max(maxEigenvaluesXY, maxEigenvaluesZ2)
+      maxEigenvaluesX = DataBlock([[0, 1], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", input, x, 0))
+      maxEigenvaluesY = DataBlock([[0, 1], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", input, x, 1))
+      maxEigenvaluesPerVolume = max(maxEigenvaluesX, maxEigenvaluesY)
+      maxEigenvalues = max(maxEigenvaluesPerVolume)
+
+
+## Maximum eigenvalue over a 3d patch without halo (patchData.QIn) into patchData.maxEigenvalue
+def maxEigenvalueOverPatch3D(patchData: "::exahype2::CellData<double, double>&") -> "void":
+    N = Integer("patchData.numberOfCells")
+    x = DataBlock([[0, N]], "patchData.cellCentre", "tarch::la::Vector<3, double>")
+    maxEigenvalues = DataBlock([[0, N]], "patchData.maxEigenvalue", "double")
+    input = DataBlock([[0, NumberOfUnknowns + NumberOfAuxiliaryVariables], [0, NV], [0, NV], [0, NV], [0, N]], "patchData.QIn")
+
+    if maxEigenvalue:
+      maxEigenvaluesX = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", input, x, 0))
+      maxEigenvaluesY = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", input, x, 1))
+      maxEigenvaluesZ = DataBlock([[0, 1], [0, NV], [0, NV], [0, NV], [0, N]], eval("maxEigenvalue", input, x, 2))
+      maxEigenvaluesXY = max(maxEigenvaluesX, maxEigenvaluesY)
+      maxEigenvaluesPerVolume = max(maxEigenvaluesXY, maxEigenvaluesZ)
       maxEigenvalues = max(maxEigenvaluesPerVolume)
 
 
@@ -281,6 +299,7 @@ class RusanovWithExplicitEuler(Solver.NumericalScheme):
         # Set in construct_output(): the generated kernels live in the project
         # namespace, as their names are solver-specific
         self.kernel_namespace = None
+        self.max_eigenvalue_kernel_call = None
         self.cfl_constant = cfl_constant
         self._generator = RusanovWithExplicitEulerGenerator(solver, [(Target.Serial, False)])
         self.__create_data_structures()
@@ -293,6 +312,15 @@ class RusanovWithExplicitEuler(Solver.NumericalScheme):
         solvers' kernels do not clash.
         """
         return self._solver.name + "_timeStepWithRusanov"
+
+    @property
+    def max_eigenvalue_kernel_function_name(self) -> str:
+        """!
+        Name of the generated kernel which determines the maximum eigenvalue
+        over a patch. It is a kernel of its own, i.e. the time step kernel
+        does not return any eigenvalue (@ref exahype2.api.fv.actionsets.ComputeMaxEigenvalue).
+        """
+        return self._solver.name + "_maxEigenvalueOverPatch"
 
     def __create_data_structures(self):
         """!
@@ -323,9 +351,11 @@ class RusanovWithExplicitEuler(Solver.NumericalScheme):
           followed by MaxEigenvalue (e.g. EulerFVSmoothMaxEigenvalue),
           which holds the maximum eigenvalue of
           the patch after its last update
-          (@see exahype2.api.fv.actionsets.UpdateCell).
-          exahype2.api.fv.actionsets.ComputeGlobalCFLCondition reduces these
-          values into the next time step size. It is modelled via DaStGen2
+          (@see exahype2.api.fv.actionsets.ComputeMaxEigenvalue).
+          exahype2.api.fv.actionsets.ReduceMaxEigenvalue reduces these
+          values into the solver, and
+          exahype2.api.fv.actionsets.ComputeGlobalCFLCondition derives the
+          next time step size from the outcome. It is modelled via DaStGen2
           as an array of cardinality one. The array is a
           peano4.api.dastgen2.Peano4SmartPointerDoubleArray, i.e. the value
           resides on the heap.
@@ -387,6 +417,7 @@ class RusanovWithExplicitEuler(Solver.NumericalScheme):
         self._solver._max_eigenvalue.data.add_attribute(
             peano4.api.dastgen2.Peano4SmartPointerDoubleArray("maxEigenvalue", 1)
         )
+        add_max_eigenvalue_reduction(self._solver)
 
 
     def __add_data_to_repository(self, peano_project):
@@ -505,15 +536,25 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         # Although we may generate multiple definitions for the purpose of benchmarking, we
         # only need one kernel call
         self._solver.compute_kernel_call = self.__construct_kernel_calls()[0]
+        # The eigenvalue kernel always runs on the host
+        self._solver.numerical_scheme.max_eigenvalue_kernel_call = self.__construct_kernel_call(
+            Target.Serial,
+            self._configurations[0][1],
+            self._solver.numerical_scheme.max_eigenvalue_kernel_function_name,
+        )
         self.__create_time_step_functions(peano_project.directory)
         
         reconstruction_task         = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reconstruct", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         update_cell_task            = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Update cell", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         project_on_faces_task       = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Project on faces", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
-        compute_cfl_condition_task  = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.CELL, may_spawn_background_tasks=False)
+        compute_eigenvalue_task     = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute max eigenvalue", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        reduce_eigenvalue_task      = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reduce max eigenvalue", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        compute_cfl_condition_task  = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL_END_OF_STEP, may_spawn_background_tasks=False)
         
         time_step.add_task(reconstruction_task)
         time_step.add_task(update_cell_task)
+        time_step.add_task(compute_eigenvalue_task)
+        time_step.add_task(reduce_eigenvalue_task)
         time_step.add_task(project_on_faces_task)
         time_step.add_task(compute_cfl_condition_task)
 
@@ -549,7 +590,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         dynamic_mesh_refinement_task.add_action_set(
             toolbox.loadbalancing.api.actionsets.LoadBalancing(enable_load_balancing=True)
         )
-        dynamic_mesh_refinement_task.add_dependency(compute_cfl_condition_task)
+        dynamic_mesh_refinement_task.add_dependency(reduce_eigenvalue_task)
         dynamic_mesh_refinement_task.add_dependency(project_on_faces_task)
         time_step.add_task(dynamic_mesh_refinement_task)
 
@@ -594,7 +635,6 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         use_halos_of_auxiliary_variables(update_cell_task, self._solver)
         update_cell_task.use_cell(self._solver._patch_with_halo, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
         update_cell_task.use_cell(self._solver._patch,           peano4.api.taskgraph.Task.DataAccess.WRITE)
-        update_cell_task.use_cell(self._solver._max_eigenvalue,  peano4.api.taskgraph.Task.DataAccess.WRITE)
         if self._configurations[0][0] == dslhype.Target.Accelerator:
             update_cell_task.add_action_set(
                 UpdateCellGPU(
@@ -611,21 +651,44 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
             )
         update_cell_task.tags.add(Solver.SolutionUpdateTaskTag)
 
-        ## Reduce the cells' maximum eigenvalues into the next time step size.
-        ## Runs in parallel to the projection onto the faces
-        compute_cfl_condition_task.add_dependency(update_cell_task)
-        compute_cfl_condition_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
+        ## Determine the maximum eigenvalue of the updated patches, store it
+        ## per cell and reduce it over all cells. The projection onto the faces
+        ## follows, as the update, the eigenvalue and the reduction fold into
+        ## one mesh traversal, whereas the projection writes the face data
+        ## which the reconstruction reads at the beginning of that traversal
+        compute_eigenvalue_task.add_dependency(update_cell_task)
+        compute_eigenvalue_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
+        compute_eigenvalue_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.WRITE)
+        for auxiliary in self._solver.auxiliary_variables:
+            compute_eigenvalue_task.use_cell(auxiliary.patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
+        compute_eigenvalue_task.add_action_set(
+            ComputeMaxEigenvalue(
+                self._solver,
+                guard=self._solver.grid_selector.createCellGuard(),
+            )
+        )
+        reduce_eigenvalue_task.add_dependency(compute_eigenvalue_task)
+        reduce_eigenvalue_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
+        reduce_eigenvalue_task.add_action_set(
+            ReduceMaxEigenvalue(
+                self._solver,
+                guard=self._solver.grid_selector.createCellGuard(),
+            )
+        )
+
+        ## Derive the next time step size from the reduced eigenvalue. This
+        ## acts in unprepareTraversal() at the end of the time step only
+        compute_cfl_condition_task.add_dependency(reduce_eigenvalue_task)
         compute_cfl_condition_task.add_action_set(
             ComputeGlobalCFLCondition(
                 self._solver,
                 self._solver.numerical_scheme.cfl_constant,
                 self._solver.numerical_scheme.patch_size,
-                guard=self._solver.grid_selector.createCellGuard(),
             )
         )
         
         ## Next project the new data onto the faces. Also roll over the solution
-        project_on_faces_task.add_dependency(update_cell_task)
+        project_on_faces_task.add_dependency(reduce_eigenvalue_task)
         project_on_faces_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         project_on_faces_task.use_face(self._solver._patch_overlap_update, peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
         project_on_faces_task.use_face(
@@ -742,6 +805,21 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
                 function_name=self._solver.numerical_scheme.kernel_function_name,
                 output_directory=output_directory,
             )
+        # The maximum eigenvalue is a kernel of its own, which always runs on the host
+        for stateless in sorted({stateless for (_, stateless) in self._configurations}):
+            for dimensions, function in [(2, maxEigenvalueOverPatch2D), (3, maxEigenvalueOverPatch3D)]:
+                dslhype.translate_dslhype_function(
+                    function = function,
+                    function_namespace = self._solver.numerical_scheme.kernel_namespace,
+                    template_parameters=template_parameters,
+                    functor_parameters=functor_parameters,
+                    pde_terms=self._solver.pde_terms,
+                    output_file_name=f"{self._solver.name}_rusanov{dimensions}d",
+                    target=dslhype.Target.Serial,
+                    stateless=stateless,
+                    function_name=self._solver.numerical_scheme.max_eigenvalue_kernel_function_name,
+                    output_directory=output_directory,
+                )
         for file_name in [f"{self._solver.name}_rusanov2d.h", f"{self._solver.name}_rusanov3d.h"]:
             file = open(os.path.join(kernels_directory, file_name), "a")
             file.write(f"""#include "{file_name.split(".")[0]}.cpph" """)
@@ -761,18 +839,23 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
             kernel_calls.append(self.__construct_kernel_call(target, stateless))
         return kernel_calls
     
-    def __construct_kernel_call(self, target: Target, stateless: bool):
+    def __construct_kernel_call(self, target: Target, stateless: bool, function_name: str = None):
         """!
 
         This function constructs the calls to the compute kernels based on the
         application PDE terms and the version chosen.
 
+        @param function_name: str
+          Unqualified name of the kernel. Defaults to the time step kernel.
+
         """
+        if function_name is None:
+            function_name = self._solver.numerical_scheme.kernel_function_name
         available_terms = ["flux", "nonconservativeProduct", "volumetricSource", "maxEigenvalue"]
 
         if stateless:
             # Stateless kernels require stateless functions, which are defined in the abstract solver
-            return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{self._solver.numerical_scheme.kernel_function_name}Stateless<
+            return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{function_name}Stateless<
         Abstract{self._solver.name},
         {self._solver.numerical_scheme.patch_size},
         {self._solver.numerical_scheme.overlap},
@@ -823,7 +906,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
     )->void {{
         repositories::{self._solver.get_name_of_global_instance()}.{application_term.name}({", ".join(arguments)});
     }}""")
-                return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{self._solver.numerical_scheme.kernel_function_name}<
+                return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{function_name}<
     {self._solver.numerical_scheme.patch_size},
     {self._solver.numerical_scheme.overlap},
     {self._solver.unknowns},
@@ -854,15 +937,25 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
         # Although we may generate multiple definitions for the purpose of benchmarking, we
         # only need one kernel call
         self._solver.compute_kernel_call = self.__construct_kernel_calls()[0]
+        # The eigenvalue kernel always runs on the host
+        self._solver.numerical_scheme.max_eigenvalue_kernel_call = self.__construct_kernel_call(
+            Target.Serial,
+            self._configurations[0][1],
+            self._solver.numerical_scheme.max_eigenvalue_kernel_function_name,
+        )
         self.__create_time_step_functions(exahype2_project, peano_project)
         
         reconstruction_task         = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reconstruct", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         update_cell_task            = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Update cell", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         project_on_faces_task       = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Project on faces", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
-        compute_cfl_condition_task  = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.CELL, may_spawn_background_tasks=False)
+        compute_eigenvalue_task     = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute max eigenvalue", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        reduce_eigenvalue_task      = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reduce max eigenvalue", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        compute_cfl_condition_task  = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute global CFL condition", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL_END_OF_STEP, may_spawn_background_tasks=False)
         
         time_step.add_task(reconstruction_task)
         time_step.add_task(update_cell_task)
+        time_step.add_task(compute_eigenvalue_task)
+        time_step.add_task(reduce_eigenvalue_task)
         time_step.add_task(project_on_faces_task)
         time_step.add_task(compute_cfl_condition_task)
 
@@ -898,7 +991,7 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
         dynamic_mesh_refinement_task.add_action_set(
             toolbox.loadbalancing.api.actionsets.LoadBalancing(enable_load_balancing=True)
         )
-        dynamic_mesh_refinement_task.add_dependency(compute_cfl_condition_task)
+        dynamic_mesh_refinement_task.add_dependency(reduce_eigenvalue_task)
         dynamic_mesh_refinement_task.add_dependency(project_on_faces_task)
         time_step.add_task(dynamic_mesh_refinement_task)
 
@@ -943,7 +1036,6 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
         use_halos_of_auxiliary_variables(update_cell_task, self._solver)
         update_cell_task.use_cell(self._solver._patch_with_halo, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
         update_cell_task.use_cell(self._solver._patch,           peano4.api.taskgraph.Task.DataAccess.WRITE)
-        update_cell_task.use_cell(self._solver._max_eigenvalue,  peano4.api.taskgraph.Task.DataAccess.WRITE)
         if self._configurations[0][0] == dslhype2.Target.Accelerator:
             update_cell_task.add_action_set(
                 UpdateCellGPU(
@@ -960,21 +1052,44 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
             )
         update_cell_task.tags.add(Solver.SolutionUpdateTaskTag)
 
-        ## Reduce the cells' maximum eigenvalues into the next time step size.
-        ## Runs in parallel to the projection onto the faces
-        compute_cfl_condition_task.add_dependency(update_cell_task)
-        compute_cfl_condition_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
+        ## Determine the maximum eigenvalue of the updated patches, store it
+        ## per cell and reduce it over all cells. The projection onto the faces
+        ## follows, as the update, the eigenvalue and the reduction fold into
+        ## one mesh traversal, whereas the projection writes the face data
+        ## which the reconstruction reads at the beginning of that traversal
+        compute_eigenvalue_task.add_dependency(update_cell_task)
+        compute_eigenvalue_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
+        compute_eigenvalue_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.WRITE)
+        for auxiliary in self._solver.auxiliary_variables:
+            compute_eigenvalue_task.use_cell(auxiliary.patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
+        compute_eigenvalue_task.add_action_set(
+            ComputeMaxEigenvalue(
+                self._solver,
+                guard=self._solver.grid_selector.createCellGuard(),
+            )
+        )
+        reduce_eigenvalue_task.add_dependency(compute_eigenvalue_task)
+        reduce_eigenvalue_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
+        reduce_eigenvalue_task.add_action_set(
+            ReduceMaxEigenvalue(
+                self._solver,
+                guard=self._solver.grid_selector.createCellGuard(),
+            )
+        )
+
+        ## Derive the next time step size from the reduced eigenvalue. This
+        ## acts in unprepareTraversal() at the end of the time step only
+        compute_cfl_condition_task.add_dependency(reduce_eigenvalue_task)
         compute_cfl_condition_task.add_action_set(
             ComputeGlobalCFLCondition(
                 self._solver,
                 self._solver.numerical_scheme.cfl_constant,
                 self._solver.numerical_scheme.patch_size,
-                guard=self._solver.grid_selector.createCellGuard(),
             )
         )
         
         ## Next project the new data onto the faces. Also roll over the solution
-        project_on_faces_task.add_dependency(update_cell_task)
+        project_on_faces_task.add_dependency(reduce_eigenvalue_task)
         project_on_faces_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         project_on_faces_task.use_face(self._solver._patch_overlap_update, peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
         project_on_faces_task.use_face(
@@ -1119,6 +1234,21 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
                 function_name=self._solver.numerical_scheme.kernel_function_name,
                 output_directory=output_directory,
             )
+        # The maximum eigenvalue is a kernel of its own, which always runs on the host
+        for stateless in sorted({stateless for (_, stateless) in self._configurations}):
+            dslhype2.translate_dslhype2_function(
+                function = maxEigenvalueOverPatch2D if dimensions == 2 else maxEigenvalueOverPatch3D,
+                dimensions=dimensions,
+                function_namespace = self._solver.numerical_scheme.kernel_namespace,
+                function_map=function_map,
+                external_variables=external_variables,
+                pde_terms=self._solver.pde_terms,
+                output_file_name=f"{self._solver.name}_rusanov{dimensions}d",
+                target=dslhype2.Target.Serial,
+                stateless=stateless,
+                function_name=self._solver.numerical_scheme.max_eigenvalue_kernel_function_name,
+                output_directory=output_directory,
+            )
         
         #for file_prefix in [f"{self._solver.name}_rusanov2d"]:#, f"{self._solver.name}_rusanov3d"]:
         file = open(os.path.join(kernels_directory, f"{self._solver.name}_rusanov{dimensions}d.h"), "a")
@@ -1141,18 +1271,23 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
             kernel_calls.append(self.__construct_kernel_call(target, stateless))
         return kernel_calls
     
-    def __construct_kernel_call(self, target: Target, stateless: bool):
+    def __construct_kernel_call(self, target: Target, stateless: bool, function_name: str = None):
         """!
 
         This function constructs the calls to the compute kernels based on the
         application PDE terms and the version chosen.
 
+        @param function_name: str
+          Unqualified name of the kernel. Defaults to the time step kernel.
+
         """
+        if function_name is None:
+            function_name = self._solver.numerical_scheme.kernel_function_name
         available_terms = ["flux", "nonconservativeProduct", "volumetricSource", "maxEigenvalue"]
 
         if stateless:
             # Stateless kernels require stateless functions, which are defined in the abstract solver
-            return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{self._solver.numerical_scheme.kernel_function_name}Stateless<
+            return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{function_name}Stateless<
         Abstract{self._solver.name}
     >(
         {"0," if target==Target.Accelerator else ""}
@@ -1199,7 +1334,7 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
     )->void {{
         repositories::{self._solver.get_name_of_global_instance()}.{application_term.name}({", ".join(arguments)});
     }}""")
-                return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{self._solver.numerical_scheme.kernel_function_name}(
+                return f"""::{"::".join(self._solver.numerical_scheme.kernel_namespace)}::{function_name}(
     patchData,
 {",\n".join(pde_term_calls)}
 );"""

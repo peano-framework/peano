@@ -53,6 +53,15 @@ few people are allowed to approve the merge.
 Obviously, users can fork out arbitrarily under their own temporary branches.
 
 
+<br /><br />
+<div style="background-color: #fcc ; padding: 10px; border: 1px solid green;">
+We appreciate your contributions. To make work easier for the consortium, please  
+either work within a organisation such as ExaGRyPE or your own, private fork.
+Further to that, please refrain from merging into p4 or to commit PRs against p4.
+Pick one of its direct children as fork target. 
+</div>
+
+
 ## Naming conventions
 
 If you create a new branch, please follow the two naming approaches:

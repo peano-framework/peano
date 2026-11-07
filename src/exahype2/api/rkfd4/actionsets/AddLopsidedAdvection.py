@@ -14,12 +14,15 @@ class AddLopsidedAdvection(AbstractRKFD4ActionSet):
     (solver._patch_with_halo) and adds the advection terms to the stage's
     slot of solver._rhs_estimates via
     exahype2::fd::addLopsidedAdvection(). It has to run after
-    exahype2.api.rkfd4.actionsets.EvaluateRightHandSide, which overwrites
+    exahype2.api.rkfd4.actionsets.EvaluateRungeKuttaRightHandSide, which overwrites
     the slot, within the same task. @ref
     exahype2.api.rkfd4.CentralDifferencesWithRungeKutta arranges this if
     the user selects the kernel CentralDifferencesWithLopsidedAdvection.
 
     """
+
+    TASK_NAME = "Add lopsided advection"
+    """! Name of the task which hosts the action set (@ref exahype2.api.rkfd4.CentralDifferencesWithRungeKutta) """
 
     def __init__(self, solver, stage, velocity, quantities, guard):
         """!

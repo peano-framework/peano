@@ -367,13 +367,21 @@ def add_reconstruction_of_auxiliary_variables(task, solver):
         )
 
 
-def use_halos_of_auxiliary_variables(task, solver):
-    """! Let a task (typically the update of the cells) read the halos of the auxiliary variables """
+def use_halos_of_auxiliary_variables(task, solver, access=None):
+    """!
+
+    Let a task (typically the update of the cells) read the halos of the auxiliary variables
+
+    @param access: peano4.api.taskgraph.Task.DataAccess
+      How the task uses the halos. Defaults to READ_AND_DISCARD. Pass another
+      qualifier if the halos have to survive the task, e.g. because a later
+      task of the same chain reads them, too.
+
+    """
+    if access is None:
+        access = peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD
     for auxiliary in solver.auxiliary_variables:
-        task.use_cell(
-            solver._auxiliary_variable_halos[auxiliary.name],
-            peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD,
-        )
+        task.use_cell(solver._auxiliary_variable_halos[auxiliary.name], access)
 
 
 def volumes_expression(patch_size: int, halo: int) -> str:

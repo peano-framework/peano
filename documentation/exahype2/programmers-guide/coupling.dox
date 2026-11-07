@@ -1,0 +1,146 @@
+/**
+
+@page page_exahype_programmers_guide_coupling Coupling different solvers
+
+\tableofcontents
+
+A brief discussion of how to couple differerent solvers.
+
+ExaHyPE offers the opportunity to host multiple solver files within one mesh, and to run them in parallel.
+This is extremely useful for applications such as UQ, where you run multiple solves for various inputs.
+It makes sense to host them in one mesh, as you pay the cost for load balancing et al only once.
+You can even make these different solvers run on different mesh levels.
+
+Obviously, this feature is also extremely interesting if we want to couple different solvers - for 
+example in a multiphysics sense or to extend a solver or to switch numerics.
+An all-time classic is the use of different numerics and PDEs in different areas of the domain.
+This page discusses various coupling aspects.
+
+## Auxiliary variables
+
+All volumetric coupling coupling is realised through auxiliary variables.
+This is a fundamental design pattern. 
+So if a solver A wants to exchange information with B, then A's information ends up as auxiliar data in B.
+
+Historically, we used to name auxiliary data ***material parameters***. 
+We switched to auxiliary, as material suggests that data are invariant.
+They are not.
+In the example above, A might alter its unknowns, which implies that they are seen in B as changing auxiliary values. 
+
+As of the summer 2026, ExaHyPE allows users to attach an arbitrary number of auxiliary variables to each solver,
+and indeed an auxiliary variable of one solver can be the real variable of another one.
+This is both to simplify coupling, but also to avoid that users have to copy around data all the time, which only stresses the memory bandwidth.
+
+
+
+## Multiplicative coupling
+
+Multiplicative coupling means that the state of the simulation evolves according to 
+
+@f$
+  Q(t+\delta t) = Q(t) + \left( \mathcal{U}_1 \circ \mathcal{U}_2 \right) Q(t).
+@f$
+
+In the context of a solver, this means that solver 2 updates some variables as well as some auxiliary data.
+Both these variables (and potentially auxiliary data) then feed into solver 1 (as auxiliary values) and then induce some updates.
+Overall, solver 2 feeds into 1.
+One comes after the other.
+
+ExaHyPE internally works with the notion of a task graph, which simplies the modelling of this type of coupling dramatically.
+We simply take the task graph of solver 1 and append the one of solver 2, respectively.
+All the remainder (notably finding the right number of required mesh sweeps) is done by ExaHyPE and Peano under the hood.
+
+<br /><br />
+<div style="background-color: #cfc ; padding: 10px; border: 1px solid green;">
+  The idea that one step follows the other logically still means that calculations can run in parallel.
+  ExaHyPE takes the task sequence and hands it over to an @ref peano4.api.taskgraph.compiler "task graph compiler", which then distills
+  which steps can be run in parallel.
+  So the sequence is logically sequential, but the compiler might find out that some steps from solver 2 can be overlapped with activities from solver 1.
+</div>
+
+### Case study
+
+A prime case study for the coupling is the first-order second-order CCZ4 solver.
+We benchmark it in @ref benchmarks_exagrype_fo_vs_so and explain the details on 
+@ref page_exagrype_fo_so_ccz4.
+Here, two solvers, @ref exagrype.api.FOSOCCZ4Solver and @ref exagrype.api.FOSOCCZ4Reconstructor
+take turns.
+Each one takes the primary evoluation variables of the other one as auxiliary variables.
+
+Below, we use the scheme FD4 from @ref benchmarks_exagrype_fo_vs_so and otherwise defaults only.
+The task graph of this setup looks like
+
+@image html documentation/exahype2/programmers-guide/coupling-additive-task-graph.png
+
+and we see clearly the tasks starting with the "stage 1" label coming first, and then tasks with
+the "stage 2 label" follow. 
+
+
+Peano's graph compiler will take this and depending on its realisation map this
+task graph onto different number of sweeps.
+Below is an example of a pure fusion:
+
+@image html documentation/exahype2/programmers-guide/coupling-additive-mesh-sweeps.png
+
+The whole task graph is now mappped onto mesh sweeps and some of them host data from 
+stage/solver 1 and some host data from stage/solver 2. So overall, we have fewer mesh
+sweeps than tasks in the task graph sequence.
+
+
+## Additive coupling
+
+Additive coupling means that the state of the simulation evolved according to 
+
+@f$
+  Q(t+\delta t) = Q(t) + \mathcal{U}_1 Q(t) + \mathcal{U}_2 Q(t) = (id + \mathcal{U}_1 + \mathcal{U}_2 ) Q(t).
+@f$
+
+
+In ExaHyPE, we do not provide a special mechanism for additive coupling. Instead, we 
+model the additive coupling via data dependencies. Let A1->A2->A3->A4 be the task graph of 
+solver A. B1->B2->B3 is the graph of B. We simply let the two chains run in parallel. For
+this, we introduce an empty meta task C->A1|B1 and drop the arising task graph down into 
+a task compiler.
+
+If A and B work on completely different data, this is kind of trivial. If they 
+share read-only data. If this is not the case, we have to copy data temporarily around.
+
+
+### Case study
+
+The CCZ4 solver in combination with Euler is an interesting case study. The CCZ4 
+solver itself yields a task graph similar to 
+
+@image html documentation/exahype2/programmers-guide/coupling-multiplicative-task-graph-CCZ4.png
+@image html documentation/exahype2/programmers-guide/coupling-multiplicative-task-graph-Euler.png
+
+which then gives us a beast alike
+
+@image html documentation/exahype2/programmers-guide/coupling-multiplicative-task-graph-coupled.png
+
+
+## Synchronise solvers
+
+Often, solvers have to synchronise with each other. For most solvers, they might
+for example want to agree on a joint time step size. For this, we have to embed 
+the arising task graph into KickOff or WrapUp tasks which ensure that the solver
+attributes become consistent.
+
+
+## AI Skills
+
+There is a dedicated AI skill to couple solvers written down as recipe in 
+`documentation/exahype2/programmers-guide/coupling/SKILL.md`. You can invoke it via
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/peano:couple-exahype-solvers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+The skill covers many technical aspects:
+
+@include{doc} documentation/exahype2/programmers-guide/coupling
+
+*/
+
+

@@ -8,21 +8,25 @@ import peano4.api
 class ComputeGlobalCFLCondition(AbstractFVActionSet):
     """!
 
-    Reduce the cells' maximum eigenvalues and derive the next global time
-    step size from the CFL condition.
+    Derive the next global time step size from the CFL condition.
 
-    exahype2.api.fv.actionsets.UpdateCell stores the maximum eigenvalue of
-    every patch it has updated in the cell data solver._max_eigenvalue. This
-    action set runs in a subsequent mesh traversal: touchCellFirstTime()
-    folds each cell's value into the static _maxEigenvalue, and
-    unprepareTraversal() turns the global maximum into the next time step
-    size and feeds it into ::exahype2::Solver's own time step bookkeeping
-    (updateCell()/finishTimeStep()/startTimeStep()). There is deliberately no
-    separate, solver-level time stamp/time step size state on top of
-    ::exahype2::Solver.
+    exahype2.api.fv.actionsets.ComputeMaxEigenvalue stores the maximum
+    eigenvalue of every patch per cell, and
+    exahype2.api.fv.actionsets.ReduceMaxEigenvalue reduces these values into
+    the solver. This action set acts in unprepareTraversal() only: it reads
+    and resets the solver's reduced maximum eigenvalue, turns it into the
+    next time step size, and feeds it into ::exahype2::Solver's own time
+    step bookkeeping (updateCell()/finishTimeStep()/startTimeStep()). There
+    is deliberately no separate, solver-level time stamp/time step size
+    state on top of ::exahype2::Solver.
 
-    Global time stepping: all cells share one time stamp and time step size,
-    which are taken from the solver (getMinTimeStamp() and
+    The action set touches no mesh data. The task that hosts it hence is a
+    GLOBAL_END_OF_STEP task (@ref peano4.api.taskgraph.Task.Task.GridEntity),
+    which the task graph compiler fuses into the last traversal of the time
+    step instead of spending a traversal on it.
+
+    Global time stepping: all cells share one time stamp and time step
+    size, which are taken from the solver (getMinTimeStamp() and
     getMinTimeStepSize()) rather than from per-cell bookkeeping.
 
     The kernel updates all dimensions in one explicit Euler step, so the CFL
@@ -37,12 +41,12 @@ class ComputeGlobalCFLCondition(AbstractFVActionSet):
 
     """
 
-    def __init__(self, solver, cfl_constant, patch_size, guard, max_eigenvalue=None):
+    def __init__(self, solver, cfl_constant, patch_size):
         """!
 
         @param solver: exahype2.api.Solver
-          Has to have solver._max_eigenvalue set - @see
-          exahype2.api.fv.RusanovWithExplicitEuler.
+          Has to host the reduction of the maximum eigenvalue (@ref
+          exahype2.api.fv.MaxEigenvalueReduction).
 
         @param cfl_constant: float
           Safety factor the admissible time step size is scaled down by,
@@ -57,46 +61,17 @@ class ComputeGlobalCFLCondition(AbstractFVActionSet):
           condition is evaluated over the volume size, i.e. the cell size
           divided by patch_size.
 
-        @param guard: str
-          C++ boolean expression, evaluated per cell in touchCellFirstTime,
-          guarding whether that cell contributes to the CFL condition. Has
-          to match the guard of exahype2.api.fv.actionsets.UpdateCell, as
-          only the cells updated there hold a valid maximum eigenvalue.
-
-        @param max_eigenvalue: peano4.api.datamodel.DaStGen2
-          The cell data holding the maximum eigenvalue (first entry).
-          Defaults to solver._max_eigenvalue.
-
         """
         AbstractFVActionSet.__init__(self, solver)
-        self.guard = guard
-        self._max_eigenvalue = max_eigenvalue if max_eigenvalue is not None else solver._max_eigenvalue
         self.cfl_constant = cfl_constant
         self.patch_size = patch_size
-
-    def get_body_of_prepareTraversal(self):
-        """!
-
-        prepareTraversal() is static - called once per rank, before any
-        instance of this action set is created - so it can only ever touch
-        static members, never a per-instance one. _maxEigenvalue is static
-        for exactly that reason: it is reset here, once, before every grid
-        sweep, and then accumulated into by potentially many instances of
-        this action set (one per tree, possibly running on different threads
-        concurrently) as touchCellFirstTime() visits the cells - see
-        _semaphore, which guards that concurrent access.
-
-        """
-        return "  _maxEigenvalue = 0.0;\n"
 
     def get_body_of_unprepareTraversal(self):
         """!
 
-        Called once per rank, after every instance of this action set for
-        the current grid sweep has already been destroyed (see
-        get_body_of_prepareTraversal()'s note on the static/per-instance
-        split) - the one safe place both to read _maxEigenvalue (nothing can
-        still be writing it) and to issue an MPI reduction:
+        Called once per rank, after the sweep - the one safe place both to
+        read the solver's reduced maximum eigenvalue (nothing can still be
+        writing it) and to issue an MPI reduction:
         tarch::mpi::Rank::allReduce()'s own documentation requires "only one
         thread per rank" to ever call it, which a once-per-rank static method
         already guarantees.
@@ -110,8 +85,8 @@ class ComputeGlobalCFLCondition(AbstractFVActionSet):
           reads the same, global value. GridStatistics holds the cell size;
           the CFL condition needs the volume size, i.e. the cell size
           divided by the patch size.
-        - _maxEigenvalue is a plain double, already only a local, per-rank
-          accumulation (see _semaphore) - that one *is* reduced directly via
+        - The solver's maximum eigenvalue is only a local, per-rank
+          accumulation - that one *is* reduced directly via
           tarch::mpi::Rank::allReduce(..., MPI_MAX, ...).
 
         Once newTimeStepSize is known, it folds it into the solver's own
@@ -147,8 +122,7 @@ class ComputeGlobalCFLCondition(AbstractFVActionSet):
   const peano4::grid::GridStatistics globalStatistics = peano4::parallel::SpacetreeSet::getInstance().getGridStatistics();
   const double                       globalMinVolumeH = tarch::la::max( globalStatistics.getMinH() ) / {self.patch_size};
 
-  // No semaphore required here, as it is only called once per rank
-  double localMaxEigenvalue  = _maxEigenvalue;
+  double localMaxEigenvalue  = repositories::{self._solver.get_name_of_global_instance()}.getAndResetMaxEigenvalue();
   double globalMaxEigenvalue = localMaxEigenvalue;
   #ifdef Parallel
   tarch::mpi::Rank::getInstance().allReduce(
@@ -175,28 +149,10 @@ class ComputeGlobalCFLCondition(AbstractFVActionSet):
   logInfo( "unprepareTraversal()", "t=" << repositories::{self._solver.get_name_of_global_instance()}.getMaxTimeStamp() << ", new dt=" << newTimeStepSize );
 """
 
-    def get_attributes(self):
-        return """
-  static double                              _maxEigenvalue;
-  static tarch::multicore::BooleanSemaphore  _semaphore;
-"""
-
-    def get_static_initialisations(self, full_qualified_classname):
-        return (
-            "double "
-            + full_qualified_classname
-            + "::_maxEigenvalue = 0.0;\n"
-            + "tarch::multicore::BooleanSemaphore "
-            + full_qualified_classname
-            + "::_semaphore;\n"
-        )
-
     def get_includes(self):
         return (
             AbstractFVActionSet.get_includes(self)
             + """
-#include "tarch/multicore/BooleanSemaphore.h"
-#include "tarch/multicore/Lock.h"
 #include "tarch/mpi/Rank.h"
 #include "tarch/services/ServiceRepository.h"
 #include "tarch/la/VectorOperations.h"
@@ -204,20 +160,6 @@ class ComputeGlobalCFLCondition(AbstractFVActionSet):
 #include "peano4/grid/grid.h"
 """
         )
-
-    def get_body_of_operation(self, operation_name):
-        result = ""
-        if operation_name == peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
-            result = f"""
-  tarch::multicore::Lock lock(_semaphore);
-  _maxEigenvalue = std::max( fineGridCell{self._max_eigenvalue.name}.getMaxEigenvalue(0), _maxEigenvalue );
-"""
-        return result
-
-    def get_guard_of_operation(self, operation_name):
-        if operation_name == peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
-            return self.guard
-        return "true"
 
     def get_action_set_name(self):
         return __name__.replace(".py", "").replace(".", "_")

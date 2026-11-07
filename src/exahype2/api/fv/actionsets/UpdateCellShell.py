@@ -15,8 +15,9 @@ class UpdateCellShell(AbstractFVActionSet):
     exahype2.api.fv.RusanovWithOptimisticExplicitEuler). It reads the
     halo-augmented reconstruction solver._patch_with_halo, invokes the
     shell compute kernel, and writes the shell of solver._patch. The patch
-    interior of solver._patch remains unchanged. The maximum eigenvalue of
-    the shell goes into the first entry of solver._max_eigenvalue_and_time_step_sizes.
+    interior of solver._patch remains unchanged. The kernel does not return any
+    eigenvalue, as exahype2.api.fv.actionsets.ComputeMaxEigenvalue determines
+    it for the whole patch afterwards.
 
     """
 
@@ -25,7 +26,7 @@ class UpdateCellShell(AbstractFVActionSet):
 
         @param solver: exahype2.api.Solver
           Has to have solver._patch, solver._patch_with_halo,
-          solver._max_eigenvalue_and_time_step_sizes and solver.compute_kernel_call_on_shell
+          and solver.compute_kernel_call_on_shell
           set - @see exahype2.api.fv.RusanovWithOptimisticExplicitEuler.
 
         @param guard: str
@@ -44,8 +45,6 @@ class UpdateCellShell(AbstractFVActionSet):
   double timeStepSize = repositories::{self._solver.get_name_of_global_instance()}.getMinTimeStepSize();
   ::exahype2::CellData patchData(fineGridCell{self._solver._patch_with_halo.name}.value, marker.x(), marker.h(), timeStamp, timeStepSize, fineGridCell{self._solver._patch.name}.value);
   {self._solver.compute_kernel_call_on_shell}
-
-  fineGridCell{self._solver._max_eigenvalue_and_time_step_sizes.name}.setMaxEigenvalue( 0, patchData.maxEigenvalue[0] );
 """
         return result
 
