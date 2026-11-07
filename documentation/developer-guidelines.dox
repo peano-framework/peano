@@ -132,7 +132,7 @@ When it comes to certain design flaws/patterns, we decided to hold them within
 a skill rather than to write them down here, as this allows agent-based programming
 to remain consistent with the existing code base:
 
-@include{doc} documentation/conventions/SKILL.md
+@include{doc,raise=2} documentation/conventions/SKILL.md
 
 # Hunting bugs
 

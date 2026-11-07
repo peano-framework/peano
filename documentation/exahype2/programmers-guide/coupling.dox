@@ -139,7 +139,7 @@ There is a dedicated AI skill to couple solvers written down as recipe in
 
 The skill covers many technical aspects:
 
-@include{doc} documentation/exahype2/programmers-guide/coupling
+@include{doc,raise=2} documentation/exahype2/programmers-guide/coupling/SKILL.md
 
 */
 

@@ -82,6 +82,14 @@ relevant for the additive scheme. It implies that WrapUp and KickOff might have 
 be inserted multiple times at the corresponding markers.
 
 
+## Optimise (additive coupling only)
+
+If we do temporary copies, do a C++ source code analysis and try to find out which 
+unknowns of the copied data are actually read. In principle, the developer could now
+narrow down the auxiliary variables. This required a code rewrite. It is easier to 
+only copy those unknowns which are actually used. The analysis needs a confirmation 
+by the user if this is all correct. 
+
 ## Wrap up question
 
 Analyse if both solvers use some input data from the other solver. If not, we work
