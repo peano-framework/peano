@@ -85,6 +85,7 @@ These pages are somehow dangling and need a clean-up/revision
 - Euler benchmarks
   - \subpage benchmarks_exahype2_euler_smooth_setup
   - \subpage benchmarks_exahype2_euler_smooth_fd4
+  - \subpage benchmarks_exahype2_euler_point_source
 - Shallow water benchmarks
   - \subpage benchmarks_exahype2_shallow_water_artificial_tsunami
 </div>

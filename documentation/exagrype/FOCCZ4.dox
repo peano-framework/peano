@@ -4,7 +4,7 @@
 There are two flavours of the CCZ4 solver. @ref exagrype.api.FOCCZ4Solver
 evolves all 59 unknowns of the first-order formulation.
 @ref exagrype.api.FOSOCCZ4Solver evolves the 25 primary unknowns only, and its
-partner @ref exagrype.api.FOSOCCZ4Reconstructor recomputes the 34 first
+partner @ref exagrype.api.FOSOReconstructionSolver recomputes the 34 first
 derivatives from them in front of each Runge-Kutta stage. Both share all CCZ4
 kernels via @ref exagrype.api.CCZ4SolverBase. The design, status and lab notes
 of the second flavour are collected on
@@ -20,7 +20,7 @@ their six independent components in the order xx, xy, xz, yy, yz, zz. The
 derivative blocks hold the derivative in the direction named in the label
 (x, y, z) in front of the remaining tensor index.
 The last column states whether @ref exagrype.api.FOSOCCZ4Solver evolves the
-entry (primary) or whether @ref exagrype.api.FOSOCCZ4Reconstructor recomputes it.
+entry (primary) or whether @ref exagrype.api.FOSOReconstructionSolver recomputes it.
 
 | Name     | Entries | Index range | Meaning                                              | FOSO    |
 |----------|---------|-------------|------------------------------------------------------|---------|

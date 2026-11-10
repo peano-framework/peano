@@ -167,9 +167,7 @@ def test_constraint_enforcement_after_each_runge_kutta_stage(tmp_path):
     for anchor, successor, patch in [
         ("Prepare stage 1", "Project stage 1 onto faces", solver._stage_input),
         ("Prepare stage 2", "Project stage 2 onto faces", solver._stage_input),
-        # With adaptive time stepping, the maximum eigenvalue of the constrained
-        # solution comes before the projection
-        ("Complete time step", "Compute max eigenvalue", solver._patch),
+        ("Complete time step", "Project solution onto faces", solver._patch),
     ]:
         clip = tasks[f"Probe_Enforce CCZ4 constraints after {anchor}"]
         assert clip.dependencies == [tasks[f"Probe_{anchor}"]]
@@ -183,6 +181,12 @@ def test_constraint_enforcement_after_each_runge_kutta_stage(tmp_path):
         )
         assert "::exagrype::ccz4::enforceCCZ4constraints(Q);" in body
         assert f"fineGridCell{patch.name}.value" in body
+    # With adaptive time stepping, the maximum eigenvalue of the constrained
+    # solution is determined after the projection
+    assert (
+        tasks["Probe_Project solution onto faces"]
+        in tasks["Probe_Compute max eigenvalue"].dependencies
+    )
 
 
 def test_constraint_enforcement_after_final_runge_kutta_solution_only(tmp_path):
@@ -248,7 +252,13 @@ def test_constraint_enforcement_rejects_unknown_scheme(tmp_path):
     import exagrype.api
 
     class UnknownScheme(exahype2.api.Solver.NumericalScheme):
-        def construct_output(self, exahype2_project, peano_project, time_step):
+        ## Required by the generation of the abstract solver
+        patch_size = 4
+        halo_size = 1
+
+        def construct_output(
+            self, exahype2_project, peano_project, time_step, add_global_tasks=True
+        ):
             pass
 
     class NoGridConstruction(exahype2.api.Solver.GridConstruction):

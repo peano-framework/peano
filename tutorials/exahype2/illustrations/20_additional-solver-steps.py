@@ -135,8 +135,8 @@ def insert_density_floor(solver, time_step, tag, patch):
 class RusanovWithDensityFloor(exahype2.api.fv.RusanovWithExplicitEuler):
     """! Finite Volumes which insert the density floor after each update"""
 
-    def construct_output(self, exahype2_project, peano_project, time_step):
-        super().construct_output(exahype2_project, peano_project, time_step)
+    def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
+        super().construct_output(exahype2_project, peano_project, time_step, add_global_tasks)
         insert_density_floor(
             self._solver,
             time_step,
@@ -148,8 +148,8 @@ class RusanovWithDensityFloor(exahype2.api.fv.RusanovWithExplicitEuler):
 class RungeKuttaWithDensityFloor(exahype2.api.rkfd4.CentralDifferencesWithRungeKutta):
     """! Runge-Kutta Finite Differences which insert the density floor after each stage"""
 
-    def construct_output(self, exahype2_project, peano_project, time_step):
-        super().construct_output(exahype2_project, peano_project, time_step)
+    def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
+        super().construct_output(exahype2_project, peano_project, time_step, add_global_tasks)
         insert_density_floor(
             self._solver,
             time_step,

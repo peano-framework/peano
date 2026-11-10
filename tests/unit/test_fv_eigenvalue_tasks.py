@@ -43,19 +43,28 @@ def test_eigenvalue_is_computed_stored_and_reduced_before_the_time_step_size(
     assert cfl.entity == Task.GridEntity.GLOBAL_END_OF_STEP
     assert reduce.dependencies == [compute]
     assert reduce in cfl.dependencies
-    assert tasks["Probe_Dynamic mesh refinement"].dependencies.count(reduce) == 1
+    assert tasks[f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}"].dependencies.count(reduce) == 1
 
 
-def test_explicit_eigenvalue_follows_the_update_and_precedes_the_projection(
+def test_time_step_size_is_computed_after_the_roll_over(tmp_path):
+    # Sommerfeld roll overs read the time step size, which the CFL task replaces
+    _, tasks, _ = _time_step("explicit", tmp_path)
+    cfl = tasks["Probe_Compute global CFL condition"]
+    assert "Probe_Roll over faces" not in tasks
+    assert tasks["Probe_Project on faces"] in cfl.dependencies
+    _, tasks, _ = _time_step("optimistic", tmp_path)
+    cfl = tasks["Probe_Compute global CFL condition"]
+    assert tasks["Probe_Project on faces"] in cfl.dependencies
+
+
+def test_explicit_eigenvalue_follows_the_update_and_runs_beside_the_projection(
     tmp_path,
 ):
     _, tasks, _ = _time_step("explicit", tmp_path)
     assert tasks["Probe_Compute max eigenvalue"].dependencies == [
         tasks["Probe_Update cell"]
     ]
-    assert tasks["Probe_Project on faces"].dependencies == [
-        tasks["Probe_Reduce max eigenvalue"]
-    ]
+    assert tasks["Probe_Project on faces"].dependencies == [tasks["Probe_Update cell"]]
 
 
 def test_optimistic_eigenvalue_follows_both_branches_and_runs_beside_the_spawn(
@@ -107,7 +116,14 @@ def test_update_eigenvalue_and_reduction_fold_into_one_traversal(scheme, tmp_pat
         if "UpdateCell" in step_names and "ComputeMaxEigenvalue" in step_names
     ]
     assert len(holders) == 1, names
-    assert "ReduceMaxEigenvalue" in holders[0]
+    # The projection writes the face data which the reconstruction reads at the
+    # beginning of a traversal, i.e. it follows in the next one, together with
+    # the reduction. The time step size acts in the last traversal
     assert "ProjectPatchOntoFaces" not in holders[0]
-    # The time step size acts in the last traversal
+    assert "ReduceMaxEigenvalue" not in holders[0]
+    # The reconstruction interpolates the hanging faces itself, i.e. no
+    # traversal is spent on the interpolation
+    assert len(names) == 2, names
+    assert "ProjectPatchOntoFaces" in names[-1]
+    assert "ReduceMaxEigenvalue" in names[-1]
     assert "ComputeGlobalCFLCondition" in names[-1]

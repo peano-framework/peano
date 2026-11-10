@@ -142,7 +142,11 @@ def build_and_run(
     solver = exahype2.api.Solver("SWE", {first_unknown: 1, "hu": 1, "hv": 1})
     if with_logo:
         solver.add_auxiliary_variables(
-            exahype2.api.AuxiliaryVariables("Bathymetry", {"b": 1})
+            exahype2.api.AuxiliaryVariables(
+                "Bathymetry",
+                {"b": 1},
+                mode=exahype2.api.AuxiliaryVariables.Mode.STATIONARY_ON_FACES,
+            )
         )
     solver.add_user_solver_includes("#include <cmath>\n#include <algorithm>\n")
     if with_logo:

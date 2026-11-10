@@ -247,6 +247,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
         time_step,
         plot,
         mesh_adaptation,
+        add_global_tasks=True,
     ):
         """!
 
@@ -288,6 +289,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
             time_step,
             plot,
             mesh_adaptation,
+            add_global_tasks,
         )
         Enforce = CCZ4SolverBase.EnforceCCZ4Constraint
         if self._enforce_ccz4_constraint == Enforce.No:
@@ -333,7 +335,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
                 self._insert_constraint_enforcement(time_step, [anchor], stage_input)
 
         title = (
-            f"Time stepping task graph for {self.name} with CCZ4 constraint enforcement"
+            f"Time stepping task graph for {self.name}{self.task_graph_title_suffix} with CCZ4 constraint enforcement"
         )
         if peano4.api.Logger().is_visualisation:
             time_step.visualise(title=title)

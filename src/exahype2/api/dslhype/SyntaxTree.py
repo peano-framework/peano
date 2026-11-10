@@ -4394,7 +4394,25 @@ class DataBlockConstructionFromFunction(Statement):
                 functionCall.add_argument(Reference(self._dataBlock._internal._arguments[0].multidimensional_index(index, 1)))
 
             for argument in self._dataBlock._internal._arguments[1:]:
-                if type(argument.get_type()) is TDataBlock:
+                if self._dataBlock._internal.id == "volumetricSource" and getattr(argument, "id", None) == "x" and "h" in Name.variables:
+                    # The source term is position-dependent, i.e. it has to see the centre of
+                    # the volume it is evaluated for, not the centre of the patch. index holds
+                    # the loop variables of the spatial axes (x first) followed by the one over
+                    # the patches. The loops start from 0, while the iteration range starts at
+                    # the first volume that the source term is evaluated for.
+                    spatial_dimensions = len(self._dataBlock._iteration_range) - 2
+                    # The kernels name the number of volumes per patch axis differently: NV (Finite Volumes) or NC (Finite Differences)
+                    volumes_per_axis = "NV" if "NV" in Name.variables else "NC"
+                    volume_index = ", ".join(
+                        f"({index[d].print_cpp()} + {self._dataBlock._iteration_range[d + 1][0].print_cpp()})"
+                        for d in range(spatial_dimensions)
+                    )
+                    functionCall.add_argument(String(
+                        f"::exahype2::fv::getVolumeCentre({argument.multidimensional_index(index, 1).print_cpp()}, "
+                        f"{Name.variables['h'].multidimensional_index(index, 1).print_cpp()}, {volumes_per_axis}, "
+                        f"tarch::la::Vector<{spatial_dimensions},int>({{{volume_index}}}))"
+                    ))
+                elif type(argument.get_type()) is TDataBlock:
                     offset = [i[0] for i in Name.variables[argument.id]._iteration_range[1:]]
                     if len(Name.variables[argument.id]._iteration_range) == 1 or Name.variables[argument.id]._iteration_range[0][1] == Integer(1):
                         functionCall.add_argument(Name.variables[argument.id].multidimensional_index(index, 1))

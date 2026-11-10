@@ -93,14 +93,25 @@ def _action_sets_of_type(task, action_set_type):
     return [a for a in task.action_sets if isinstance(a, action_set_type)]
 
 
-def test_time_step_interpolates_before_reconstruction_and_restricts_projection(
+def test_reconstruction_interpolates_before_it_reconstructs_and_restricts_projection(
     tmp_path,
 ):
     solver, (setup, time_step) = _graphs(tmp_path)
-    (interpolation,) = _action_sets_of_type(time_step["Probe_Reconstruct"], Interpolate)
+    (interpolation,) = _action_sets_of_type(
+        time_step["Probe_Reconstruct"], Interpolate
+    )
+    # Interpolation is no task of its own: it acts before the reconstruction
+    assert "Probe_Interpolate hanging faces" not in time_step
+    actions = time_step["Probe_Reconstruct"].action_sets
+    assert actions.index(interpolation) < min(
+        i for i, a in enumerate(actions) if type(a).__name__ == "ReconstructPatchWithHalo"
+    )
     assert interpolation.scheme == Interpolate.Scheme.Linear
     assert interpolation.d["FACE_NAME"] == solver._patch_overlap_current_time_step.name
-    (restriction,) = _action_sets_of_type(time_step["Probe_Project on faces"], Restrict)
+    assert "Probe_Restrict on hanging faces" not in time_step
+    (restriction,) = _action_sets_of_type(
+        time_step["Probe_Project on faces"], Restrict
+    )
     assert restriction.scheme == Restrict.Scheme.Averaging
     assert restriction.d["FACE_NAME"] == solver._patch_overlap_update.name
     (setup_restriction,) = _action_sets_of_type(
@@ -115,8 +126,29 @@ def test_schemes_are_configurable(tmp_path):
         interpolation=Interpolate.Scheme.PiecewiseConstant,
         restriction=Restrict.Scheme.Inject,
     )
-    (interpolation,) = _action_sets_of_type(time_step["Probe_Reconstruct"], Interpolate)
+    (interpolation,) = _action_sets_of_type(
+        time_step["Probe_Reconstruct"], Interpolate
+    )
     assert interpolation.scheme == Interpolate.Scheme.PiecewiseConstant
-    for task in [time_step["Probe_Project on faces"], setup["Probe Project on faces"]]:
+    for task in [
+        time_step["Probe_Project on faces"],
+        setup["Probe Project on faces"],
+    ]:
         (restriction,) = _action_sets_of_type(task, Restrict)
         assert restriction.scheme == Restrict.Scheme.Inject
+
+
+def test_projection_hosts_the_restriction_and_the_roll_over(tmp_path):
+    # The roll over copies the update, which lives within one traversal only
+    # (src/exahype2/api/fv/adrs/0003-roll-over-is-part-of-the-projection.md).
+    # The restriction precedes the roll over, as the roll over has to copy the
+    # restricted data
+    _, (_, time_step) = _graphs(tmp_path)
+    projection = time_step["Probe_Project on faces"]
+    assert "Probe_Restrict on hanging faces" not in time_step
+    assert "Probe_Roll over faces" not in time_step
+    assert [type(a).__name__ for a in projection.action_sets] == [
+        "ProjectPatchOntoFaces",
+        "RestrictHangingFaces",
+        "RollOverUpdatedFace",
+    ]

@@ -18,6 +18,7 @@ mesh over the domain [-0.1,0.1]^d.
 import argparse
 import math
 import os
+import sys
 
 import numpy as np
 
@@ -87,6 +88,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "run_directory", nargs="+", help="Runs, from the coarsest to the finest mesh"
     )
+    parser.add_argument(
+        "--minimum-order",
+        type=float,
+        default=None,
+        help="Exit with a non-zero status if the order of the maximum error between the two finest runs is below this value or not finite",
+    )
     args = parser.parse_args()
 
     print(
@@ -106,3 +113,10 @@ if __name__ == "__main__":
             f"{run_directory:40} {time_stamp:8.4f} {str(cells):>10} {max_error:12.4e} {rms_error:12.4e} {orders[0]:>12} {orders[1]:>12}"
         )
         previous = (cells, max_error, rms_error)
+        last_order = float(orders[0]) if orders[0] != "" else math.nan
+
+    if args.minimum_order is not None:
+        if not last_order >= args.minimum_order:
+            print(f"FAILED: order {last_order} is below {args.minimum_order}")
+            sys.exit(1)
+        print(f"PASSED: order {last_order} is at least {args.minimum_order}")

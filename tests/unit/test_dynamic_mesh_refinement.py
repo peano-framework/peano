@@ -64,7 +64,7 @@ def _criterion_body(action_set):
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_last_task_evaluates_criterion_and_switches_on_load_balancing(scheme, tmp_path):
     last = _last_task(_solver(scheme), tmp_path)
-    assert last.name == "Probe_Dynamic mesh refinement"
+    assert last.name == f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}"
     assert last.entity == Task.GridEntity.CELL
     dynamic_mesh_refinement, load_balancing = last.action_sets
     assert isinstance(
@@ -92,7 +92,7 @@ def test_time_step_never_hands_events_to_peano(scheme, tmp_path):
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_no_criterion_means_no_evaluation(scheme, tmp_path):
     last = _last_task(_solver(scheme, criterion=False), tmp_path)
-    assert last.name == "Probe_Dynamic mesh refinement"
+    assert last.name == f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}"
     [load_balancing] = last.action_sets
     assert isinstance(
         load_balancing, toolbox.loadbalancing.api.actionsets.LoadBalancing

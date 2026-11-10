@@ -26,16 +26,17 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     first-order solver exagrype.api.FOCCZ4Solver. The second-order kernels set the time derivative of the 34
     derivatives to zero, and the solver does not even ask for it.
 
-    ## Ping-pong with a reconstructor
+    ## Ping-pong with the reconstruction solver
 
-    Nobody updates the derivatives on their own. A second object,
-    exagrype.api.FOSOCCZ4Reconstructor, does this. The solver creates it
-    itself (reconstructor), so you do not have to add it to the project. It
+    Nobody updates the derivatives on their own. A second solver,
+    exagrype.api.FOSOReconstructionSolver, does this. Do not create the pair
+    yourself, but use exagrype.api.FOSOSolver, which hosts this solver (as
+    ccz4) and its partner. The reconstruction solver
     runs in front of each stage of the
-    Runge-Kutta scheme of the solver, recomputes the 34 derivatives from the
-    25 unknowns of the stage and projects them onto the faces, so the solver
+    Runge-Kutta scheme of this solver, recomputes the 34 derivatives from the
+    25 unknowns of the stage and projects them onto the faces, so this solver
     finds them with a halo when it evaluates the stage. Without the
-    reconstructor, the solver sees the derivatives of the initial
+    reconstruction, the solver sees the derivatives of the initial
     condition forever.
 
     The solver works with exahype2.api.rkfd4.CentralDifferencesWithRungeKutta
@@ -49,7 +50,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     left and right of the face), and the stencil of the reconstruction
     reaches two layers further out. The plain scheme has a halo of two;
     lopsided advection or exagrype.api.FD4WithKODissipation widen it to
-    three. The reconstructor rejects a smaller halo.
+    three. The reconstruction solver rejects a smaller halo.
 
     @ref page_exagrype_fo_so_project_plan for the design and its status.
 
@@ -99,7 +100,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
 
     The 34 entries of CCZ4 which this solver does not evolve, in the order the
     kernels expect them behind the unknowns. They are the auxiliary variables
-    "Derivatives" and the 34 unknowns of exagrype.api.FOSOCCZ4Reconstructor.
+    "Derivatives" and the 34 unknowns of exagrype.api.FOSOReconstructionSolver.
 
     """
 
@@ -131,51 +132,16 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         """
         super().__init__(name, self.Unknowns, parameters, initial_condition)
         self.derivatives = exahype2.api.AuxiliaryVariables(
-            "Derivatives", self.DerivativeUnknowns
+            "Derivatives",
+            self.DerivativeUnknowns,
+            mode=exahype2.api.AuxiliaryVariables.Mode.CHANGING_ON_FACES,
+            data_name="DerivativeVariables",
         )
         self.add_auxiliary_variables(self.derivatives)
 
-        # Deferred, as the reconstructor refers back to the solver
-        from .FOSOCCZ4Reconstructor import FOSOCCZ4Reconstructor
-
-        self.reconstructor = FOSOCCZ4Reconstructor(self)
-        """! The partner that recomputes the derivatives, @see FOSOCCZ4Reconstructor """
-
-    def generate_solver_realisation(
-        self,
-        exahype2_project,
-        peano_project,
-        setup_simulation,
-        time_step,
-        plot,
-        mesh_adaptation,
-    ):
-        """!
-
-        Realise the solver, and then its reconstructor
-
-        The reconstructor inserts its tasks into the time stepping task
-        graph of the solver, i.e. the two take turns. It has to come after the
-        solver (and after the insertion of the constraint enforcement),
-        as it looks up the solver's tasks.
-
-        """
-        super().generate_solver_realisation(
-            exahype2_project,
-            peano_project,
-            setup_simulation,
-            time_step,
-            plot,
-            mesh_adaptation,
-        )
-        self.reconstructor.generate_solver_realisation(
-            exahype2_project,
-            peano_project,
-            setup_simulation,
-            time_step,
-            plot,
-            mesh_adaptation,
-        )
+    @property
+    def task_graph_title_suffix(self) -> str:
+        return " (CCZ4 part)"
 
     def lopsided_advection_quantities(self) -> List[str]:
         """!
@@ -223,7 +189,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         return sum(cls.DerivativeUnknowns.values())
 
     def _ncp_implementation(self) -> str:
-        """! The secondary entries are the auxiliary variables """
+        """! The secondary entries are the auxiliary variables"""
         return """
   ::exagrype::ccz4::ncpSecondOrder(
     BTimesDeltaQ,

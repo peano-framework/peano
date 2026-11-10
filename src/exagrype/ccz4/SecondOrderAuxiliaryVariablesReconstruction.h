@@ -103,7 +103,7 @@ namespace exagrype {
       /**
        * Reconstruct the 34 first derivatives of the 25 evolved CCZ4 unknowns
        *
-       * This is the entry point of exagrype.api.FOSOCCZ4Reconstructor. The
+       * This is the entry point of exagrype.api.FOSOReconstructionSolver. The
        * second-order solver evolves the first 25 of the 59 CCZ4 entries
        * (conformal metric, extrinsic curvature, ..., phi); the remaining 34
        * entries are the first derivatives of the lapse, shift, metric and phi

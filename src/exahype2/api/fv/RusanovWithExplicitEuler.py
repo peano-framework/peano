@@ -19,7 +19,7 @@ import exahype2.api.dslhype2 as dslhype2
 from ..Solver import Solver
 from ..AuxiliaryVariables import (
     register_auxiliary_variables,
-    add_reconstruction_of_auxiliary_variables,
+    add_reconstruction_tasks_of_auxiliary_variables,
     use_halos_of_auxiliary_variables,
     forwarding_arguments,
 )
@@ -499,7 +499,8 @@ Patch overlap data
     def construct_output(self,
                          exahype2_project,
                          peano_project,
-                         time_step):
+                         time_step,
+                         add_global_tasks=True):
         """!
 
         """
@@ -507,7 +508,7 @@ Patch overlap data
 
         self.__add_data_to_repository(peano_project)
         self.kernel_namespace = peano_project.namespace
-        self._generator.construct_output(exahype2_project, peano_project, time_step)
+        self._generator.construct_output(exahype2_project, peano_project, time_step, add_global_tasks)
 
     def create_restriction_of_hanging_faces(self) -> "toolbox.blockstructured.api.RestrictHangingFaces":
         """!
@@ -531,7 +532,7 @@ Patch overlap data
         )
 
 class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGenerator):
-    def construct_output(self, exahype2_project, peano_project, time_step):
+    def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
         # Construct the call first, as it validates the PDE terms' variants
         # Although we may generate multiple definitions for the purpose of benchmarking, we
         # only need one kernel call
@@ -558,42 +559,6 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         time_step.add_task(project_on_faces_task)
         time_step.add_task(compute_cfl_condition_task)
 
-        # The load balancing is switched off throughout the time step, and
-        # switched on again only at its very end, so it may then decide on
-        # splits. Peano carries these splits out in the subsequent mesh sweep.
-        reconstruction_task.add_action_set(
-            toolbox.loadbalancing.api.actionsets.ToggleLoadBalancing(
-                enable_load_balancing=False, plug_into_prepare_traversal=True
-            )
-        )
-
-        # The very last task evaluates the adaptivity criterion if the
-        # solver has one (create_dynamic_mesh_refinement_action_set()), i.e. it
-        # collects refine and erase requests for the mesh adaptation phase,
-        # and it switches the load balancing on again and informs it that
-        # the time step has finished.
-        dynamic_mesh_refinement_task = peano4.api.taskgraph.Task(
-            name=f"{self._solver.name}_Dynamic mesh refinement",
-            entity=peano4.api.taskgraph.Task.GridEntity.CELL,
-            may_spawn_background_tasks=False,
-        )
-        dynamic_mesh_refinement_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
-        dynamic_mesh_refinement = create_dynamic_mesh_refinement_action_set(
-            self._solver,
-            self._solver.numerical_scheme.patch_size,
-            guard=self._solver.grid_selector.createCellGuard(),
-            min_volume_size=self._solver.numerical_scheme.min_volume_size,
-            max_volume_size=self._solver.numerical_scheme.max_volume_size,
-        )
-        if dynamic_mesh_refinement is not None:
-            dynamic_mesh_refinement_task.add_action_set(dynamic_mesh_refinement)
-        dynamic_mesh_refinement_task.add_action_set(
-            toolbox.loadbalancing.api.actionsets.LoadBalancing(enable_load_balancing=True)
-        )
-        dynamic_mesh_refinement_task.add_dependency(reduce_eigenvalue_task)
-        dynamic_mesh_refinement_task.add_dependency(project_on_faces_task)
-        time_step.add_task(dynamic_mesh_refinement_task)
-
         ## Build the reconstruction tasks befilling the patch_with_halo, which is logically temporary
         reconstruction_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         reconstruction_task.use_cell(self._solver._patch_with_halo, peano4.api.taskgraph.Task.DataAccess.WRITE)
@@ -602,6 +567,16 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         reconstruction_task.use_face(
             self._solver._patch_overlap_current_time_step,
             get_access_to_persistent_face_data(self._solver, exahype2_project, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD),
+        )
+        ## On adaptive meshes, the reconstruction interpolates the coarse face
+        ## data onto the hanging faces of fine cells itself (see
+        ## src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md)
+        reconstruction_task.add_action_set(
+            toolbox.blockstructured.api.InterpolateHangingFaces(
+                self._solver._patch_overlap_current_time_step,
+                scheme=self._solver.numerical_scheme.interpolation,
+                additional_includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
+            )
         )
         reconstruction_task.add_action_set(
             toolbox.blockstructured.api.ReconstructPatchWithHalo(
@@ -613,25 +588,20 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
                 additional_includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
             )
         )
-        ## On adaptive meshes, interpolate the coarse face data onto the hanging
-        ## faces of fine cells, before the reconstruction reads them
-        reconstruction_task.add_action_set(
-            toolbox.blockstructured.api.InterpolateHangingFaces(
-                self._solver._patch_overlap_current_time_step,
-                scheme=self._solver.numerical_scheme.interpolation,
-                additional_includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
-            )
-        )
         ## Set the ghost volumes along the domain boundary before the reconstruction reads them.
         ## No task is added if all axes are periodic or for Sommerfeld boundary
         ## conditions, which advance the ghost volumes within the roll over
         ApplyDirichletBoundaryConditions.add_task_to_time_step(self._solver, exahype2_project, time_step, reconstruction_task)
 
         ## The halos of the auxiliary variables
-        add_reconstruction_of_auxiliary_variables(reconstruction_task, self._solver)
+        auxiliary_reconstruction_tasks = add_reconstruction_tasks_of_auxiliary_variables(
+            self._solver, time_step, self._solver.numerical_scheme.interpolation
+        )
 
         ## Do the actual time step update
         update_cell_task.add_dependency(reconstruction_task)
+        for task in auxiliary_reconstruction_tasks:
+            update_cell_task.add_dependency(task)
         use_halos_of_auxiliary_variables(update_cell_task, self._solver)
         update_cell_task.use_cell(self._solver._patch_with_halo, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
         update_cell_task.use_cell(self._solver._patch,           peano4.api.taskgraph.Task.DataAccess.WRITE)
@@ -653,9 +623,11 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
 
         ## Determine the maximum eigenvalue of the updated patches, store it
         ## per cell and reduce it over all cells. The projection onto the faces
-        ## follows, as the update, the eigenvalue and the reduction fold into
-        ## one mesh traversal, whereas the projection writes the face data
-        ## which the reconstruction reads at the beginning of that traversal
+        ## depends on the update only, i.e. it runs in parallel to the
+        ## eigenvalue and its reduction. The update, the eigenvalue, the
+        ## reduction and the projection fold into one mesh traversal, whereas the
+        ## projection writes the face data which the reconstruction reads at the
+        ## beginning of that traversal
         compute_eigenvalue_task.add_dependency(update_cell_task)
         compute_eigenvalue_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         compute_eigenvalue_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.WRITE)
@@ -688,7 +660,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         )
         
         ## Next project the new data onto the faces. Also roll over the solution
-        project_on_faces_task.add_dependency(reduce_eigenvalue_task)
+        project_on_faces_task.add_dependency(update_cell_task)
         project_on_faces_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         project_on_faces_task.use_face(self._solver._patch_overlap_update, peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
         project_on_faces_task.use_face(
@@ -703,9 +675,21 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
                 includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
             )
         )
-        ## On adaptive meshes, restrict the fine data from the hanging faces
-        ## onto the coarse faces, before the roll over copies them
+        ## On adaptive meshes, the projection also restricts the fine data from
+        ## the hanging faces onto the coarse faces (see
+        ## src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md).
+        ## Peano destroys a hanging face right after the fine cell has
+        ## projected onto it, and touches the coarse face for the last time
+        ## after that, i.e. the coarse face is final when the roll over copies it.
+        ## The projection declares the face data of the current time step, so
+        ## the compiler does not fuse it into the traversal of the reconstruction.
         project_on_faces_task.add_action_set(self._solver.numerical_scheme.create_restriction_of_hanging_faces())
+        ## The roll over is part of the projection, too. The face data of the
+        ## projection (the update) is TEMPORARY, i.e. it lives within one mesh
+        ## traversal only, and the roll over copies it. A task of its own
+        ## would be fused into a later traversal by the producer-consumer
+        ## compiler, where it copies uninitialised memory
+        ## (see src/exahype2/api/fv/adrs/0003-roll-over-is-part-of-the-projection.md).
         ## Sommerfeld boundary conditions advance the ghost volumes within
         ## the roll over (@ref exahype2.api.blockstructured.BoundaryConditions)
         project_on_faces_task.add_action_set(
@@ -717,11 +701,22 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
                 time_step_size=f"repositories::{self._solver.get_name_of_global_instance()}.getMinTimeStepSize()",
             )
         )
-        
+        ## The roll over of Sommerfeld boundary conditions reads the current
+        ## time step size, which the next task replaces. It therefore never
+        ## runs before the roll over has terminated
+        ## (see src/exahype2/api/fv/adrs/0002-time-step-size-after-roll-over.md)
+        compute_cfl_condition_task.add_dependency(project_on_faces_task)
+
+        # The load balancing is switched off throughout the time step, and
+        # switched on again only at its very end, so it may then decide on
+        # splits. Peano carries these splits out in the subsequent mesh sweep.
+        if add_global_tasks:
+            self._solver.numerical_scheme.wrap_task_graph_in_load_balancing_and_amr_tasks(time_step)
+
         if peano4.api.Logger().is_visualisation:
-            time_step.visualise(title="Time stepping task graph for {}".format(self._solver.name))
+            time_step.visualise(title="Time stepping task graph for {}{}".format(self._solver.name, self._solver.task_graph_title_suffix))
         if peano4.api.Logger().is_text:
-            time_step.log_as_text(title="Time stepping task graph for {}".format(self._solver.name))
+            time_step.log_as_text(title="Time stepping task graph for {}{}".format(self._solver.name, self._solver.task_graph_title_suffix))
 
     def __create_time_step_functions(self, output_directory):
         """!
@@ -932,7 +927,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
 # This uses dslhype2, which when all bugs are dealt with will be renamed to dslhype and replace the old version
 # When this is done, this generator will be deleted
 class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeGenerator):
-    def construct_output(self, exahype2_project, peano_project, time_step):
+    def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
         # Construct the call first, as it validates the PDE terms' variants
         # Although we may generate multiple definitions for the purpose of benchmarking, we
         # only need one kernel call
@@ -959,42 +954,6 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
         time_step.add_task(project_on_faces_task)
         time_step.add_task(compute_cfl_condition_task)
 
-        # The load balancing is switched off throughout the time step, and
-        # switched on again only at its very end, so it may then decide on
-        # splits. Peano carries these splits out in the subsequent mesh sweep.
-        reconstruction_task.add_action_set(
-            toolbox.loadbalancing.api.actionsets.ToggleLoadBalancing(
-                enable_load_balancing=False, plug_into_prepare_traversal=True
-            )
-        )
-
-        # The very last task evaluates the adaptivity criterion if the
-        # solver has one (create_dynamic_mesh_refinement_action_set()), i.e. it
-        # collects refine and erase requests for the mesh adaptation phase,
-        # and it switches the load balancing on again and informs it that
-        # the time step has finished.
-        dynamic_mesh_refinement_task = peano4.api.taskgraph.Task(
-            name=f"{self._solver.name}_Dynamic mesh refinement",
-            entity=peano4.api.taskgraph.Task.GridEntity.CELL,
-            may_spawn_background_tasks=False,
-        )
-        dynamic_mesh_refinement_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
-        dynamic_mesh_refinement = create_dynamic_mesh_refinement_action_set(
-            self._solver,
-            self._solver.numerical_scheme.patch_size,
-            guard=self._solver.grid_selector.createCellGuard(),
-            min_volume_size=self._solver.numerical_scheme.min_volume_size,
-            max_volume_size=self._solver.numerical_scheme.max_volume_size,
-        )
-        if dynamic_mesh_refinement is not None:
-            dynamic_mesh_refinement_task.add_action_set(dynamic_mesh_refinement)
-        dynamic_mesh_refinement_task.add_action_set(
-            toolbox.loadbalancing.api.actionsets.LoadBalancing(enable_load_balancing=True)
-        )
-        dynamic_mesh_refinement_task.add_dependency(reduce_eigenvalue_task)
-        dynamic_mesh_refinement_task.add_dependency(project_on_faces_task)
-        time_step.add_task(dynamic_mesh_refinement_task)
-
         ## Build the reconstruction tasks befilling the patch_with_halo, which is logically temporary
         reconstruction_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         reconstruction_task.use_cell(self._solver._patch_with_halo, peano4.api.taskgraph.Task.DataAccess.WRITE)
@@ -1003,6 +962,16 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
         reconstruction_task.use_face(
             self._solver._patch_overlap_current_time_step,
             get_access_to_persistent_face_data(self._solver, exahype2_project, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD),
+        )
+        ## On adaptive meshes, the reconstruction interpolates the coarse face
+        ## data onto the hanging faces of fine cells itself (see
+        ## src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md)
+        reconstruction_task.add_action_set(
+            toolbox.blockstructured.api.InterpolateHangingFaces(
+                self._solver._patch_overlap_current_time_step,
+                scheme=self._solver.numerical_scheme.interpolation,
+                additional_includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
+            )
         )
         reconstruction_task.add_action_set(
             toolbox.blockstructured.api.ReconstructPatchWithHalo(
@@ -1014,25 +983,20 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
                 additional_includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
             )
         )
-        ## On adaptive meshes, interpolate the coarse face data onto the hanging
-        ## faces of fine cells, before the reconstruction reads them
-        reconstruction_task.add_action_set(
-            toolbox.blockstructured.api.InterpolateHangingFaces(
-                self._solver._patch_overlap_current_time_step,
-                scheme=self._solver.numerical_scheme.interpolation,
-                additional_includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
-            )
-        )
         ## Set the ghost volumes along the domain boundary before the reconstruction reads them.
         ## No task is added if all axes are periodic or for Sommerfeld boundary
         ## conditions, which advance the ghost volumes within the roll over
         ApplyDirichletBoundaryConditions.add_task_to_time_step(self._solver, exahype2_project, time_step, reconstruction_task)
 
         ## The halos of the auxiliary variables
-        add_reconstruction_of_auxiliary_variables(reconstruction_task, self._solver)
+        auxiliary_reconstruction_tasks = add_reconstruction_tasks_of_auxiliary_variables(
+            self._solver, time_step, self._solver.numerical_scheme.interpolation
+        )
 
         ## Do the actual time step update
         update_cell_task.add_dependency(reconstruction_task)
+        for task in auxiliary_reconstruction_tasks:
+            update_cell_task.add_dependency(task)
         use_halos_of_auxiliary_variables(update_cell_task, self._solver)
         update_cell_task.use_cell(self._solver._patch_with_halo, peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD)
         update_cell_task.use_cell(self._solver._patch,           peano4.api.taskgraph.Task.DataAccess.WRITE)
@@ -1054,9 +1018,11 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
 
         ## Determine the maximum eigenvalue of the updated patches, store it
         ## per cell and reduce it over all cells. The projection onto the faces
-        ## follows, as the update, the eigenvalue and the reduction fold into
-        ## one mesh traversal, whereas the projection writes the face data
-        ## which the reconstruction reads at the beginning of that traversal
+        ## depends on the update only, i.e. it runs in parallel to the
+        ## eigenvalue and its reduction. The update, the eigenvalue, the
+        ## reduction and the projection fold into one mesh traversal, whereas the
+        ## projection writes the face data which the reconstruction reads at the
+        ## beginning of that traversal
         compute_eigenvalue_task.add_dependency(update_cell_task)
         compute_eigenvalue_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         compute_eigenvalue_task.use_cell(self._solver._max_eigenvalue, peano4.api.taskgraph.Task.DataAccess.WRITE)
@@ -1089,7 +1055,7 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
         )
         
         ## Next project the new data onto the faces. Also roll over the solution
-        project_on_faces_task.add_dependency(reduce_eigenvalue_task)
+        project_on_faces_task.add_dependency(update_cell_task)
         project_on_faces_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         project_on_faces_task.use_face(self._solver._patch_overlap_update, peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
         project_on_faces_task.use_face(
@@ -1104,9 +1070,21 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
                 includes=self._solver._get_default_includes() + self._solver.user_solver_includes,
             )
         )
-        ## On adaptive meshes, restrict the fine data from the hanging faces
-        ## onto the coarse faces, before the roll over copies them
+        ## On adaptive meshes, the projection also restricts the fine data from
+        ## the hanging faces onto the coarse faces (see
+        ## src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md).
+        ## Peano destroys a hanging face right after the fine cell has
+        ## projected onto it, and touches the coarse face for the last time
+        ## after that, i.e. the coarse face is final when the roll over copies it.
+        ## The projection declares the face data of the current time step, so
+        ## the compiler does not fuse it into the traversal of the reconstruction.
         project_on_faces_task.add_action_set(self._solver.numerical_scheme.create_restriction_of_hanging_faces())
+        ## The roll over is part of the projection, too. The face data of the
+        ## projection (the update) is TEMPORARY, i.e. it lives within one mesh
+        ## traversal only, and the roll over copies it. A task of its own
+        ## would be fused into a later traversal by the producer-consumer
+        ## compiler, where it copies uninitialised memory
+        ## (see src/exahype2/api/fv/adrs/0003-roll-over-is-part-of-the-projection.md).
         ## Sommerfeld boundary conditions advance the ghost volumes within
         ## the roll over (@ref exahype2.api.blockstructured.BoundaryConditions)
         project_on_faces_task.add_action_set(
@@ -1118,11 +1096,22 @@ class RusanovWithExplicitEulerGenerator2(Solver.NumericalScheme.NumericalSchemeG
                 time_step_size=f"repositories::{self._solver.get_name_of_global_instance()}.getMinTimeStepSize()",
             )
         )
-        
+        ## The roll over of Sommerfeld boundary conditions reads the current
+        ## time step size, which the next task replaces. It therefore never
+        ## runs before the roll over has terminated
+        ## (see src/exahype2/api/fv/adrs/0002-time-step-size-after-roll-over.md)
+        compute_cfl_condition_task.add_dependency(project_on_faces_task)
+
+        # The load balancing is switched off throughout the time step, and
+        # switched on again only at its very end, so it may then decide on
+        # splits. Peano carries these splits out in the subsequent mesh sweep.
+        if add_global_tasks:
+            self._solver.numerical_scheme.wrap_task_graph_in_load_balancing_and_amr_tasks(time_step)
+
         if peano4.api.Logger().is_visualisation:
-            time_step.visualise(title="Time stepping task graph for {}".format(self._solver.name))
+            time_step.visualise(title="Time stepping task graph for {}{}".format(self._solver.name, self._solver.task_graph_title_suffix))
         if peano4.api.Logger().is_text:
-            time_step.log_as_text(title="Time stepping task graph for {}".format(self._solver.name))
+            time_step.log_as_text(title="Time stepping task graph for {}{}".format(self._solver.name, self._solver.task_graph_title_suffix))
 
     def __create_time_step_functions(self, exahype2_project, peano4_project):
         """!

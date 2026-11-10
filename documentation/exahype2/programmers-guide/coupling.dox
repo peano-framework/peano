@@ -33,6 +33,61 @@ This is both to simplify coupling, but also to avoid that users have to copy aro
 
 
 
+## Hosts: how coupled solvers are realised
+
+Coupled solvers are not added to the project one by one. A user adds one 
+@ref exahype2.api.SolverHost "host" instead, which brings its solvers along, 
+and the host realises them. This is what happens when the project asks the host to generate the 
+task graphs:
+
+\dot
+digraph host {
+  rankdir=LR;
+  node [shape=box, style=rounded, fontsize=10];
+  A [label="solver A\nbuilds its own graph\n(reports it)"];
+  B [label="solver B\nbuilds its own graph\n(reports it)"];
+  H [label="host concatenates\nGraph.merge()"];
+  C [label="host couples\ncouple(): add tasks and\ndependencies between A and B"];
+  R [label="host reports the\ncoupled graph"];
+  P [label="project graphs\n(compiled into mesh sweeps)"];
+  A -> H; B -> H; H -> C -> R -> P;
+}
+\enddot
+
+The host, not the solvers, holds the generator of the numerical scheme 
+(exahype2.api.SolverHost.numerical_scheme): hosted solvers have no scheme of their own, and the 
+host raises an exception if they have. The mapping of the solvers to C++ remains solver-specific.
+
+1. Each solver builds the task graphs of the four phases (setup, time step, plot, mesh
+   adaptation) in graphs of its own and reports the time stepping graph. The host's scheme builds
+   the graph of the global-tasks solver, and asks every other solver for its graph once per 
+   Runge-Kutta stage (exahype2.api.Solver.Solver.create_task_graph()). The user thus
+   sees what each solver contributes.
+2. The host concatenates the graphs (peano4.api.taskgraph.Graph.merge()). The result
+   consists of the chains of the solvers next to each other.
+3. The host's couple() routine adds the tasks and dependencies that tie the chains together: 
+   a multiplicative coupling makes tasks of one solver wait for tasks of the other one, 
+   an additive coupling adds KickOff and WrapUp tasks. 
+4. The host reports the coupled graph, and appends it to the project's graphs.
+
+### Global tasks
+
+Some tasks belong to the mesh rather than to a solver: the one that switches the load balancing 
+off at the begin of the time step, and the last one which evaluates the adaptivity criterion 
+and switches the load balancing on again (plus the mesh adaptation phase).
+If every solver added them, we would switch the load balancing off and on once per solver. 
+All routines which generate a solver realisation therefore accept a flag `add_global_tasks`
+(exahype2.api.Solver.generate_solver_realisation(), exahype2.api.Solver.NumericalScheme.construct_output()). 
+If set, the scheme embeds its task graph into the global tasks as its very last step, by calling
+exahype2.api.Solver.NumericalScheme.wrap_task_graph_in_load_balancing_and_amr_tasks(). 
+A host realises all solvers as intermediate steps, i.e. with False. After it has concatenated and coupled the graphs, 
+it calls the wrapping routine on the concatenated graph of its global_tasks_solver (see @ref exahype2.api.SolverHost, 
+by default the first), and lets the mesh adaptation of this solver fill the mesh adaptation phase. 
+Consequently, only the global tasks solver can refine the mesh. 
+If you write your own scheme and want it to be used within a host, make construct_output() 
+honour the flag, and let a scheme that owns no mesh override the wrapping routine with an empty one.
+
+
 ## Multiplicative coupling
 
 Multiplicative coupling means that the state of the simulation evolves according to 
@@ -47,7 +102,9 @@ Overall, solver 2 feeds into 1.
 One comes after the other.
 
 ExaHyPE internally works with the notion of a task graph, which simplies the modelling of this type of coupling dramatically.
-We simply take the task graph of solver 1 and append the one of solver 2, respectively.
+We simply take the task graph of solver 1 and merge the one of solver 2 into it, and then wire them,
+(@ref exagrype.api.FOSOSolver is a worked example: the reconstruction tasks are inserted per
+Runge-Kutta stage in front of the CCZ4 stage which consumes them).
 All the remainder (notably finding the right number of required mesh sweeps) is done by ExaHyPE and Peano under the hood.
 
 <br /><br />
@@ -83,7 +140,7 @@ solver.
 A prime case study for the coupling is the first-order second-order CCZ4 solver.
 We benchmark it in @ref benchmarks_exagrype_fo_vs_so and explain the details on 
 @ref page_exagrype_fo_so_ccz4.
-Here, two solvers, @ref exagrype.api.FOSOCCZ4Solver and @ref exagrype.api.FOSOCCZ4Reconstructor
+Here, two solvers, @ref exagrype.api.FOSOCCZ4Solver and @ref exagrype.api.FOSOReconstructionSolver (hosted by @ref exagrype.api.FOSOSolver)
 take turns.
 Each one takes the primary evoluation variables of the other one as auxiliary variables.
 
@@ -155,7 +212,7 @@ solver itself yields a task graph similar to
 @image html documentation/exahype2/programmers-guide/coupling-multiplicative-task-graph-CCZ4.png
 @image html documentation/exahype2/programmers-guide/coupling-multiplicative-task-graph-Euler.png
 
-which then gives us a beast alike
+which the host (CCZ4WithEuler.py) concatenates and couples, which then gives us a beast alike
 
 @image html documentation/exahype2/programmers-guide/coupling-additive-task-graph-coupled.png
 
@@ -163,7 +220,7 @@ The two chains now run in parallel. In front of each Runge-Kutta stage, a "KickO
 the lapse of CCZ4 into the auxiliary variables of Euler, so Euler never reads data that CCZ4
 writes at the same time. After each stage, a "WrapUp" task waits for the end of the stage of both
 solvers. The very last WrapUp is a global end-of-step task which runs after the time step sizes
-have been computed.
+have been computed. Only CCZ4 adds the load balancing switch and the dynamic mesh refinement task.
 
 The picture is generated by coupling-illustrations.py in the same directory.
 

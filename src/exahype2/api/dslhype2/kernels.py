@@ -27,6 +27,17 @@ def translate_dslhype_function(
     output_directory: str
       Directory the kernels/ subdirectory with the generated files is
       created in, usually the Peano project's directory.
+
+    @remark Existing files are appended to, not overwritten
+      Several functions of one project end up in the same files
+      (kernels/{output_file_name}.h and .cpph/.cpp), so the translation appends.
+      Running a generator script a second time in the same directory therefore
+      duplicates the kernels, and the project does not compile
+      ("redefinition of ..."). Remove the kernels/ directory before you
+      regenerate.
+      @todo The generators should write every function into a file of its
+      own (and a thin header that includes them). Then each file can simply
+      be overwritten, and regenerating in place becomes safe.
     """
     if target == Target.Accelerator and stateless == False:
         raise Exception("Accelerated kernels must be stateless")

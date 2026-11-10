@@ -2,6 +2,7 @@
 # use, please see the copyright notice at www.peano-framework.org
 from __future__ import annotations
 
+import enum
 import re
 from typing import Dict, List
 
@@ -72,7 +73,56 @@ class AuxiliaryVariables:
 
     """
 
-    def __init__(self, name: str, variables: Dict[str, int]):
+    RECONSTRUCTION_TASK_NAME = "Reconstruct auxiliary variables {}"
+    """!
+    Name of the task that reconstructs the halo of a set, without solver prefix and
+    stage suffix. The argument is the name of the set.
+    """
+
+    class Mode(enum.Enum):
+        """!
+
+        Where the values of a set live and whether they change
+
+        Data on faces are always interpolated onto hanging faces before
+        anybody reads them (see
+        src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md).
+
+        - CELL_WISE: The values only sit in the cells, i.e. the faces hold no
+          overlap of the set. Reconstructing the halo of a cell, interpolating,
+          projecting and rolling over need face data, so the solver schemes
+          reject such sets for the time being.
+        - STATIONARY_ON_FACES: The values also sit on the faces, and they do
+          not change after the setup. The faces are interpolated, but nobody
+          projects new values onto them.
+        - CHANGING_ON_FACES: The values also sit on the faces, and some solver
+          updates them after the setup (such as
+          exagrype.api.FOSOReconstructionSolver). That solver projects the new
+          values onto the faces after each (intermediate) step, restricts them
+          on hanging faces and rolls the face data over.
+        - STATIONARY_THROUGHOUT_TIME_STEPS_ON_FACES: The values sit on the
+          faces and change between time steps (some task, such as the
+          preamble of a coupling, projects new values onto the faces and
+          restricts them at the begin of each time step), but not within a
+          time step. A scheme with several stages per time step (Runge-Kutta)
+          reconstructs the halo of such a set in the first stage only,
+          holds it persistently through the later stages, and discards it
+          in the last stage. The halo thus does not survive a time step. For
+          the other modes, the schemes reconstruct the halo in every stage.
+        """
+
+        CELL_WISE = 0
+        STATIONARY_ON_FACES = 1
+        CHANGING_ON_FACES = 2
+        STATIONARY_THROUGHOUT_TIME_STEPS_ON_FACES = 3
+
+    def __init__(
+        self,
+        name: str,
+        variables: Dict[str, int],
+        mode: "AuxiliaryVariables.Mode" = Mode.STATIONARY_ON_FACES,
+        data_name: str = None,
+    ):
         """!
 
         @param name: str
@@ -85,6 +135,14 @@ class AuxiliaryVariables:
         @param variables: dict
           Maps the name of each parameter onto its multiplicity.
 
+        @param mode: AuxiliaryVariables.Mode
+          Whether the values also sit on the faces and whether they change
+          after the setup. Defaults to STATIONARY_ON_FACES. See
+          AuxiliaryVariables.Mode.
+
+        @param data_name: str
+          Name of the generated data (patch and face overlaps). Defaults to
+          the name of the set plus "AuxiliaryVariables".
         """
         if not re.fullmatch(r"[A-Z][A-Za-z0-9_]*", name):
             raise ValueError(
@@ -107,6 +165,14 @@ class AuxiliaryVariables:
             offset += multiplicity
         self._size = offset
         self._owner = None
+        if not isinstance(mode, AuxiliaryVariables.Mode):
+            raise TypeError(
+                f"mode has to be an AuxiliaryVariables.Mode, but got {mode!r}"
+            )
+        self._mode = mode
+        self._data_name = (
+            data_name if data_name is not None else name + "AuxiliaryVariables"
+        )
 
         # Created by create_data_structures()
         self.patch: peano4.api.datamodel.Patch = None
@@ -121,8 +187,18 @@ class AuxiliaryVariables:
         return self._name
 
     @property
+    def mode(self) -> "AuxiliaryVariables.Mode":
+        """! Whether the values sit on the faces, and whether they change after the setup"""
+        return self._mode
+
+    @property
+    def data_name(self) -> str:
+        """! Name of the generated data"""
+        return self._data_name
+
+    @property
     def size(self) -> int:
-        """! Total number of entries of the set, i.e. the sum of all multiplicities """
+        """! Total number of entries of the set, i.e. the sum of all multiplicities"""
         return self._size
 
     @property
@@ -131,22 +207,36 @@ class AuxiliaryVariables:
 
     @property
     def variable_positions(self) -> Dict[str, int]:
-        """! Position of each named variable within the set """
+        """! Position of each named variable within the set"""
         return dict(self._positions)
 
     @property
     def owner(self):
-        """! The solver which initialises the set, i.e. the first one it was attached to """
+        """! The solver which initialises the set, i.e. the first one it was attached to"""
         return self._owner
 
     @property
     def argument_name(self) -> str:
-        """! Name of the argument of the PDE terms """
+        """! Name of the argument of the PDE terms"""
         return self._name[0].lower() + self._name[1:]
 
     @property
+    def halo_is_held_through_stages(self) -> bool:
+        """!
+
+        Whether the halo has to be reconstructed in the first stage of a time step only
+
+        True for AuxiliaryVariables.Mode.STATIONARY_THROUGHOUT_TIME_STEPS_ON_FACES.
+
+        """
+        return (
+            self._mode
+            == AuxiliaryVariables.Mode.STATIONARY_THROUGHOUT_TIME_STEPS_ON_FACES
+        )
+
+    @property
     def delta_argument_name(self) -> str:
-        """! Name of the argument behind deltaQ """
+        """! Name of the argument behind deltaQ"""
         return "delta" + self._name
 
     def variable_names_per_entry(self) -> List[str]:
@@ -159,11 +249,13 @@ class AuxiliaryVariables:
             if multiplicity == 1:
                 names.append(f"{self._name}.{variable_name}")
             else:
-                names += [f"{self._name}.{variable_name}[{j}]" for j in range(multiplicity)]
+                names += [
+                    f"{self._name}.{variable_name}[{j}]" for j in range(multiplicity)
+                ]
         return names
 
     def variables_declaration(self) -> str:
-        """! C++ struct which hosts the positions of the variables within the set """
+        """! C++ struct which hosts the positions of the variables within the set"""
         constants = "\n".join(
             f"      static constexpr int {variable_name} = {position};"
             for variable_name, position in self._positions.items()
@@ -201,12 +293,14 @@ class AuxiliaryVariables:
             return
         self._patch_size = patch_size
         self._overlap = overlap
-        identifier = self._name + "AuxiliaryVariables"
+        identifier = self._data_name
         self.patch = peano4.api.datamodel.Patch(
             (patch_size, patch_size, patch_size), self._size, identifier
         )
         self.patch_overlap_current_time_step = peano4.api.datamodel.Patch(
-            (2 * overlap, patch_size, patch_size), self._size, identifier + "CurrentTimeStep"
+            (2 * overlap, patch_size, patch_size),
+            self._size,
+            identifier + "CurrentTimeStep",
         )
         self.patch_overlap_update = peano4.api.datamodel.Patch(
             (2 * overlap, patch_size, patch_size), self._size, identifier + "Update"
@@ -228,13 +322,17 @@ class AuxiliaryVariables:
         self.patch_overlap_current_time_step.generator.includes += """
 #include "peano4/utils/Loop.h"
 """
-        self.patch_overlap_current_time_step.generator.send_condition = grid_selector.createFaceGuard()
-        self.patch_overlap_current_time_step.generator.receive_and_merge_condition = grid_selector.createFaceGuard()
+        self.patch_overlap_current_time_step.generator.send_condition = (
+            grid_selector.createFaceGuard()
+        )
+        self.patch_overlap_current_time_step.generator.receive_and_merge_condition = (
+            grid_selector.createFaceGuard()
+        )
         self.patch_overlap_update.generator.send_condition = "false"
         self.patch_overlap_update.generator.receive_and_merge_condition = "false"
 
     def add_to_datamodel(self, peano_project):
-        """! Register the data with the project (once, even if the set is shared) """
+        """! Register the data with the project (once, even if the set is shared)"""
         if id(peano_project) in self._added_to:
             return
         self._added_to.add(id(peano_project))
@@ -247,7 +345,7 @@ class AuxiliaryVariables:
 
 
 def split_signature(signature: str) -> List[str]:
-    """! Split a C++ parameter list at the commas that are not within template brackets """
+    """! Split a C++ parameter list at the commas that are not within template brackets"""
     return [
         parameter.strip()
         for parameter in re.split(r",(?![^<]*>)", signature)
@@ -283,10 +381,14 @@ def extend_signature(signature: str, solver) -> str:
             writable = not parameter.startswith("const")
             for auxiliary in sets:
                 qualifier = "" if writable and auxiliary.owner is solver else "const "
-                result.append(f"{qualifier}double* __restrict__ {auxiliary.argument_name}")
+                result.append(
+                    f"{qualifier}double* __restrict__ {auxiliary.argument_name}"
+                )
         elif name == "deltaQ":
             for auxiliary in sets:
-                result.append(f"const double* __restrict__ {auxiliary.delta_argument_name}")
+                result.append(
+                    f"const double* __restrict__ {auxiliary.delta_argument_name}"
+                )
     return ", ".join(result)
 
 
@@ -308,7 +410,9 @@ def forwarding_arguments(signature: str, solver) -> List[str]:
         arguments.append(name)
         if name in ("Q", "deltaQ"):
             for auxiliary in solver.auxiliary_variables:
-                arguments.append(f"{name} + {solver.auxiliary_variable_offset(auxiliary)}")
+                arguments.append(
+                    f"{name} + {solver.auxiliary_variable_offset(auxiliary)}"
+                )
     return arguments
 
 
@@ -326,31 +430,47 @@ def register_auxiliary_variables(solver, peano_project, patch_size: int, overlap
     """
     solver._auxiliary_variable_halos = {}
     for auxiliary in solver.auxiliary_variables:
+        if auxiliary.mode == AuxiliaryVariables.Mode.CELL_WISE:
+            raise NotImplementedError(
+                f"Solver {solver.name}: the auxiliary variables {auxiliary.name} are cell-wise, i.e. not on the faces. "
+                "The numerical schemes reconstruct the halos of auxiliary variables from the face data."
+            )
         auxiliary.create_data_structures(patch_size, overlap, solver.grid_selector)
         auxiliary.add_to_datamodel(peano_project)
         halo = peano4.api.datamodel.Patch(
-            (patch_size + 2 * overlap, patch_size + 2 * overlap, patch_size + 2 * overlap),
+            (
+                patch_size + 2 * overlap,
+                patch_size + 2 * overlap,
+                patch_size + 2 * overlap,
+            ),
             auxiliary.size,
-            auxiliary.name + "AuxiliaryVariablesWithHaloOf" + solver.name,
+            auxiliary.data_name + "WithHaloOf" + solver.name,
         )
         halo.grid_selector = solver.grid_selector
-        halo.generator = peano4.api.datamodel.PatchToDoubleArrayWithSmartPointer(halo, "double")
+        halo.generator = peano4.api.datamodel.PatchToDoubleArrayWithSmartPointer(
+            halo, "double"
+        )
         peano_project.datamodel.add_cell(halo)
         solver._auxiliary_variable_halos[auxiliary.name] = halo
 
 
-def add_reconstruction_of_auxiliary_variables(task, solver):
+def add_reconstruction_of_auxiliary_variables(task, solver, auxiliaries=None):
     """!
 
     Make a reconstruction task of a solver fill the halos of the solver's
     auxiliary variables
 
     @param task: peano4.api.taskgraph.Task
-      The task which also reconstructs the unknowns.
+      The task which reconstructs the halos.
+
+    @param auxiliaries: List[AuxiliaryVariables]
+      The sets to reconstruct. Defaults to all sets of the solver.
 
     """
     Access = peano4.api.taskgraph.Task.DataAccess
-    for auxiliary in solver.auxiliary_variables:
+    if auxiliaries is None:
+        auxiliaries = solver.auxiliary_variables
+    for auxiliary in auxiliaries:
         halo = solver._auxiliary_variable_halos[auxiliary.name]
         task.use_cell(auxiliary.patch, Access.READ_AND_WRITE)
         task.use_cell(halo, Access.WRITE)
@@ -362,12 +482,79 @@ def add_reconstruction_of_auxiliary_variables(task, solver):
                 reconstructed_patch=halo,
                 guard=solver.grid_selector.createCellGuard(),
                 add_assertions_to_halo_exchange=False,
-                additional_includes=solver._get_default_includes() + solver.user_solver_includes,
+                additional_includes=solver._get_default_includes()
+                + solver.user_solver_includes,
             )
         )
 
 
-def use_halos_of_auxiliary_variables(task, solver, access=None):
+def add_reconstruction_tasks_of_auxiliary_variables(
+    solver, time_step, interpolation, predecessors=(), name_suffix="", auxiliaries=None
+):
+    """!
+
+    Add the tasks that interpolate and reconstruct the auxiliary variables
+
+    Each set of auxiliary variables gets a task of its own that interpolates
+    its coarse face data onto the hanging faces and reconstructs its halo
+    (register_auxiliary_variables() rejects cell-wise sets).
+    Interpolation is no task of its own, see
+    src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md.
+    All tasks depend on the predecessors only, i.e. the reconstructions of all
+    sets (and of the unknowns, which the caller creates) run in parallel.
+
+    @param solver: exahype2.api.Solver
+      The solver whose sets are reconstructed.
+
+    @param time_step: peano4.api.taskgraph.Graph
+      Receives the tasks.
+
+    @param interpolation: toolbox.blockstructured.api.InterpolateHangingFaces.Scheme
+      Interpolation scheme.
+
+    @param predecessors: List[peano4.api.taskgraph.Task]
+      Tasks which the new tasks wait for.
+
+    @param name_suffix: str
+      Appended to the names of the tasks, e.g. " stage 1".
+
+    @param auxiliaries: List[AuxiliaryVariables]
+      The sets to reconstruct. Defaults to all sets of the solver. A scheme
+      with several stages passes only the sets whose halo has not been
+      held through the stages (AuxiliaryVariables.halo_is_held_through_stages).
+
+    @return List[peano4.api.taskgraph.Task]
+      The reconstruction tasks, one per set. The update of the cells has to
+      wait for all of them.
+
+    """
+    Entity = peano4.api.taskgraph.Task.GridEntity
+    reconstructions = []
+    for auxiliary in (
+        solver.auxiliary_variables if auxiliaries is None else auxiliaries
+    ):
+        reconstruction = peano4.api.taskgraph.Task(
+            name=f"{solver.name}_{AuxiliaryVariables.RECONSTRUCTION_TASK_NAME.format(auxiliary.name)}{name_suffix}",
+            entity=Entity.CELL,
+        )
+        # The reconstruction interpolates the faces itself, before it acts on the cell
+        reconstruction.add_action_set(
+            toolbox.blockstructured.api.InterpolateHangingFaces(
+                auxiliary.patch_overlap_current_time_step,
+                scheme=interpolation,
+                additional_includes=solver._get_default_includes()
+                + solver.user_solver_includes,
+            )
+        )
+        add_reconstruction_of_auxiliary_variables(reconstruction, solver, [auxiliary])
+        for predecessor in predecessors:
+            reconstruction.add_dependency(predecessor)
+        time_step.add_task(reconstruction)
+        reconstructions.append(reconstruction)
+    return reconstructions
+
+
+def use_halos_of_auxiliary_variables(task, solver, access=None, held_access=None):
     """!
 
     Let a task (typically the update of the cells) read the halos of the auxiliary variables
@@ -377,20 +564,34 @@ def use_halos_of_auxiliary_variables(task, solver, access=None):
       qualifier if the halos have to survive the task, e.g. because a later
       task of the same chain reads them, too.
 
+    @param held_access: peano4.api.taskgraph.Task.DataAccess
+      How the task uses the halos of the sets whose halo is held through
+      the stages of a time step
+      (AuxiliaryVariables.halo_is_held_through_stages). Defaults to access.
+      Schemes with several stages pass a qualifier that keeps the halo alive
+      unless the task belongs to the last stage.
+
     """
     if access is None:
         access = peano4.api.taskgraph.Task.DataAccess.READ_AND_DISCARD
+    if held_access is None:
+        held_access = access
     for auxiliary in solver.auxiliary_variables:
-        task.use_cell(solver._auxiliary_variable_halos[auxiliary.name], access)
+        task.use_cell(
+            solver._auxiliary_variable_halos[auxiliary.name],
+            held_access if auxiliary.halo_is_held_through_stages else access,
+        )
 
 
 def volumes_expression(patch_size: int, halo: int) -> str:
-    """! C++ expression for the number of volumes of a patch with halo """
+    """! C++ expression for the number of volumes of a patch with halo"""
     edge = f"({patch_size} + 2 * {halo})"
     return f"({edge} * {edge} * (Dimensions == 3 ? {edge} : 1))"
 
 
-def code_to_assemble_kernel_input(solver, buffer: str, unknowns: str, halo_size: int, parameters_of=None) -> str:
+def code_to_assemble_kernel_input(
+    solver, buffer: str, unknowns: str, halo_size: int, parameters_of=None
+) -> str:
     """!
 
     C++ code which assembles the input buffer of the compute kernels
@@ -411,7 +612,9 @@ def code_to_assemble_kernel_input(solver, buffer: str, unknowns: str, halo_size:
     if not solver.auxiliary_variables:
         return ""
     if parameters_of is None:
-        parameters_of = lambda auxiliary: f"fineGridCell{solver._auxiliary_variable_halos[auxiliary.name].name}.value"
+        parameters_of = (
+            lambda auxiliary: f"fineGridCell{solver._auxiliary_variable_halos[auxiliary.name].name}.value"
+        )
     volumes = volumes_expression(solver.numerical_scheme.patch_size, halo_size)
     stride = solver.unknowns + solver.number_of_auxiliary_variables
     copies = "".join(
@@ -433,7 +636,7 @@ def code_to_assemble_kernel_input(solver, buffer: str, unknowns: str, halo_size:
 
 
 def code_to_allocate_kernel_output(solver, buffer: str) -> str:
-    """! C++ code which defines the output buffer (a std::vector<double>) of the compute kernels """
+    """! C++ code which defines the output buffer (a std::vector<double>) of the compute kernels"""
     if not solver.auxiliary_variables:
         return ""
     volumes = volumes_expression(solver.numerical_scheme.patch_size, 0)
@@ -445,7 +648,7 @@ def code_to_allocate_kernel_output(solver, buffer: str) -> str:
 
 
 def code_to_copy_back_kernel_output(solver, buffer: str, unknowns: str) -> str:
-    """! C++ code which copies the unknowns of the output buffer back into the patch """
+    """! C++ code which copies the unknowns of the output buffer back into the patch"""
     if not solver.auxiliary_variables:
         return ""
     stride = solver.unknowns + solver.number_of_auxiliary_variables
@@ -459,7 +662,11 @@ def code_to_copy_back_kernel_output(solver, buffer: str, unknowns: str) -> str:
 
 
 def add_auxiliary_variables_to_setup(
-    solver, initial_condition_task, project_on_faces_task, project_patch_onto_faces, roll_over_updated_face
+    solver,
+    initial_condition_task,
+    project_on_faces_task,
+    project_patch_onto_faces,
+    roll_over_updated_face,
 ):
     """!
 
@@ -491,8 +698,12 @@ def add_auxiliary_variables_to_setup(
         if auxiliary.owner is solver:
             initial_condition_task.use_cell(auxiliary.patch, Access.WRITE)
             project_on_faces_task.use_cell(auxiliary.patch, Access.READ_AND_WRITE)
-            project_on_faces_task.use_face(auxiliary.patch_overlap_update, Access.TEMPORARY)
-            project_on_faces_task.use_face(auxiliary.patch_overlap_current_time_step, Access.WRITE)
+            project_on_faces_task.use_face(
+                auxiliary.patch_overlap_update, Access.TEMPORARY
+            )
+            project_on_faces_task.use_face(
+                auxiliary.patch_overlap_current_time_step, Access.WRITE
+            )
             project_on_faces_task.add_action_set(
                 project_patch_onto_faces(
                     auxiliary.patch,

@@ -46,8 +46,8 @@ import toolbox.blockstructured.api
 class RusanovWithPostprocessing(exahype2.api.fv.RusanovWithExplicitEuler):
     """! The example of the page: insert a step after each solution update"""
 
-    def construct_output(self, exahype2_project, peano_project, time_step):
-        super().construct_output(exahype2_project, peano_project, time_step)
+    def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
+        super().construct_output(exahype2_project, peano_project, time_step, add_global_tasks)
         solver = self._solver
         for anchor in time_step.find_tasks(exahype2.api.Solver.SolutionUpdateTaskTag):
             if not anchor.name.startswith(solver.name + "_"):

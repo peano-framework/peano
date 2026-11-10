@@ -66,6 +66,12 @@ class Solver(abc.ABC):
 
         """
 
+        ## Name of the last task of each time step without the solver's name
+        ## as prefix, i.e. the task is called {SolverName}_ followed by this
+        ## string. It evaluates the adaptivity criterion and re-enables and
+        ## informs the load balancing.
+        DYNAMIC_MESH_REFINEMENT_TASK_NAME = "Dynamic mesh refinement and load balancing"
+
         def __init__(self, solver: "Solver"):
             """!
 
@@ -77,7 +83,9 @@ class Solver(abc.ABC):
             self._generator: Solver.NumericalScheme.NumericalSchemeGenerator = None
 
         @abc.abstractmethod
-        def construct_output(self, exahype2_project, peano_project, time_step):
+        def construct_output(
+            self, exahype2_project, peano_project, time_step, add_global_tasks=True
+        ):
             """!
             Has to be implemented by subclass
 
@@ -85,7 +93,114 @@ class Solver(abc.ABC):
               The task graph of the surrounding exahype2_project's time
               stepping phase, so the numerical scheme can add its own tasks
               into it.
+
+            @param add_global_tasks: bool
+              Whether the scheme adds the tasks that belong to the mesh as a
+              whole rather than to the solver: it switches the load
+              balancing off at the begin of the time step, and its last task
+              evaluates the adaptivity criterion and switches the load
+              balancing on again. If set, the scheme adds these tasks by calling
+              wrap_task_graph_in_load_balancing_and_amr_tasks() as its very
+              last step. A host that couples several solvers passes False,
+              as it wraps the concatenated graph itself.
             """
+
+        def wrap_task_graph_in_load_balancing_and_amr_tasks(self, time_step):
+            """!
+
+            Embed the time step's task graph into the global load balancing and AMR tasks
+
+            The routine adds two tasks to time_step:
+
+            - {SolverName}_Disable load balancing: switches the load
+              balancing off throughout the time step. All tasks of the graph
+              that do not depend on anything else wait for it.
+            - {SolverName}_Dynamic mesh refinement and load balancing
+              (DYNAMIC_MESH_REFINEMENT_TASK_NAME): evaluates the adaptivity
+              criterion if the solver has one, i.e. it collects the refine and
+              erase requests for the mesh adaptation phase, and then
+              switches the load balancing on again and informs it that the
+              time step has finished. It waits for all tasks of the graph that
+              nothing else waits for. Global tasks do not count, as nothing
+              may depend on a GLOBAL_END_OF_STEP task.
+
+            The tasks pick up whatever is in time_step when the routine is
+            called. Consequently, construct_output() calls it last if its flag
+            add_global_tasks is set, i.e. after all tasks of the scheme have
+            been added. A host that merges the graphs of several solvers
+            (@ref exahype2.api.SolverHost) calls it on the merged graph
+            instead.
+
+            Schemes that do not own a mesh override the routine with an empty
+            one.
+
+            @param time_step: peano4.api.taskgraph.Graph
+              The graph to wrap. It receives the two tasks.
+
+            """
+            import toolbox.loadbalancing.api.actionsets
+            from .blockstructured.create_dynamic_mesh_refinement_action_set import (
+                create_dynamic_mesh_refinement_action_set,
+            )
+
+            Entity = peano4.api.taskgraph.Task.GridEntity
+            Access = peano4.api.taskgraph.Task.DataAccess
+            solver = self._solver
+
+            def is_global(task):
+                return task.entity.is_global
+
+            sources = [
+                task
+                for task in time_step.tasks
+                if not is_global(task) and not task.dependencies
+            ]
+            sinks = [
+                task
+                for task in time_step.tasks
+                if not is_global(task)
+                and not any(
+                    task in other.dependencies
+                    for other in time_step.tasks
+                    if not other.entity == Entity.GLOBAL_END_OF_STEP
+                )
+            ]
+
+            disable_task = peano4.api.taskgraph.Task(
+                name=f"{solver.name}_Disable load balancing", entity=Entity.CELL
+            )
+            disable_task.add_action_set(
+                toolbox.loadbalancing.api.actionsets.ToggleLoadBalancing(
+                    enable_load_balancing=False, plug_into_prepare_traversal=True
+                )
+            )
+            for source in sources:
+                source.add_dependency(disable_task)
+            time_step.add_task(disable_task)
+
+            refinement_task = peano4.api.taskgraph.Task(
+                name=f"{solver.name}_{self.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
+                entity=Entity.CELL,
+                may_spawn_background_tasks=False,
+            )
+            refinement_task.use_cell(solver._patch, Access.READ_AND_WRITE)
+            dynamic_mesh_refinement = create_dynamic_mesh_refinement_action_set(
+                solver,
+                self.patch_size,
+                guard=solver.grid_selector.createCellGuard(),
+                min_volume_size=self.min_volume_size,
+                max_volume_size=self.max_volume_size,
+            )
+            if dynamic_mesh_refinement is not None:
+                refinement_task.add_action_set(dynamic_mesh_refinement)
+            refinement_task.add_action_set(
+                toolbox.loadbalancing.api.actionsets.LoadBalancing(
+                    enable_load_balancing=True
+                )
+            )
+            for sink in sinks:
+                refinement_task.add_dependency(sink)
+            time_step.add_task(refinement_task)
 
         def create_default_mesh_adaptation(self) -> "Solver.MeshAdaptation":
             """!
@@ -119,7 +234,9 @@ class Solver(abc.ABC):
             def add_configuration(self, target: Target, stateless: bool):
                 self._configurations.append((target, stateless))
 
-            def construct_output(self, exahype2_project, peano_project, time_step):
+            def construct_output(
+                self, exahype2_project, peano_project, time_step, add_global_tasks=True
+            ):
                 pass
 
     class GridConstruction(abc.ABC):
@@ -538,6 +655,51 @@ class Solver(abc.ABC):
         Unique solver name. Feeds into all generated class and instance names.
         """
         return self._name
+
+    @property
+    def task_graph_title_suffix(self) -> str:
+        """!
+        Appended to the solver name in the title of the solver's task graphs.
+        Empty by default. Solvers which are one part of a host
+        (exahype2.api.SolverHost) use it to say which part they are.
+        """
+        return ""
+
+    def create_task_graph(
+        self, exahype2_project, peano_project, stage: int, number_of_stages: int
+    ):
+        """!
+
+        Return the tasks of this solver for one stage of its host's time stepping
+
+        A solver which is hosted (@ref exahype2.api.SolverHost) has no numerical
+        scheme of its own. Instead, the host's scheme asks it for its task graph
+        once per stage of the Runge-Kutta scheme (once if there is no stage), and
+        composes the graphs it receives: The graphs are returned as they are, i.e.
+        without any dependency on tasks of other solvers. The host adds those
+        through dependencies. Solvers which are not hosted do not implement
+        the routine.
+
+        @param exahype2_project: exahype2.api.Project
+          The project that hosts the solvers.
+
+        @param peano_project: peano4.api.Project
+          The Peano project that the exahype2 project assembles. The solver
+          adds the data it needs to it.
+
+        @param stage: int
+          Stage for which the graph is built, starting with 0.
+
+        @param number_of_stages: int
+          Number of stages of the host's time stepping scheme.
+
+        @return peano4.api.taskgraph.Graph
+          Fresh graph with tasks that belong to this stage only.
+
+        """
+        raise NotImplementedError(
+            f"Solver {self._name} cannot be hosted, as it does not provide a task graph"
+        )
 
     @property
     def numerical_scheme(self) -> "Solver.NumericalScheme":
@@ -1018,6 +1180,7 @@ class Solver(abc.ABC):
         time_step,
         plot,
         mesh_adaptation,
+        add_global_tasks=True,
     ):
         """!
         Turn this solver specification into a task graph and create the required C++ kernels/stubs
@@ -1032,6 +1195,15 @@ class Solver(abc.ABC):
           exahype2_project. They are owned by exahype2_project.generate_Peano4_project()
           and merely passed through here, so this solver can add its own
           tasks into them.
+
+        @param add_global_tasks: bool
+          Passed on to the numerical scheme, @see Solver.NumericalScheme.construct_output().
+          A host that realises several solvers into graphs of their own and
+          concatenates them (@ref page_exahype_programmers_guide_coupling)
+          passes False, i.e. the solver is realised as an intermediate step.
+          The host then wraps the concatenated graph.
+          Without the global tasks, the solver does not contribute to the
+          mesh adaptation phase either: The host constructs it.
 
         @return peano4.api.taskgraph.Graph
         """
@@ -1058,12 +1230,12 @@ class Solver(abc.ABC):
             exahype2_project, peano_project, setup_simulation
         )
         self.numerical_scheme.construct_output(
-            exahype2_project, peano_project, time_step
+            exahype2_project, peano_project, time_step, add_global_tasks
         )
         for plotter in self._plotters:
             plotter.construct_output(exahype2_project, peano_project, plot)
         self._add_wants_to_plot_to_solver()
-        if self.mesh_adaptation is not None:
+        if self.mesh_adaptation is not None and add_global_tasks:
             self.mesh_adaptation.construct_output(
                 exahype2_project, peano_project, mesh_adaptation
             )

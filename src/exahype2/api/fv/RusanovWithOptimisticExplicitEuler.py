@@ -1114,7 +1114,8 @@ Patch overlap data
     def construct_output(self,
                          exahype2_project,
                          peano_project,
-                         time_step):
+                         time_step,
+                         add_global_tasks=True):
         """!
 
         """
@@ -1156,46 +1157,6 @@ Patch overlap data
         time_step.add_task(project_on_faces_task)
         time_step.add_task(compute_cfl_condition_task)
         time_step.add_task(spawn_patch_interior_task)
-
-        # The load balancing is switched off throughout the time step, and
-        # switched on again only at its very end, so it may then decide on
-        # splits. Peano carries these splits out in the subsequent mesh sweep.
-        reconstruction_task.add_action_set(
-            toolbox.loadbalancing.api.actionsets.ToggleLoadBalancing(
-                enable_load_balancing=False, plug_into_prepare_traversal=True
-            )
-        )
-
-        # The very last task evaluates the adaptivity criterion if the
-        # solver has one (create_dynamic_mesh_refinement_action_set()), i.e. it
-        # collects refine and erase requests for the mesh adaptation phase,
-        # and it switches the load balancing on again and informs it that
-        # the time step has finished.
-        dynamic_mesh_refinement_task = peano4.api.taskgraph.Task(
-            name=f"{self._solver.name}_Dynamic mesh refinement",
-            entity=peano4.api.taskgraph.Task.GridEntity.CELL,
-            may_spawn_background_tasks=False,
-        )
-        dynamic_mesh_refinement_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
-        dynamic_mesh_refinement = create_dynamic_mesh_refinement_action_set(
-            self._solver,
-            self.patch_size,
-            guard=self._solver.grid_selector.createCellGuard(),
-            min_volume_size=self.min_volume_size,
-            max_volume_size=self.max_volume_size,
-        )
-        if dynamic_mesh_refinement is not None:
-            dynamic_mesh_refinement_task.add_action_set(dynamic_mesh_refinement)
-        dynamic_mesh_refinement_task.add_action_set(
-            toolbox.loadbalancing.api.actionsets.LoadBalancing(enable_load_balancing=True)
-        )
-        dynamic_mesh_refinement_task.add_dependency(reduce_eigenvalue_task)
-        dynamic_mesh_refinement_task.add_dependency(project_on_faces_task)
-        # No other task depends on the discard, so we have to make it a
-        # predecessor explicitly, as the dynamic mesh refinement has to be
-        # the very last task
-        dynamic_mesh_refinement_task.add_dependency(discard_patch_interior_task)
-        time_step.add_task(dynamic_mesh_refinement_task)
 
         ## Build the reconstruction tasks befilling the patch_with_halo, which is logically temporary
         reconstruction_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
@@ -1327,8 +1288,10 @@ Patch overlap data
         ## updated completely by the traditional update or, in the optimistic
         ## branch, once the patch interior is inserted. The pair runs in
         ## parallel to the spawn of the next time step's patch interior update.
-        ## The projection onto the faces follows it, so the update, the
-        ## eigenvalue and the reduction fold into one mesh traversal
+        ## The projection onto the faces depends on the patch update only,
+        ## i.e. it runs in parallel to the eigenvalue and its reduction. The
+        ## update, the eigenvalue, the reduction and the projection fold into
+        ## one mesh traversal
         compute_eigenvalue_task.add_dependency(update_cell_task)
         compute_eigenvalue_task.add_dependency(insert_patch_interior_task)
         compute_eigenvalue_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
@@ -1356,6 +1319,11 @@ Patch overlap data
         ## time step size before the CFL condition advances them
         compute_cfl_condition_task.add_dependency(reduce_eigenvalue_task)
         compute_cfl_condition_task.add_dependency(spawn_patch_interior_task)
+        ## The roll over of Sommerfeld boundary conditions is part of the
+        ## projection and reads the current time step size, which the next task
+        ## replaces. It therefore never runs before the roll over has terminated
+        ## (see src/exahype2/api/fv/adrs/0002-time-step-size-after-roll-over.md)
+        compute_cfl_condition_task.add_dependency(project_on_faces_task)
         compute_cfl_condition_task.add_action_set(
             ComputeGlobalCFLCondition(
                 self._solver,
@@ -1365,7 +1333,8 @@ Patch overlap data
         )
 
         ## Both branches: project the new data onto the faces. Also roll over the solution
-        project_on_faces_task.add_dependency(reduce_eigenvalue_task)
+        project_on_faces_task.add_dependency(update_cell_task)
+        project_on_faces_task.add_dependency(insert_patch_interior_task)
         project_on_faces_task.use_cell(self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE)
         project_on_faces_task.use_face(self._solver._patch_overlap_update, peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
         project_on_faces_task.use_face(
@@ -1411,10 +1380,16 @@ Patch overlap data
             )
         )
 
+        # The load balancing is switched off throughout the time step, and
+        # switched on again only at its very end, so it may then decide on
+        # splits. Peano carries these splits out in the subsequent mesh sweep.
+        if add_global_tasks:
+            self._solver.numerical_scheme.wrap_task_graph_in_load_balancing_and_amr_tasks(time_step)
+
         if peano4.api.Logger().is_visualisation:
-            time_step.visualise(title="Time stepping task graph for {}".format(self._solver.name))
+            time_step.visualise(title="Time stepping task graph for {}{}".format(self._solver.name, self._solver.task_graph_title_suffix))
         if peano4.api.Logger().is_text:
-            time_step.log_as_text(title="Time stepping task graph for {}".format(self._solver.name))
+            time_step.log_as_text(title="Time stepping task graph for {}{}".format(self._solver.name, self._solver.task_graph_title_suffix))
 
     def __create_time_step_functions(self, output_directory):
         """!

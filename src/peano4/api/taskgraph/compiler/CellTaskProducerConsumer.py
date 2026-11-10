@@ -260,15 +260,16 @@ def _task_number_attribute_name(task: Task, action_set_index: int) -> str:
     """!
 
     CamelCase version of the task's name followed by ActionSet, the action
-    set index and TaskNumber. Words are separated by whitespace or
-    underscores, and only the first letter of each word is capitalised, so
+    set index and TaskNumber. Words are separated by whitespace, underscores
+    or any other character that is not allowed in a C++ identifier (such as
+    the hyphen in "Runge-Kutta"), and only the first letter of each word is capitalised, so
     existing camel case and acronyms are preserved. "EulerFVSmooth_Update
     cell" with action set index 0 for example becomes
     EulerFVSmoothUpdateCellActionSet0TaskNumber.
 
     """
-    words = task.name.replace("_", " ").split()
-    return "".join(word[:1].upper() + word[1:] for word in words) + f"ActionSet{action_set_index}TaskNumber"
+    words = re.split(r"[^A-Za-z0-9]+", task.name)
+    return "".join(word[:1].upper() + word[1:] for word in words if word) + f"ActionSet{action_set_index}TaskNumber"
 
 
 def _copy_task(task: Task) -> Task:

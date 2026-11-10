@@ -52,9 +52,6 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         "Probe_Reconstruct stage 1",
         "Probe_Reconstruct stage 2",
         "Probe_Disable load balancing",
-        "Probe_Interpolate hanging faces stage 0",
-        "Probe_Interpolate hanging faces stage 1",
-        "Probe_Interpolate hanging faces stage 2",
         "Probe_Evaluate Runge-Kutta right hand side stage 0",
         "Probe_Evaluate Runge-Kutta right hand side stage 1",
         "Probe_Evaluate Runge-Kutta right hand side stage 2",
@@ -64,25 +61,30 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         "Probe_Project stage 1 onto faces",
         "Probe_Project stage 2 onto faces",
         "Probe_Project solution onto faces",
-        "Probe_Restrict stage 1 on hanging faces",
-        "Probe_Restrict stage 2 on hanging faces",
-        "Probe_Restrict solution on hanging faces",
         "Probe_Roll over stage 1 faces",
         "Probe_Roll over stage 2 faces",
         "Probe_Roll over solution faces",
         "Probe_Compute max eigenvalue",
         "Probe_Reduce max eigenvalue",
         "Probe_Compute time step size",
-        "Probe_Dynamic mesh refinement",
+        f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
     }
-    # The maximum eigenvalue of the new solution is determined before it is projected
+    # The maximum eigenvalue of the new solution is determined right after the
+    # projection, i.e. in parallel to the roll over. If it ran in parallel to the
+    # projection, its producer-consumer split would push the roll over into the
+    # next mesh sweep, away from the temporary face data of the projection
+    # (adrs/0002-eigenvalue-follows-projection.md)
     assert (
         tasks["Probe_Complete time step"]
+        in tasks["Probe_Project solution onto faces"].dependencies
+    )
+    assert (
+        tasks["Probe_Project solution onto faces"]
         in tasks["Probe_Compute max eigenvalue"].dependencies
     )
     assert (
         tasks["Probe_Compute max eigenvalue"]
-        in tasks["Probe_Project solution onto faces"].dependencies
+        not in tasks["Probe_Roll over solution faces"].dependencies
     )
     # The eigenvalue is stored per cell, a task of its own reduces it, and the
     # time step size is computed from the outcome
@@ -99,15 +101,12 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
             tasks[f"Probe_Prepare stage {stage}"]
             in tasks[f"Probe_Project stage {stage} onto faces"].dependencies
         )
-        # Every step with several action sets is a chain of tasks
+        # The projection hosts the restriction, the roll over follows
         assert (
             tasks[f"Probe_Project stage {stage} onto faces"]
-            in tasks[f"Probe_Restrict stage {stage} on hanging faces"].dependencies
-        )
-        assert (
-            tasks[f"Probe_Restrict stage {stage} on hanging faces"]
             in tasks[f"Probe_Roll over stage {stage} faces"].dependencies
         )
+        # The reconstruction interpolates the faces itself, i.e. it waits for the roll over
         assert (
             tasks[f"Probe_Roll over stage {stage} faces"]
             in tasks[f"Probe_Reconstruct stage {stage}"].dependencies
@@ -128,16 +127,22 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
     # The load balancing is switched off before the first stage only
     assert (
         tasks["Probe_Disable load balancing"]
-        in tasks["Probe_Reconstruct stage 0"].dependencies
+        in tasks["Probe_Apply Dirichlet BCs stage 0"].dependencies
     )
-    # Each task of the scheme holds exactly one action set, so that the task
+    # The reconstruction holds the interpolation and the reconstruction
+    assert [
+        type(a).__name__ for a in tasks["Probe_Reconstruct stage 1"].action_sets
+    ] == [
+        "InterpolateHangingFaces",
+        "ReconstructPatchWithHalo",
+    ]
+    assert [
+        type(a).__name__ for a in tasks["Probe_Project stage 1 onto faces"].action_sets
+    ] == ["ProjectPatchOntoFaces", "RestrictHangingFaces"]
+    # All other tasks of the scheme hold exactly one action set, so that the task
     # graph compiler can run the tasks of several solvers in parallel
     for name in [
-        "Probe_Reconstruct stage 1",
-        "Probe_Interpolate hanging faces stage 1",
         "Probe_Evaluate Runge-Kutta right hand side stage 1",
-        "Probe_Project stage 1 onto faces",
-        "Probe_Restrict stage 1 on hanging faces",
         "Probe_Roll over stage 1 faces",
     ]:
         assert len(tasks[name].action_sets) == 1, name
@@ -325,7 +330,9 @@ def test_fixed_time_step_size_skips_eigenvalue(tmp_path):
 def test_right_hand_side_uses_stage_time_stamp_and_estimate_slot(tmp_path):
     solver = _solver(rk_order=4, boundary=None)
     tasks = _construct_time_step(solver, tmp_path, periodic_BC=(True, True, True))
-    [action_set] = tasks["Probe_Evaluate Runge-Kutta right hand side stage 2"].action_sets
+    [action_set] = tasks[
+        "Probe_Evaluate Runge-Kutta right hand side stage 2"
+    ].action_sets
     body = action_set.get_body_of_operation(
         peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
     )
@@ -385,8 +392,37 @@ def test_time_step_size_acts_at_the_end_of_the_time_step_and_needs_no_traversal(
     assert task.entity == peano4.api.taskgraph.Task.GridEntity.GLOBAL_END_OF_STEP
     assert not task.cell_data
     # Nothing, not even the refinement, waits for a task that runs at the very end
-    assert not any(
-        task in other.dependencies for other in tasks.values()
-    )
+    assert not any(task in other.dependencies for other in tasks.values())
     # The mesh refinement is independent of the time step size
-    assert task not in tasks["Probe_Dynamic mesh refinement"].dependencies
+    assert (
+        task
+        not in tasks[
+            f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}"
+        ].dependencies
+    )
+
+
+def test_estimates_are_discarded_last_but_not_written_first(tmp_path):
+    tasks = _construct_time_step(_solver(rk_order=3), tmp_path)
+    Access = peano4.api.taskgraph.Task.DataAccess
+
+    def access_to_estimates(name):
+        (qualifier,) = [
+            access
+            for data, access in tasks[name].cell_data_access.items()
+            if data.name.endswith("RhsEstimates")
+        ]
+        return qualifier
+
+    # Write-only first would leak one patch per cell and time step
+    assert (
+        access_to_estimates("Probe_Evaluate Runge-Kutta right hand side stage 0")
+        == Access.READ_AND_WRITE
+    )
+    assert (
+        access_to_estimates("Probe_Evaluate Runge-Kutta right hand side stage 1")
+        == Access.READ_AND_WRITE
+    )
+    assert access_to_estimates("Probe_Prepare stage 1") == Access.READ_AND_WRITE
+    assert access_to_estimates("Probe_Prepare stage 2") == Access.READ_AND_WRITE
+    assert access_to_estimates("Probe_Complete time step") == Access.READ_AND_DISCARD

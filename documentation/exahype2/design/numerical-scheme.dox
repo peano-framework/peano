@@ -9,12 +9,16 @@ A numerical scheme is technically a generator which takes a solver description a
 Therefore, it is typically implemented through a single method
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def construct_output(self, exahype2_project, peano_project, time_step):
+def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
   ...
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 where `time_step` is the @ref peano4.api.taskgraph.Graph "task graph"
- of the surrounding project's time stepping phase. Implementing a numerical scheme
+ of the surrounding project's time stepping phase.
+If a host couples several solvers, it builds a graph per solver and 
+passes `add_global_tasks=False` to all but one of them: Such a scheme leaves the tasks that 
+belong to the mesh as a whole (the load balancing switch and the dynamic mesh refinement) 
+to the other solver (@ref page_exahype_programmers_guide_coupling). Implementing a numerical scheme
 therefore means populating this graph with peano4.api.taskgraph.Task
 instances and the dependencies between them.
 

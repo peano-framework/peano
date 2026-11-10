@@ -6,7 +6,8 @@ This is the gauge wave benchmark (@ref benchmarks_exagrype_gauge_wave) with the
 fourth-order Finite Differences (exahype2.api.rkfd4), but we instantiate two
 solvers in one setup: exagrype.api.FOCCZ4Solver, which evolves all 59 CCZ4
 unknowns, and exagrype.api.FOSOCCZ4Solver, which evolves 25 of them and obtains
-the 34 first derivatives from its exagrype.api.FOSOCCZ4Reconstructor. Both solvers
+the 34 first derivatives from the exagrype.api.FOSOReconstructionSolver next to it
+(both are hosted by an exagrype.api.FOSOSolver). Both solvers
 use the same Runge-Kutta scheme, the same lopsided advection and no
 dissipation. The two do not yield identical results: The first-order solver
 evolves the derivatives as unknowns, whereas the second-order solver
@@ -41,10 +42,12 @@ and is run from this directory via
 
 The benchmark covers two numerical schemes:
 
-- FD4: fourth-order Finite Differences with classic Runge-Kutta 4 and lopsided
+- RK4FD4: fourth-order Finite Differences with classic Runge-Kutta 4 and lopsided
   advection (exahype2.api.rkfd4.CentralDifferencesWithRungeKutta). The
   second-order solver reconstructs the derivatives with the fourth-order
   stencil in each Runge-Kutta stage.
+- RK1FD4: the same spatial discretisation, but with first-order Runge-Kutta
+  (explicit Euler, rk_order=1), i.e. one stage per time step.
 - FV: Finite Volumes with a Rusanov flux and explicit Euler
   (exahype2.api.fv.RusanovWithExplicitEuler). The second-order solver
   reconstructs the derivatives with second-order central differences
@@ -67,7 +70,8 @@ The script loops sequentially, within one Python process, over all schemes,
 grid sizes and formulations.
 
 The option --build-mode=debug|release selects the build (default release; debug
-also enables the generator logging). --schemes (default FD4,FV), --sizes (default 27,81), --end-time (default
+also enables the generator logging). --schemes (default RK4FD4,RK1FD4,FV), --formulations (default FO,SO; with just one,
+the comparison table lists the lapse error and wall time of that formulation only), --sizes (default 27,81), --end-time (default
 0.1) and --cfl (CFL constant of the Finite Volume scheme, default 0.9) override
 the remaining settings.
 
@@ -134,7 +138,7 @@ about 3.5 GB. This is an observation, not a measurement.
 
 ## Grid sizes and Finite Volumes
 
-The benchmark script now takes the scheme (FD4 or FV), the formulation (FO or SO) and the grid
+The benchmark script now takes the scheme (RK4FD4, RK1FD4 or FV), the formulation (FO or SO) and the grid
 size (`python3 fo_vs_so.py`, `--build-mode=debug` for debug builds). Peano refines to at least three patches
 per axis and then in powers of three, and a patch has 9 points per axis, i.e. valid grids are 27^3 and 81^3
 points (a first attempt with 9, 18 and 45 points silently ran on the next larger grid). Setup otherwise as above: gauge wave, periodic unit cube,
@@ -145,8 +149,8 @@ both solvers against the analytical lapse
 
 | scheme | grid | t | max abs. diff. SO vs. FO (25 unknowns) | max abs. diff. of the lapse | rel. L2 lapse error FO | rel. L2 lapse error SO | wall time FO | wall time SO |
 |---|---|---|---|---|---|---|---|---|
-| FD4 | 27^3 | 0.102 | 1.3e-4 | 2.5e-6 | 1.1e-6 | 1.6e-6 | 4.8 s | 5.6 s |
-| FD4 | 81^3 | 0.101 | 1.6e-6 | 3.1e-8 | 1.4e-8 | 2.2e-8 | 300 s | 377 s |
+| RK4FD4 | 27^3 | 0.102 | 1.3e-4 | 2.5e-6 | 1.1e-6 | 1.6e-6 | 4.8 s | 5.6 s |
+| RK4FD4 | 81^3 | 0.101 | 1.6e-6 | 3.1e-8 | 1.4e-8 | 2.2e-8 | 300 s | 377 s |
 
 **Reading the table.** The 27^3 row reproduces the numbers of the first table
 (the largest difference is the one of traceK). Refining the grid by a factor of three reduces the
@@ -158,7 +162,7 @@ by about 80 (FO) and 75 (SO), i.e. \f$ 3^4 \f$: both formulations converge with 
 
 The FV variant (second-order central differences, one reconstruction task per step) builds,
 generates and runs, but we could **not** obtain a meaningful FV comparison. The reason is not
-the reconstructor: the Finite Volume time step kernel in 3d that exahype2.api.fv.RusanovWithExplicitEuler generates
+the reconstruction: the Finite Volume time step kernel in 3d that exahype2.api.fv.RusanovWithExplicitEuler generates
 contains neither the non-conservative product, the source, nor the maximum eigenvalue. The kernel template guards these blocks with
 `if nonconservativeProduct:`, `if volumetricSource:`, `if maxEigenvalue:` (and `if flux:`), but
 the DSL parser compares the guard with the class names of the PDE terms
@@ -212,8 +216,20 @@ parser.add_argument(
 parser.add_argument(
     "--schemes",
     type=lambda text: text.split(","),
-    default=["FD4", "FV"],
-    help="Comma-separated numerical schemes to build, run and compare (FD4, FV)",
+    default=["RK4FD4", "RK1FD4", "FV"],
+    help="Comma-separated numerical schemes to build, run and compare (RK4FD4, RK1FD4, FV)",
+)
+parser.add_argument(
+    "--formulations",
+    type=lambda text: text.split(","),
+    default=["FO", "SO"],
+    help="Comma-separated formulations to build, run and compare (FO, SO)",
+)
+parser.add_argument(
+    "--compiler",
+    choices=["sequential", "fusion"],
+    default="fusion",
+    help="Task graph compiler: one mesh traversal per task (sequential) or fused traversals (fusion)",
 )
 parser.add_argument("--end-time", type=float, default=0.1, help="Simulation end time")
 parser.add_argument(
@@ -221,9 +237,13 @@ parser.add_argument(
 )
 arguments = parser.parse_args()
 schemes = arguments.schemes
+formulations = arguments.formulations
+for formulation in formulations:
+    if formulation not in ["FO", "SO"]:
+        parser.error(f"unknown formulation {formulation}, use FO and/or SO")
 for scheme in schemes:
-    if scheme not in ["FD4", "FV"]:
-        parser.error(f"unknown scheme {scheme}, use FD4 and/or FV")
+    if scheme not in ["RK4FD4", "RK1FD4", "FV"]:
+        parser.error(f"unknown scheme {scheme}, use RK4FD4, RK1FD4 and/or FV")
 
 if arguments.build_mode == "release":
     build_mode = peano4.api.output.CompileMode.RELEASE
@@ -235,7 +255,6 @@ grid_sizes = arguments.sizes
 end_time = arguments.end_time
 time_in_between_plots = end_time / 2.0
 patch_size = 9
-formulations = ["FO", "SO"]
 
 
 def directory_of(scheme, formulation, cells):
@@ -248,7 +267,7 @@ def build(scheme, formulation, cells):
     Generate and build one solver on one grid in its own directory
 
     @param scheme: str
-      FD4 or FV.
+      RK4FD4, RK1FD4 or FV.
 
     @param formulation: str
       FO or SO.
@@ -270,26 +289,27 @@ def build(scheme, formulation, cells):
         directory=directory,
         executable=executable,
     )
-    solver_class = (
-        exagrype.api.FOCCZ4Solver
-        if formulation == "FO"
-        else exagrype.api.FOSOCCZ4Solver
-    )
-    solver = solver_class(
-        name, initial_condition=exagrype.api.initialvalues.gauge_wave()
-    )
+    initial_condition = exagrype.api.initialvalues.gauge_wave()
+    if formulation == "FO":
+        solver = exagrype.api.FOCCZ4Solver(name, initial_condition=initial_condition)
+        scheme_owner = solver
+    else:
+        # The pair of CCZ4 and reconstruction solver. The pair holds the scheme.
+        pair = exagrype.api.FOSOSolver(name, initial_condition=initial_condition)
+        solver = pair.ccz4
+        scheme_owner = pair
     # The grid cells have to be strictly smaller than volume_size times the patch size
     volume_size = 1.01 / cells
     match scheme:
-        case "FD4":
+        case "RK4FD4" | "RK1FD4":
             Kernel = (
                 exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel
             )
-            solver.numerical_scheme = (
+            scheme_owner.numerical_scheme = (
                 exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
                     solver,
                     patch_size,
-                    rk_order=4,
+                    rk_order=4 if scheme == "RK4FD4" else 1,
                     right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
                     advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
                     advected_quantities=solver.lopsided_advection_quantities(),
@@ -305,7 +325,7 @@ def build(scheme, formulation, cells):
             )
         case "FV":
             # No advection, no dissipation: the shift of the gauge wave is zero
-            solver.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(
+            scheme_owner.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(
                 solver, patch_size, cfl_constant=arguments.cfl
             )
             solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
@@ -316,12 +336,15 @@ def build(scheme, formulation, cells):
                 first_plot_time_stamp=0.0,
                 time_in_between_plots=time_in_between_plots,
             )
-    project.add_solver(solver)
-    # The reconstructor of the second-order solver is part of the solver
+    if formulation == "FO":
+        project.add_solver(solver)
+    else:
+        project.add_solver(pair)
 
     project.compiler = (
-        #peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_fusion
-        peano4.api.taskgraph.compiler.FuseSteps.translate
+        peano4.api.taskgraph.compiler.Sequential.translate
+        if arguments.compiler == "sequential"
+        else peano4.api.taskgraph.compiler.FuseSteps.translate
     )
     project.set_global_simulation_parameters(
         dimensions=3,
@@ -347,7 +370,7 @@ def run(scheme, formulation, cells):
     Run the executable built by build() and store its wall time
 
     @param scheme: str
-      FD4 or FV.
+      RK4FD4, RK1FD4 or FV.
 
     @param formulation: str
       FO or SO.
@@ -372,7 +395,7 @@ def snapshot(scheme, formulation, cells, unknowns, snapshot_index=-1):
     Return the unknowns of one snapshot of one solver
 
     @param scheme: str
-      FD4 or FV.
+      RK4FD4, RK1FD4 or FV.
 
     @param formulation: str
       FO or SO.
@@ -473,7 +496,48 @@ def compare_one(scheme, cells, verbose):
     return summary
 
 
+def compare_single(scheme, formulation, cells):
+    """!
+
+    Summarise one formulation on one grid against the analytical lapse. Used
+    if only one of FO and SO is built, i.e. there is nothing to compare it to.
+
+    @return dict
+      Summary numbers, or None if the run is missing.
+
+    """
+    evolved = sum(exagrype.api.FOSOCCZ4Solver.Unknowns.values())
+    try:
+        t, values, x, _ = snapshot(
+            scheme, formulation, cells, 59 if formulation == "FO" else evolved
+        )
+        with open(os.path.join(directory_of(scheme, formulation, cells), "wall-time.json")) as file:
+            wall_time = json.load(file)["wall_time"]
+    except (FileNotFoundError, IndexError):
+        return None
+    if values is None:
+        return None
+    exact = gauge_wave_lapse(x, t)
+    return {
+        "time": t,
+        "lapse_error": float(np.linalg.norm(values[:, 16] - exact) / np.linalg.norm(exact)),
+        "wall_time": wall_time,
+    }
+
+
 def compare():
+    if len(formulations) == 1:
+        formulation = formulations[0]
+        print(f"\n{'scheme':>7} {'cells':>6} {'form.':>6} {'t':>7} {'lapse err':>10} {'wall [s]':>9}")
+        for scheme in schemes:
+            for cells in grid_sizes:
+                s = compare_single(scheme, formulation, cells)
+                if s is not None:
+                    print(
+                        f"{scheme:>7} {cells:>6} {formulation:>6} {s['time']:7.3f} "
+                        f"{s['lapse_error']:10.2e} {s['wall_time']:9.2f}"
+                    )
+        return
     rows = []
     for scheme in schemes:
         for cells in grid_sizes:
@@ -481,12 +545,12 @@ def compare():
             if summary is not None:
                 rows.append((scheme, cells, summary))
     print(
-        f"\n{'scheme':>6} {'cells':>6} {'t':>7} {'max|SO-FO|':>11} {'max|SO-FO| lapse':>17} "
+        f"\n{'scheme':>7} {'cells':>6} {'t':>7} {'max|SO-FO|':>11} {'max|SO-FO| lapse':>17} "
         f"{'lapse err FO':>13} {'lapse err SO':>13} {'wall FO [s]':>12} {'wall SO [s]':>12}"
     )
     for scheme, cells, s in rows:
         print(
-            f"{scheme:>6} {cells:>6} {s['time']:7.3f} {s['max_difference']:11.2e} {s['lapse_difference']:17.2e} "
+            f"{scheme:>7} {cells:>6} {s['time']:7.3f} {s['max_difference']:11.2e} {s['lapse_difference']:17.2e} "
             f"{s['lapse_error_FO']:13.2e} {s['lapse_error_SO']:13.2e} "
             f"{s['wall_time_FO']:12.2f} {s['wall_time_SO']:12.2f}"
         )
