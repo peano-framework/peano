@@ -1,6 +1,6 @@
 ---
 name: exahype2:integration-test
-description: Re-run the ExaHyPE 2 / ExaGRyPE integration test, i.e. the convergence study of the gauge wave benchmark (benchmarks/exagrype/gauge-wave) over the schemes fv, rk1fd4, rk2fd4, rk3fd4 and rk4fd4 and over several mesh sizes, plus the Euler entropy wave convergence study of the fourth-order Finite Differences with adaptive time stepping (benchmarks/exahype2/euler/smooth-convergence-test-fd4), plus the AMR check of the Euler point source (benchmarks/exahype2/euler/point-source). Use when the user asks to run/re-run the integration test or the gauge wave convergence study, or to check that changes to the numerical schemes, task graph, kernels or code generation have not broken the numerical correctness. Runtimes are recorded, but they are not an acceptance criterion (that is the job of exahype2:performance-test).
+description: Re-run the ExaHyPE 2 / ExaGRyPE integration test, i.e. the convergence study of the gauge wave benchmark (benchmarks/exagrype/gauge-wave) over the schemes fv, rk1fd4, rk2fd4, rk3fd4 and rk4fd4 and over several mesh sizes, plus the Euler entropy wave convergence study of the fourth-order Finite Differences with adaptive time stepping (benchmarks/exahype2/euler/smooth-convergence-test), plus the AMR check of the Euler point source (benchmarks/exahype2/euler/point-source). Use when the user asks to run/re-run the integration test or the gauge wave convergence study, or to check that changes to the numerical schemes, task graph, kernels or code generation have not broken the numerical correctness. Runtimes are recorded, but they are not an acceptance criterion (that is the job of exahype2:performance-test).
 allowed-tools: [Bash, Read]
 ---
 
@@ -90,7 +90,7 @@ but never decide on pass or fail. Performance regressions are to be checked with
 
 ## Euler entropy wave convergence study
 
-`benchmarks/exahype2/euler/smooth-convergence-test-fd4/convergence-study.py` generates, builds
+`benchmarks/exahype2/euler/smooth-convergence-test/convergence-study.py` generates, builds
 and runs the entropy wave of the Euler equations (2d, fourth-order Finite Differences with
 fourth-order Runge-Kutta and adaptive time stepping) on 27, 81 and 243 grid cells per axis. It
 compares the density of the last snapshot with the exact solution and exits non-zero if the order
@@ -98,7 +98,7 @@ of the maximum error between the two finest meshes is below 3.5. It needs the sa
 as above (the Intel compiler on the `PATH`, `PYTHONPATH=<repo>/src`) and about ten minutes:
 
 ```sh
-python3 benchmarks/exahype2/euler/smooth-convergence-test-fd4/convergence-study.py \
+python3 benchmarks/exahype2/euler/smooth-convergence-test/convergence-study.py \
     --work-directory <work2>
 ```
 

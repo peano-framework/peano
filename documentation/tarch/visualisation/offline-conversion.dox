@@ -1,6 +1,6 @@
 /**
 
- @page documentation_tarch_visualisation_offline-conversion Offline (command-line) conversation into VTK file formats
+ @page documentation_tarch_visualisation_offline-conversion Offline (command-line) conversation into VTK file formats and video generation
 
 \tableofcontents 
 
@@ -117,6 +117,19 @@ conversion misbehaves for you, drop back to the (slower but robust)
 sequential default, and make sure you are running through plain `python3`
 rather than `pvpython` regardless (see the warning at the top of this
 page).
+
+
+## Generating a video
+
+With Python, it is fairly straightforward to create a video of the snapshots.
+There's a routine @ref tarch.plotter.api.notebook.read_snapshots() that you
+can invoke over a patch file. The conversion then is a simple loop over these
+snapshots. A script offering exactly this feature is
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+python3 -m tarch.plotter.api.make-video
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 
 
 ## Command-line conversion with a C++ executable
