@@ -249,35 +249,35 @@ void reportRuntime(
  * interface, i.e., which are not patch data or the boolean, have to be
  * mapped onto template arguments.
  */
-template <void (*Kernel)(
-  exahype2::CellData<double, double>&,
-  const ::exahype2::fv::rusanov::FluxFunctor&,
-  const ::exahype2::fv::rusanov::MaxEigenvalueFunctor&,
-  tarch::timing::Measurement&
-)>
-void wrapHostKernel(int device, exahype2::CellData<double, double>& patchData) {
-  assertionEquals(device, tarch::accelerator::Device::HostDevice);
-  Kernel(
-    patchData,
-    [&](
-      const double* __restrict__ Q,
-      const tarch::la::Vector<Dimensions, double>& x,
-      int                                          normal,
-      double* __restrict__ F
-    )->void {
-      repositories::instanceOfEulerFVSmooth.flux(Q, x, normal, F);
-    },
-    [&](
-      const double* __restrict__ Q,
-      const tarch::la::Vector<Dimensions, double>& x,
-      int                                          normal,
-      double* __restrict__ lambdaMax
-    )->void {
-      repositories::instanceOfEulerFVSmooth.maxEigenvalue(Q, x, normal, lambdaMax);
-    },
-    timingComputeKernel
-  );
-}
+//template <void (*Kernel)(
+//  exahype2::CellData<double, double>&,
+//  const ::exahype2::fv::rusanov::FluxFunctor&,
+//  const ::exahype2::fv::rusanov::MaxEigenvalueFunctor&,
+//  tarch::timing::Measurement&
+//)>
+//void wrapHostKernel(int device, exahype2::CellData<double, double>& patchData) {
+//  assertionEquals(device, tarch::accelerator::Device::HostDevice);
+//  Kernel(
+//    patchData,
+//    [&](
+//      const double* __restrict__ Q,
+//      const tarch::la::Vector<Dimensions, double>& x,
+//      int                                          normal,
+//      double* __restrict__ F
+//    )->void {
+//      repositories::instanceOfEulerFVSmooth.flux(Q, x, normal, F);
+//    },
+//    [&](
+//      const double* __restrict__ Q,
+//      const tarch::la::Vector<Dimensions, double>& x,
+//      int                                          normal,
+//      double* __restrict__ lambdaMax
+//    )->void {
+//      repositories::instanceOfEulerFVSmooth.maxEigenvalue(Q, x, normal, lambdaMax);
+//    },
+//    timingComputeKernel
+//  );
+//}
 
 template <void (*Kernel)(exahype2::CellData<double, double>&, tarch::timing::Measurement&)>
 void wrapHostKernel(int device, exahype2::CellData<double, double>& patchData) {
@@ -506,6 +506,16 @@ int main(int argc, char** argv) {
     runBenchmarks(NumberOfPatchesToStudy[n], NumberOfLaunchingThreads);
   }
 
+  if constexpr (Accuracy > 0.0) {
+    logInfo(
+      "main()",
+      "All kernels yield the same outcome up to a accuracy of "
+        << Accuracy << " unless reported otherwise"
+    );
+  } else {
+    logInfo("main()", "No accuracy checks were performed");
+  }
+  
   ::exahype2::shutdownRuntime(
     {{NAMESPACE | join("::")}}::{{SUBNAMESPACE}}repositories::DataRepository::shutdownDatatypes
   );
