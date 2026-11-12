@@ -49,7 +49,7 @@ def errors(run_directory):
     snapshot of a run.
     """
     snapshots = read_snapshots(
-        os.path.join(run_directory, "solution-EulerFD4Smooth.peano-patch-file")
+        os.path.join(run_directory, "solution-EulerSmooth.peano-patch-file")
     )
     time_stamp, files = snapshots[-1]
     max_error = 0.0

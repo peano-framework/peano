@@ -4,53 +4,91 @@
 
 \tableofcontents
 
-This is a simple benchmark used to perform convergence tests for a solver.
-It uses the Euler equations to advance a 2D setup where the density follows a sine wave,
-and the initial velocity is constant in the x direction. The domain is centred around the
-origin.
+This benchmark checks that the numerical schemes of ExaHyPE 2 converge with
+their formal order. It uses the Euler equations over @f$ [-0.1,0.1]^d @f$
+(@f$ d=2,3 @f$), where the density follows one period of a sine wave along x,
+while velocity @f$ u=1 @f$ (along x) and pressure @f$ p=1 @f$ are constant.
+The exact solution is the initial density profile advected with the velocity,
+i.e.
+
+@f$ \rho(x,t) = 1 + 0.2 \sin \left( 2 \pi \frac{x - t + 0.1}{0.2} \right). @f$
+
+By default, the boundary conditions prescribe this exact solution outside of
+the domain. Pass --periodic for periodic boundary conditions instead.
+
+The script smooth-convergence-test.py supports the following numerical schemes
+(--scheme): Finite Volumes with a Rusanov solver and explicit Euler time stepping
+(fv, @ref exahype2.api.fv.RusanovWithExplicitEuler), the same with optimistic time
+stepping (fv-optimistic), and fourth-order Finite Differences with Runge-Kutta
+time stepping of order one to four (rk1fd4, ..., rk4fd4, @ref exahype2.api.rkfd4).
+The CFL constant is a property of the scheme and hard-coded per scheme in the script.
+
 
 ## Prepare benchmark
 
-Peano should be built with the following options: 
+Configure and build Peano with
 
 ~~~~~~~~~~~~~~~~~~~~~~~
 --enable-exahype --enable-loadbalancing --enable-blockstructured
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-You will need to ensure that the Python environment variables are properly set:
+and ensure that the Python environment variables are set:
 
 ~~~~~~~~~~~~~~~~~~~~~~~
 export PYTHONPATH=<path-to-peano4-repository>/src
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-<br /><br />
-<div style="background-color: #fcc ; padding: 10px; border: 1px solid green;"> 
-We are in the process of migrating all files into the src directory such that the Python directory should go.
-For the time being, the order in which we include remains important.
-</div>
 
+## Run
 
-## Compilation
-
-The relevant mesh size and timestep size should be set in the python script directly. For 
-the mesh size, @f$p@f$ should be modified in the expression @f$\frac{0.2}{p}@f$ where @f$p@f$ is the
-number of cells that are desired in each coordinate direction.
-
-
-## Postproccessing
-
-The output after a run will be 2 snapshots of teh solution, one at the start and one at the
-end (this can be modified), as Peano patch files. These can be converted to vtk files for 
-visualisation in Paraview.
+The script smooth-convergence-test.py generates and builds the code for
+one scheme and one mesh width. All PDE terms are passed to the solver as C++
+snippets, so there is no user code to write. Build and run one executable per
+mesh width, each in a directory of its own:
 
 ~~~~~~~~~~~~~~~~~~~~~~~
-     pvpython ../../../../python/peano4/visualisation/render.py --filter-fine-grid solution-CCZ4DG2RK2.peano-patch-file
+for volume_size in 0.0075 0.0025 0.00083; do
+  python3 smooth-convergence-test.py --scheme rk4fd4 --output-directory run-$volume_size --volume-size $volume_size
+  (cd run-$volume_size && ./smooth-convergence-test)
+done
+python3 compute-errors.py run-0.0075 run-0.0025 run-0.00083
 ~~~~~~~~~~~~~~~~~~~~~~~
-The paraview module should be loaded where neccessary (system dependent) for this command.
 
-In order to directly ocmpare results, my preferred method is to apply a plot over line filter
-in Paraview, with fixed spacing between plot points such that they are always at the centre of
-a cell for every resolution. This is converted to a csv file and read in Python using the csv
-library. Plots can then be generated using this data.
+convergence-study.py does the same in one go and checks the order (it is part of the
+integration test, skill exahype2:integration-test):
+
+~~~~~~~~~~~~~~~~~~~~~~~
+python3 convergence-study.py --scheme rk4fd4 --work-directory <directory-outside-of-the-repository>
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The three volume sizes yield 27, 81 and 243 grid cells per axis, as each mesh
+cell hosts a patch of 9x9 grid cells. python3 smooth-convergence-test.py --help
+lists further options: the task graph compiler, the C++ compiler, the number of
+threads used to build (default: all cores) and to run, fixed time step sizes or three
+dimensions.
+
+compute-errors.py compares the density of the last snapshot of each run with
+the exact solution, and prints the maximum and the root mean square error
+plus the convergence orders between subsequent runs. The plot files hold
+the patches' offsets with seven significant digits only. As this would
+dominate the errors on the finer meshes, the script snaps the offsets onto
+the regular mesh.
+
+
+## Results
+
+With the default settings, i.e. rk4fd4 (adaptive time step sizes with a CFL
+constant of 0.5, no dissipation), Dirichlet boundary conditions and the end
+time 0.05, we obtain in 2d:
+
+| Grid cells per axis | Time steps | Max error of density | RMS error of density | Order (max) | Order (RMS) |
+|--------------------:|-----------:|---------------------:|---------------------:|------------:|------------:|
+| 27                  |         64 | 3.82e-05             | 2.10e-05             |             |             |
+| 81                  |        190 | 4.77e-07             | 2.59e-07             | 3.99        | 4.00        |
+| 243                 |        566 | 5.89e-09             | 3.18e-09             | 4.00        | 4.01        |
+
+The errors decrease with the fourth power of the mesh width. As the time
+step size is proportional to the mesh width, this confirms the order of the
+Runge-Kutta scheme, too.
 
 */

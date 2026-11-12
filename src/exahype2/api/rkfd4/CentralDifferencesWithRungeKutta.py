@@ -134,7 +134,7 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
     exahype2.api.blockstructured.BoundaryConditions.get_boundary_conditions()). Sommerfeld
     conditions also require a MaxEigenvalue term, and a Butcher tableau whose
     stage time stamps do not decrease. @ref
-    benchmarks_exahype2_euler_smooth_fd4 demonstrates fourth-order
+    benchmarks_exahype2_euler_smooth_setup demonstrates fourth-order
     convergence for the Euler equations.
 
     ## Extending the scheme
