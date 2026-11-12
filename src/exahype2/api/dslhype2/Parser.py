@@ -66,7 +66,7 @@ class Parser:
         assert(isinstance(function_name, AST.External))
         function_name = AST.Name(function_name.reference)
         if function_name not in self.function_map:
-            raise Exception("Function name is not recognised")
+            raise Exception(f"Function name is not recognised: {function_name.id}")
         arguments = [self._parse_expression(argument) for argument in call.args[1:]]
         return AST.FunctionCall(function_name, arguments, self.function_map[function_name], stateless = self.stateless)
 
@@ -107,7 +107,7 @@ class Parser:
 
         raise Exception(f"Function name is not supported: {call.func.id}")
 
-    def parse_unary_operation(self, operation: ast.UnaryOp) -> AST.ElementUnaryOperation | AST.Element:
+    def parse_unary_operation(self, operation: ast.UnaryOp) -> AST.ElementUnaryOperation | AST.DataBlockUnaryOperation | AST.Element:
         if isinstance(operation.op, ast.USub):
             operand = self._parse_expression(operation.operand)
             if isinstance(operand.get_type(), AST.TElement):
@@ -116,10 +116,10 @@ class Parser:
                     return AST.Integer(-operand.value)
                 return AST.ElementUnaryOperation(AST.Operator.SUBTRACTION, operand)
             else:
-                raise Exception("Unary operations are only supported for elements")
+                return AST.DataBlockUnaryOperation(AST.Operator.SUBTRACTION, operand)
         raise Exception("Only minus is supported among unary operations")
 
-    def parse_binary_operation(self, operation: ast.BinOp) -> AST.ElementBinaryOperation | AST.Element:
+    def parse_binary_operation(self, operation: ast.BinOp) -> AST.ElementBinaryOperation | AST.DataBlockBinaryOperation | AST.Element:
         lhs = self._parse_expression(operation.left)
         rhs = self._parse_expression(operation.right)
 
@@ -275,7 +275,7 @@ class Parser:
         test = if_statement.test.id
 
         for pde_term in self.enabled_pde_terms:
-            if type(pde_term).__name__ == test:
+            if pde_term.NAME == test or type(pde_term).__name__ == test:
                 pde_term_is_in_use = True
 
         statements: list[AST.Statement] = []

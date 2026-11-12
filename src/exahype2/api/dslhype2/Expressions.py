@@ -375,8 +375,6 @@ class ExternalStructField(External):
         External.__init__(self, self.struct_name.id + "." + self.field_name.id)
 
     def get_type(self) -> Type:
-        print (self.field_name.id)
-        print ([(name.id, type) for (name, type) in self.struct_type.fields.items()])
         return self.struct_type.fields[self.field_name]
 
 class DataBlock(Array):
@@ -526,8 +524,23 @@ class DataBlockBinaryOperation(DataBlock):
 
 class DataBlockUnaryOperation(DataBlock):
     def __init__(self, operator: Operator, operand: Expression):
+        assert(isinstance(operand.get_type(), TDataBlock))
+        if isinstance(operand, Variable):
+            iteration_range = operand.get_value().iteration_range
+            flatten = operand.get_value().flatten
+        else:
+            iteration_range = operand.iteration_range
+            flatten = operand.flatten
+
         self.operator = operator
         self.operand = operand
+        super().__init__(iteration_range, None, flatten)
+
+
+    def index_at(self, indices: Sequence[Element | Variable], get_address = False) -> Expression:
+            element = self.operand.index_at(indices)
+            assert(isinstance(element, Element) or isinstance(element, Variable) or isinstance(element, Subscript))
+            return ElementUnaryOperation(self.operator, element)
 
 class DataBlockIndex(DataBlock):
     def __init__(self, vector_data_block: Variable, index: Index):
