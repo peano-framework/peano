@@ -228,6 +228,174 @@ namespace exahype2 {
     int QOutStride;
   };
 
+  template <typename inType=double, typename outType=double>
+  struct CellDataFlattened{
+    /* 
+    See CellData for meaning of member variables. 
+    The only change is changing QIn and QOut from 2D arrays to 1D.
+    */
+
+    // These fields must be represented in Python also
+    inType*                                 QIn;
+    outType*                                QOut;
+    tarch::la::Vector<Dimensions,double>*   cellCentre;
+    tarch::la::Vector<Dimensions,double>*   cellSize;
+    double*                                 t;
+    double*                                 dt;
+    double*                                 maxEigenvalue;
+    const int64_t                           numberOfCells;
+
+    CellDataFlattened(
+      const CellData<inType, outType>& cellData,
+      int inputPatchSize,
+      int outputPatchSize
+    );
+    void copyBackAndDestroy();
+    
+    std::string toString() const;
+
+    int QInStride;
+    int QOutStride;
+
+    inType** QInNested;
+    outType** QOutNested;
+  };
+
+  // MLIR memref descriptor struct definition
+  // Matches the LLVM struct layout: {T* allocated, T* aligned, i64 offset, i64 sizes[N], i64 strides[N]}
+
+  template<typename T, int Rank>
+  struct MemRefDescriptor {
+      T* allocated;           // Pointer to allocated memory
+      T* aligned;             // Pointer to aligned data (usually same as allocated)
+      int64_t offset;         // Offset in elements from aligned pointer
+      int64_t sizes[Rank];    // Size of each dimension
+      int64_t strides[Rank];  // Stride of each dimension
+      
+      // Constructor for easy initialization
+      MemRefDescriptor() : allocated(nullptr), aligned(nullptr), offset(0) {
+          for (int i = 0; i < Rank; ++i) {
+              sizes[i] = 0;
+              strides[i] = 0;
+          }
+      }
+  };
+
+  // Convenience typedefs for common cases
+  // MemRefDescriptor represent 1 and two dimensions respectively using a flat 1D array, akin to double*
+  // In contrast, MemRefDescriptorNested uses a nested array, akin to double**
+  using MemRefDescriptor1D = MemRefDescriptor<double, 1>;
+  using MemRefDescriptor2D = MemRefDescriptor<double, 2>;
+  using MemRefDescriptorNested= MemRefDescriptor<MemRefDescriptor1D, 1>; 
+
+  inline MemRefDescriptor1D createMemRefDescriptor1D(double* data, int64_t size) {
+    MemRefDescriptor1D desc;
+    desc.allocated = data;
+    desc.aligned = data;
+    desc.offset = 0;
+    desc.sizes[0] = size;
+    desc.strides[0] = 1; // Stride between elements
+    return desc;
+  }
+
+  inline MemRefDescriptor2D createMemRefDescriptor2D(double** data, int64_t rows, int64_t cols) {
+    MemRefDescriptor2D desc;
+    double* flattenedInput = new double[rows * cols];
+    for (int64_t i = 0; i < rows; ++i) {
+      std::memcpy(
+        flattenedInput + i * cols,
+        data[i],
+        static_cast<std::size_t>(cols) * sizeof(double)
+      );
+    }
+    desc.allocated = flattenedInput;
+    desc.aligned = flattenedInput;
+    desc.offset = 0;
+    desc.sizes[0] = rows;
+    desc.sizes[1] = cols;
+    desc.strides[0] = cols;  // Stride between rows
+    desc.strides[1] = 1;     // Stride between columns
+    return desc;
+  }
+
+  inline MemRefDescriptorNested createMemRefDescriptorNested(double** data, int64_t rows, int64_t cols) {
+    MemRefDescriptorNested desc;
+    MemRefDescriptor1D* nestedInput = new MemRefDescriptor1D[rows];
+    for (int64_t i = 0; i < rows; ++i) {
+      nestedInput[i] = createMemRefDescriptor1D(data[i], cols);
+    }
+    desc.allocated = nestedInput;
+    desc.aligned = nestedInput;
+    desc.offset = 0;
+    desc.sizes[0] = rows;
+    desc.strides[0] = 1;  // Stride between rows
+    return desc;
+  }
+  
+  struct MLIRCellDataFlattened{
+    /* 
+    See CellData for meaning of member variables. 
+    The only change is changing QIn and QOut from 2D arrays to 1D.
+    */
+
+    // These fields must be represented in Python also
+    MemRefDescriptor2D                                 QIn;
+    MemRefDescriptor2D                                 QOut;
+    MemRefDescriptor2D                                 cellCentre;
+    MemRefDescriptor2D                                 cellSize;
+    MemRefDescriptor1D                                 t;
+    MemRefDescriptor1D                                 dt;
+    MemRefDescriptor1D                                 maxEigenvalue;
+    const int64_t  numberOfCells;
+
+    MLIRCellDataFlattened(
+      const CellData<double, double>& cellData,
+      int inputPatchSize,
+      int outputPatchSize
+    );
+    void copyBackAndDestroy();
+    
+    std::string toString() const;
+
+    int QInStride;
+    int QOutStride;
+
+    double** QInNested;
+    double** QOutNested;
+  };
+
+  struct MLIRCellDataNested{
+    /* 
+    See CellData for meaning of member variables. 
+    The only change is changing QIn and QOut from 2D arrays to 1D.
+    */
+
+    // These fields must be represented in Python also
+    MemRefDescriptorNested                             QIn;
+    MemRefDescriptorNested                             QOut;
+    MemRefDescriptor2D                                 cellCentre;
+    MemRefDescriptor2D                                 cellSize;
+    MemRefDescriptor1D                                 t;
+    MemRefDescriptor1D                                 dt;
+    MemRefDescriptor1D                                 maxEigenvalue;
+    const int64_t  numberOfCells;
+
+    MLIRCellDataNested(
+      const CellData<double, double>& cellData,
+      int inputPatchSize,
+      int outputPatchSize
+    );
+    void copyBackAndDestroy();
+    
+    std::string toString() const;
+
+    int QInStride;
+    int QOutStride;
+
+    double** QInNested;
+    double** QOutNested;
+  };
+
 }
 
 #include "CellData.cpph"

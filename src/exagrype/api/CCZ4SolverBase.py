@@ -21,14 +21,14 @@ class CCZ4SolverBase(exahype2.api.Solver):
     The base class hosts the CCZ4 parameters, the PDE terms (which delegate
     to the kernels in exagrype::ccz4), the initial conditions and the
     optional enforcement of the CCZ4 constraints. The kernels always work on
-    the 59 entries of CCZ4, see exagrype.api.FOCCZ4Solver.Unknowns, which
-    they take as two pointers: one to the 25 primary and one to the 34
+    the 58 entries of CCZ4, see exagrype.api.FOCCZ4Solver.Unknowns, which
+    they take as two pointers: one to the 25 primary and one to the 33
     secondary entries. The two subclasses differ only in where the secondary
     entries live:
 
-    - exagrype.api.FOCCZ4Solver evolves all 59 as unknowns. The secondary
+    - exagrype.api.FOCCZ4Solver evolves all 58 as unknowns. The secondary
       entries follow the primary ones, i.e. the pointers are Q and Q+25.
-    - exagrype.api.FOSOCCZ4Solver evolves 25 unknowns, and the other 34
+    - exagrype.api.FOSOCCZ4Solver evolves 25 unknowns, and the other 33
       entries are auxiliary variables, i.e. they live in separate memory.
 
     The subclasses therefore override the hooks _ncp_implementation() and
@@ -38,7 +38,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
 
     """
 
-    NUMBER_OF_CCZ4_ENTRIES = 59
+    NUMBER_OF_CCZ4_ENTRIES = 58
     """! Number of entries which the kernels in exagrype::ccz4 work on """
 
     class EnforceCCZ4Constraint(enum.Enum):
@@ -65,13 +65,11 @@ class CCZ4SolverBase(exahype2.api.Solver):
 
     DefaultParameters = {
         "CCZ4LapseType": 0,
-        "CCZ4ds": 1.0,
         "CCZ4c": 1.0,
         "CCZ4e": 1.0,
         "CCZ4f": 0.75,
-        "CCZ4bs": 0.0,
-        "CCZ4sk": 0.0,
-        "CCZ4xi": 1.0,
+        "CCZ4b": 1,
+        "CCZ4s": 0,
         "CCZ4itau": 1.0,
         "CCZ4eta": 1.0,
         "CCZ4k1": 0.1,
@@ -85,10 +83,36 @@ class CCZ4SolverBase(exahype2.api.Solver):
 
     Default values of the CCZ4 parameters, taken from the legacy ExaGRyPE
     gauge wave setup: harmonic slicing (CCZ4LapseType=0) and a shift which
-    does not evolve (CCZ4sk=0, CCZ4bs=0). The legacy black hole runs use
-    1+log slicing (CCZ4LapseType=1) and the Gamma driver (CCZ4sk=1,
-    CCZ4bs=1). Integer values become int constants of the generated solver
-    class, all others double constants.
+    does not evolve (CCZ4s=0). The legacy black hole runs use 1+log slicing
+    (CCZ4LapseType=1) and the Gamma driver (CCZ4s=1) in its shifting shift
+    variant (CCZ4b=1, which only matters once the shift evolves). Integer
+    values become int constants of the generated solver class, all others
+    double constants.
+
+    The integer parameters are switches:
+
+    - CCZ4LapseType: 0 for harmonic slicing, 1 for 1+log slicing.
+    - CCZ4b: variant of the Gamma driver, if the shift evolves. 1 is the
+      shifting shift, i.e. the equations of the shift, of b and of the
+      derivatives of the shift hold their advection terms. 0 is the
+      non-shifting shift without these terms
+      (exagrype::ccz4::ncpFirstOrder()).
+    - CCZ4s: 1 evolves the shift (Gamma driver), 0 freezes it.
+
+    Whether the first-order or the second-order formulation is solved is
+    not a parameter: Pick exagrype.api.FOCCZ4Solver or
+    exagrype.api.FOSOCCZ4Solver.
+
+    Why there are 58 entries, why the switches are integers and why there
+    are no parameters CCZ4ds and CCZ4xi is written down in
+    src/exagrype/ccz4/adrs/0001-ccz4-has-58-entries-and-integer-switches.md.
+
+    """
+
+    Switches = ("CCZ4LapseType", "CCZ4b", "CCZ4s")
+    """!
+
+    The integer parameters which accept 0 and 1 only.
 
     """
 
@@ -96,7 +120,8 @@ class CCZ4SolverBase(exahype2.api.Solver):
     """!
 
     The variable which advects the unknowns, i.e. the velocity to pass to
-    lopsided advection kernels (@see lopsided_advection_quantities()).
+    lopsided advection kernels
+    (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.lopsided_advection_quantities()).
 
     """
 
@@ -112,17 +137,19 @@ class CCZ4SolverBase(exahype2.api.Solver):
         Create a CCZ4 solver
 
         @param name: str
-          Name of the solver, @see exahype2.api.Solver.
+          Name of the solver (@ref exahype2.api.Solver).
 
         @param unknowns: Dict[str, int]
-          The evolved unknowns of the subclass, @see exahype2.api.Solver. The
-          subclass has to add all entries of CCZ4 that it does not evolve as
-          auxiliary variables, so the entries add up to 59.
+          The evolved unknowns of the subclass (@ref exahype2.api.Solver).
+          The subclass has to add all entries of CCZ4 that it does not evolve
+          as auxiliary variables, so the entries add up to 58.
 
         @param parameters: Dict[str, Union[int, float]]
           CCZ4 parameters that differ from DefaultParameters, e.g.
           {"CCZ4k1": 0.0}. Keys which are not in DefaultParameters are
-          rejected, as they most likely are typos.
+          rejected, as they most likely are typos. The switches
+          (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.Switches) have
+          to be the integers 0 or 1.
 
         @param initial_condition: exahype2.api.InitPointWisely
           Initial condition. Defaults to exagrype.api.initialvalues.gauge_wave().
@@ -140,6 +167,15 @@ class CCZ4SolverBase(exahype2.api.Solver):
                 raise KeyError(
                     f"Solver {name}: unknown CCZ4 parameter {key!r}. "
                     f"Available parameters are {list(self.DefaultParameters)}."
+                )
+            if key in self.Switches and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value not in (0, 1)
+            ):
+                raise TypeError(
+                    f"Solver {name}: CCZ4 parameter {key!r} is an integer "
+                    f"switch, i.e. has to be 0 or 1, but got {value!r}"
                 )
             self._parameters[key] = value
 
@@ -191,29 +227,32 @@ class CCZ4SolverBase(exahype2.api.Solver):
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         These are all unknowns besides the conformal metric G, the lapse,
-        the shift, phi and K0: The advection terms of the metric, the lapse,
+        the shift and phi: The advection terms of the metric, the lapse,
         the shift and phi are part of the algebraic source
         (exagrype::ccz4::sourceFirstOrder() and sourceSecondOrder()), which expresses them through the
-        auxiliary unknowns, i.e. the first derivatives. K0 does not evolve.
+        auxiliary unknowns, i.e. the first derivatives.
 
         The advection of b and of the derivatives of the shift (dxShift,
-        dyShift, dzShift) is scaled with CCZ4bs and CCZ4sk. If either of
-        them is zero, the routine leaves these unknowns out.
+        dyShift, dzShift) belongs to the shifting shift only, i.e. the
+        routine leaves these unknowns out unless CCZ4s=1 and CCZ4b=1.
 
-        The equation of b couples the advection of b and of Ghat (the
-        unknown Z): Its
-        advection terms are CCZ4sk * (CCZ4xi * beta^k d_k Ghat + CCZ4bs *
-        (beta^k d_k b - beta^k d_k Ghat)). A kernel which advects each
-        quantity on its own, i.e. adds beta^k d_k b to b, reproduces this
-        only for CCZ4xi=1, CCZ4bs=1 and CCZ4sk=1. This is the case for the
-        default CCZ4xi and the moving puncture setups with CCZ4bs=CCZ4sk=1.
+        The equation of b holds the time derivative of Ghat (the unknown
+        Z), which comprises the advection of Ghat. The shifting shift
+        subtracts this advection again, i.e. only the advection of b itself
+        is left, which the numerical scheme adds as for any other unknown.
+        The non-shifting shift (CCZ4b=0) keeps the advection of Ghat in the
+        equation of b. A scheme which advects each quantity on its own
+        cannot add it there, so exagrype::ccz4::ncpFirstOrder() and
+        ncpSecondOrder() do so with the derivatives they are given
+        (src/exagrype/ccz4/adrs/0002-ccz4b-selects-the-shifting-or-the-non-shifting-shift.md).
 
         @return List[str]
-          Names of unknowns, @see Unknowns.
+          Names of unknowns
+          (@ref exagrype.api.FOCCZ4Solver.FOCCZ4Solver.Unknowns).
 
         """
-        excluded = {"G", "lapse", "shift", "phi", "K0"}
-        if self._parameters["CCZ4bs"] == 0 or self._parameters["CCZ4sk"] == 0:
+        excluded = {"G", "lapse", "shift", "phi"}
+        if self._parameters["CCZ4b"] == 0 or self._parameters["CCZ4s"] == 0:
             excluded |= {"b", "dxShift", "dyShift", "dzShift"}
         return [name for name in self.Unknowns if name not in excluded]
 
@@ -334,9 +373,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
             ):
                 self._insert_constraint_enforcement(time_step, [anchor], stage_input)
 
-        title = (
-            f"Time stepping task graph for {self.name}{self.task_graph_title_suffix} with CCZ4 constraint enforcement"
-        )
+        title = f"Time stepping task graph for {self.name}{self.task_graph_title_suffix} with CCZ4 constraint enforcement"
         if peano4.api.Logger().is_visualisation:
             time_step.visualise(title=title)
         if peano4.api.Logger().is_text:
@@ -447,7 +484,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
     ) -> exahype2.api.InitPointWisely:
         """!
         Hook which lets the subclass adapt the initial condition, which fills
-        59 entries, to the unknowns and auxiliary variables it holds. The default
+        58 entries, to the unknowns and auxiliary variables it holds. The default
         passes the initial condition on.
         """
         return initial_condition
@@ -474,5 +511,5 @@ class CCZ4SolverBase(exahype2.api.Solver):
 
     def _max_eigenvalue_implementation(self) -> str:
         return """
-  ::exagrype::ccz4::maxEigenvalue(Q, normal, CCZ4e, CCZ4ds, CCZ4GLMc, CCZ4GLMd, lambdaMax);
+  ::exagrype::ccz4::maxEigenvalue(Q, normal, CCZ4e, CCZ4GLMc, CCZ4GLMd, lambdaMax);
 """

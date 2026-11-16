@@ -12,7 +12,7 @@ void exagrype::initialvalues::ApplyTwoPunctures(
   TP::TwoPunctures*                            tp,
   bool                                         low_res
 ) {
-  constexpr int nVars   = 59;
+  constexpr int nVars   = 58;
   const double  coor[3] = {X[0], X[1], X[2]};
   double        LgradQ[3 * nVars];
   tarch::memset(Q, .0, nVars * sizeof(double));

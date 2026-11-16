@@ -1421,6 +1421,32 @@ Patch overlap data
             dslhype.SyntaxTree.Argument("maxEigenvalue", dslhype.SyntaxTree.TCustom("const ::exahype2::fv::rusanov::MaxEigenvalueFunctor&"), "(!llvm.ptr, !llvm.ptr, !llvm.ptr, f64, f64, i32, !llvm.ptr) -> ()")
         ]
 
+        required_includes = """
+#include "exahype2/Solver.h"
+#include "exahype2/CellData.h"
+#include "exahype2/VolumeIndex.h"
+#include "exahype2/fv/PatchUtils.h"
+#include "exahype2/fv/rusanov/Functors.h"
+#include "peano4/utils/Loop.h"
+#include "tarch/timing/Measurement.h"
+#include "tarch/timing/Watch.h"
+"""
+        # The translator appends to the kernel files. We therefore (re-)create
+        # them here with the required preamble, which also drops any stale
+        # content from previous runs.
+        kernels_directory = os.path.join(output_directory, "kernels")
+        os.makedirs(kernels_directory, exist_ok=True)
+        kernel_file_names = [
+            f"{self._solver.name}_rusanov{d}d{suffix}"
+            for d in (2, 3)
+            for suffix in ("", "_patch_interior", "_shell")
+        ]
+        for name in kernel_file_names:
+            with open(os.path.join(kernels_directory, f"{name}.h"), "w") as file:
+                file.write(f"#pragma once\n{required_includes}\n")
+            with open(os.path.join(kernels_directory, f"{name}.cpph"), "w") as file:
+                file.write(f"#include \"{name}.h\"\n")
+
         time_step_dsl_function_2d = exahype2.api.fv.timeStepWithRusanov2D
         time_step_dsl_function_3d = exahype2.api.fv.timeStepWithRusanov3D
         dslhype.translate_dslhype_function(
@@ -1480,6 +1506,10 @@ Patch overlap data
                 function_name=self.kernel_function_name + function_suffix,
                 output_directory=output_directory,
             )
+        for name in kernel_file_names:
+            with open(os.path.join(kernels_directory, f"{name}.h"), "a") as file:
+                file.write(f"#include \"{name}.cpph\"\n")
+
         file = open(os.path.join(output_directory, "kernels", f"{self._solver.name}_rusanov.h"), "w")
         file.write(f"""#if Dimensions == 2
     #include "{self._solver.name}_rusanov2d.h"

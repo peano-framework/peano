@@ -12,16 +12,14 @@
 
 
 namespace {
-  constexpr int Unknowns = 59;
+  constexpr int Unknowns = 58;
 
   constexpr int    CCZ4LapseType = 1;
-  constexpr double CCZ4ds        = 1.0;
   constexpr double CCZ4c         = 1.0;
   constexpr double CCZ4e         = 1.0;
   constexpr double CCZ4f         = 0.75;
-  constexpr double CCZ4bs        = 1.0;
-  constexpr double CCZ4sk        = 1.0;
-  constexpr double CCZ4xi        = 1.0;
+  constexpr int    CCZ4b         = 1;
+  constexpr int    CCZ4s         = 1;
   constexpr double CCZ4mu        = 0.2;
   constexpr double CCZ4itau      = 1.0;
   constexpr double CCZ4eta       = 1.0;
@@ -60,7 +58,7 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testNonconservativeProductVanishe
 
   for (int normal = 0; normal < 3; normal++) {
     double BgradQ[Unknowns];
-    exagrype::ccz4::ncpFirstOrder(BgradQ, BgradQ + 25, Q, Q + 25, gradQ, gradQ + 25, normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu);
+    exagrype::ccz4::ncpFirstOrder(BgradQ, BgradQ + 25, Q, Q + 25, gradQ, gradQ + 25, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
     for (int i = 0; i < Unknowns; i++) {
       validateNumericalEqualsWithParams2(BgradQ[i], 0.0, normal, i);
     }
@@ -73,7 +71,7 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testSourceVanishes() {
   double S[Unknowns];
   initFlatSpacetime(Q);
 
-  exagrype::ccz4::sourceFirstOrder(S, S + 25, Q, Q + 25, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
+  exagrype::ccz4::sourceFirstOrder(S, S + 25, Q, Q + 25, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
   for (int i = 0; i < Unknowns; i++) {
     validateNumericalEqualsWithParams1(S[i], 0.0, i);
   }
@@ -91,34 +89,34 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testSecondaryEntriesInSeparateMem
   }
 
   // The same entries, but the secondary ones live in memory of their own
-  double primaryQ[25], secondaryQ[34], primaryGradient[25], secondaryGradient[34];
+  double primaryQ[25], secondaryQ[33], primaryGradient[25], secondaryGradient[33];
   for (int i = 0; i < 25; i++) {
     primaryQ[i]        = Q[i];
     primaryGradient[i] = gradQ[i];
   }
-  for (int i = 0; i < 34; i++) {
+  for (int i = 0; i < 33; i++) {
     secondaryQ[i]        = Q[25 + i];
     secondaryGradient[i] = gradQ[25 + i];
   }
 
-  double S[Unknowns], primaryS[25], secondaryS[34];
-  exagrype::ccz4::sourceFirstOrder(S, S + 25, Q, Q + 25, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
-  exagrype::ccz4::sourceFirstOrder(primaryS, secondaryS, primaryQ, secondaryQ, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
+  double S[Unknowns], primaryS[25], secondaryS[33];
+  exagrype::ccz4::sourceFirstOrder(S, S + 25, Q, Q + 25, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
+  exagrype::ccz4::sourceFirstOrder(primaryS, secondaryS, primaryQ, secondaryQ, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
   for (int i = 0; i < 25; i++) validateEqualsWithParams1(primaryS[i], S[i], i);
-  for (int i = 0; i < 34; i++) validateEqualsWithParams1(secondaryS[i], S[25 + i], i);
+  for (int i = 0; i < 33; i++) validateEqualsWithParams1(secondaryS[i], S[25 + i], i);
 
   for (int normal = 0; normal < 3; normal++) {
-    double BgradQ[Unknowns], primaryBgradQ[25], secondaryBgradQ[34];
-    exagrype::ccz4::ncpFirstOrder(BgradQ, BgradQ + 25, Q, Q + 25, gradQ, gradQ + 25, normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu);
-    exagrype::ccz4::ncpFirstOrder(primaryBgradQ, secondaryBgradQ, primaryQ, secondaryQ, primaryGradient, secondaryGradient, normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu);
+    double BgradQ[Unknowns], primaryBgradQ[25], secondaryBgradQ[33];
+    exagrype::ccz4::ncpFirstOrder(BgradQ, BgradQ + 25, Q, Q + 25, gradQ, gradQ + 25, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
+    exagrype::ccz4::ncpFirstOrder(primaryBgradQ, secondaryBgradQ, primaryQ, secondaryQ, primaryGradient, secondaryGradient, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
     for (int i = 0; i < 25; i++) validateEqualsWithParams2(primaryBgradQ[i], BgradQ[i], normal, i);
-    for (int i = 0; i < 34; i++) validateEqualsWithParams2(secondaryBgradQ[i], BgradQ[25 + i], normal, i);
+    for (int i = 0; i < 33; i++) validateEqualsWithParams2(secondaryBgradQ[i], BgradQ[25 + i], normal, i);
 
     // Second-order formulation: no storage for the secondary result, and
     // contiguous and separate storage of the inputs give the same result
     double soBgradQ[25], contiguousSoBgradQ[25];
-    exagrype::ccz4::ncpSecondOrder(soBgradQ, primaryQ, secondaryQ, primaryGradient, secondaryGradient, normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu);
-    exagrype::ccz4::ncpSecondOrder(contiguousSoBgradQ, Q, Q + 25, gradQ, gradQ + 25, normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu);
+    exagrype::ccz4::ncpSecondOrder(soBgradQ, primaryQ, secondaryQ, primaryGradient, secondaryGradient, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
+    exagrype::ccz4::ncpSecondOrder(contiguousSoBgradQ, Q, Q + 25, gradQ, gradQ + 25, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
     for (int i = 0; i < 25; i++) validateEqualsWithParams2(soBgradQ[i], contiguousSoBgradQ[i], normal, i);
   }
 }
@@ -129,10 +127,10 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testMaxEigenvalueOfFlatSpacetime(
   initFlatSpacetime(Q);
 
   // With unit lapse, unit conformal factor, unit metric and zero shift, the
-  // estimate is the largest of sqrt(2), e, ds, GLMc and GLMd, i.e. GLMd=2.
+  // estimate is the largest of sqrt(2), e, GLMc and GLMd, i.e. GLMd=2.
   for (int normal = 0; normal < 3; normal++) {
     double lambda = -1.0;
-    exagrype::ccz4::maxEigenvalue(Q, normal, CCZ4e, CCZ4ds, CCZ4GLMc, CCZ4GLMd, &lambda);
+    exagrype::ccz4::maxEigenvalue(Q, normal, CCZ4e, CCZ4GLMc, CCZ4GLMd, &lambda);
     validateNumericalEqualsWithParams1(lambda, 2.0, normal);
   }
 }
@@ -151,7 +149,7 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testGaugeWaveLapse() {
 
 void exagrype::ccz4::tests::FlatSpacetimeTest::testFirstDerivativeReconstructionIsExactForCubics() {
   constexpr int PrimaryVariables = 25;
-  constexpr int Derivatives      = 34;
+  constexpr int Derivatives      = 33;
   constexpr int N                = 5;
   const tarch::la::Vector<Dimensions, double> patchSize(0.5);
   const double h = 0.5 / N;
@@ -188,7 +186,7 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testFirstDerivativeReconstruction
       const double py = (y + 0.5) * h;
       const double pz = (z + 0.5) * h;
       const double* d = &derivatives[(x + N * (y + N * z)) * Derivatives];
-      // Entries are shifted by 25 compared to the 59 entries of CCZ4
+      // Entries are shifted by 25 compared to the 58 entries of CCZ4
       validateNumericalEqualsWithParams4(d[0], 3.0 * px * px, haloSize, x, y, z);
       validateNumericalEqualsWithParams4(d[1], 4.0 * py, haloSize, x, y, z);
       validateNumericalEqualsWithParams4(d[2], 3.0, haloSize, x, y, z);
@@ -200,8 +198,6 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testFirstDerivativeReconstruction
       validateNumericalEqualsWithParams4(d[9], px * px, haloSize, x, y, z);
       // dy G_xx = 43 - 25. The reconstruction yields D_kij = 1/2 d_k G_ij
       validateNumericalEqualsWithParams4(d[18], 1.5 * py * py, haloSize, x, y, z);
-      // K0 is not touched
-      validateNumericalEqualsWithParams4(d[33], -1.0, haloSize, x, y, z);
     }
   }
 }
@@ -209,7 +205,7 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testFirstDerivativeReconstruction
 
 void exagrype::ccz4::tests::FlatSpacetimeTest::testCentralDifferenceReconstructionIsExactForQuadratics() {
   constexpr int PrimaryVariables = 25;
-  constexpr int Derivatives      = 34;
+  constexpr int Derivatives      = 33;
   constexpr int N                = 5;
   const tarch::la::Vector<Dimensions, double> patchSize(0.5);
   const double h = 0.5 / N;
@@ -248,7 +244,6 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testCentralDifferenceReconstructi
       validateNumericalEqualsWithParams4(d[30], py, haloSize, x, y, z);
       validateNumericalEqualsWithParams4(d[31], px, haloSize, x, y, z);
       validateNumericalEqualsWithParams4(d[32], 2.0 * pz, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[33], -1.0, haloSize, x, y, z);
     }
   }
 }

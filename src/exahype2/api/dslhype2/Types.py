@@ -45,13 +45,13 @@ class TElement(Type):
     pass
 
 class TArray(Type):
-    always_flatten: bool = False
+    flatten_temporaries: bool = False
 
     def __init__(self, element_type: TElement, number_of_dimensions: int, flatten = False):
         self.element_type = element_type
         # The number of internal dimensions, so should be 1 or 2
         self.number_of_dimensions = number_of_dimensions
-        self.flatten = flatten or TArray.always_flatten
+        self.flatten = flatten
 
     def print(self, printer, indent_level: int = 0):
         return printer.print_array_type(self, indent_level)

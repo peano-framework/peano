@@ -2,9 +2,9 @@
 @page page_exagrype_foccz4 First-order CCZ4
 
 There are two flavours of the CCZ4 solver. @ref exagrype.api.FOCCZ4Solver
-evolves all 59 unknowns of the first-order formulation.
+evolves all 58 unknowns of the first-order formulation.
 @ref exagrype.api.FOSOCCZ4Solver evolves the 25 primary unknowns only, and its
-partner @ref exagrype.api.FOSOReconstructionSolver recomputes the 34 first
+partner @ref exagrype.api.FOSOReconstructionSolver recomputes the 33 first
 derivatives from them in front of each Runge-Kutta stage. Both share all CCZ4
 kernels via @ref exagrype.api.CCZ4SolverBase. The design, status and lab notes
 of the second flavour are collected on
@@ -13,7 +13,7 @@ of the second flavour are collected on
 
 @section page_exagrype_foccz4_ordering Ordering of the unknowns
 
-The 59 entries of the first-order formulation are stored in the order of
+The 58 entries of the first-order formulation are stored in the order of
 exagrype.api.FOCCZ4Solver.Unknowns, i.e. consecutively in memory per
 volume. Symmetric tensors (@f$ \tilde\gamma_{ij}, \tilde A_{ij} @f$) hold
 their six independent components in the order xx, xy, xz, yy, yz, zz. The
@@ -31,7 +31,7 @@ entry (primary) or whether @ref exagrype.api.FOSOReconstructionSolver recomputes
 | lapse    | 1       | 16          | lapse @f$ \alpha @f$                                 | primary |
 | shift    | 3       | 17-19       | shift @f$ \beta^i @f$                                | primary |
 | b        | 3       | 20-22       | Gamma-driver auxiliary @f$ b^i @f$                   | primary |
-| traceK   | 1       | 23          | trace of extrinsic curvature @f$ K @f$               | primary |
+| Kex      | 1       | 23          | trace of extrinsic curvature @f$ K @f$               | primary |
 | phi      | 1       | 24          | conformal factor @f$ \phi @f$                        | primary |
 | dLapse   | 3       | 25-27       | @f$ \partial_i \alpha @f$ (auxiliary @f$ A_i @f$)    | derived |
 | dxShift  | 3       | 28-30       | @f$ \partial_x \beta^i @f$                          | derived |
@@ -41,9 +41,8 @@ entry (primary) or whether @ref exagrype.api.FOSOReconstructionSolver recomputes
 | dyG      | 6       | 43-48       | @f$ \partial_y \tilde\gamma_{ij} @f$               | derived |
 | dzG      | 6       | 49-54       | @f$ \partial_z \tilde\gamma_{ij} @f$               | derived |
 | P        | 3       | 55-57       | @f$ P_i @f$ (derivative of the conformal factor)     | derived |
-| K0       | 1       | 58          | initial trace of extrinsic curvature; does not evolve | derived |
 
-Primary entries sum to 25, derived ones to 34.
+Primary entries sum to 25, derived ones to 33.
 
 
  */

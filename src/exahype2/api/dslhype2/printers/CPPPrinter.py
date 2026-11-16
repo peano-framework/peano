@@ -171,7 +171,11 @@ class CPPPrinter(Printer):
 
     def print_subscript(self, subscript: Subscript, indent_level: int = 0) -> str:
         base_print = subscript.base.print(self)
-        index_prints = [index.print(self) for index in subscript.indices]
+        if subscript.flatten and len(subscript.indices) == 2:
+            index_prints = [subscript.flattened_index.print(self)]
+        else:
+            index_prints = [index.print(self) for index in subscript.indices]
+        
         if subscript.get_address:
             return f"""{self.get_indent(indent_level)}&{base_print}[{"][".join(index_prints)}]"""
         else:

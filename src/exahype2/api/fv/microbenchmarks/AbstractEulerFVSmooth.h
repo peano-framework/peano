@@ -34,18 +34,51 @@ class exahype2::fv::rusanov::microbenchmark::AbstractEulerFVSmooth: public ::exa
   public:
     AbstractEulerFVSmooth();
 
-    static constexpr int    NumberOfUnknowns           = 4;
+    static constexpr int    NumberOfUnknowns           = 59;
     static constexpr int    NumberOfAuxiliaryVariables = 0;
-    static constexpr int    PatchSize                  = 16;
+    static constexpr int    PatchSize                  = 6;
     static constexpr int    HaloSize                   = 1;
 
-    
+    /**
+     * Positions of the named unknowns within Q
+     */
+    struct Variables {
+      static constexpr int G = 0;
+      static constexpr int K = 6;
+      static constexpr int theta = 12;
+      static constexpr int Z = 13;
+      static constexpr int lapse = 16;
+      static constexpr int shift = 17;
+      static constexpr int b = 20;
+      static constexpr int traceK = 23;
+      static constexpr int phi = 24;
+      static constexpr int dLapse = 25;
+      static constexpr int dxShift = 28;
+      static constexpr int dyShift = 31;
+      static constexpr int dzShift = 34;
+      static constexpr int dxG = 37;
+      static constexpr int dyG = 43;
+      static constexpr int dzG = 49;
+      static constexpr int P = 55;
+      static constexpr int K0 = 58;
+    };
 
     #if defined(GPUOffloadingOMP)
 #pragma omp declare target
 #endif
-static GPUCallableMethod void flux(
-  const double* __restrict__ Q, const tarch::la::Vector<Dimensions, double>& x, int normal, double* __restrict__ F,
+static GPUCallableMethod void nonconservativeProduct(
+  const double* __restrict__ Q, const double* __restrict__ deltaQ, const tarch::la::Vector<Dimensions, double>& x, const tarch::la::Vector<Dimensions, double>& volumeSize, double t, double dt, int normal, double* __restrict__ BTimesDeltaQ,
+  Offloadable
+);
+#if defined(GPUOffloadingOMP)
+#pragma omp end declare target
+#endif
+
+#if defined(GPUOffloadingOMP)
+#pragma omp declare target
+#endif
+static GPUCallableMethod void volumetricSource(
+  const double* __restrict__ Q, const tarch::la::Vector<Dimensions, double>& x, double t, double* __restrict__ S,
   Offloadable
 );
 #if defined(GPUOffloadingOMP)
@@ -63,24 +96,35 @@ static GPUCallableMethod void maxEigenvalue(
 #pragma omp end declare target
 #endif
 
-virtual void flux(
-  const double* __restrict__ Q, const tarch::la::Vector<Dimensions, double>& x, int normal, double* __restrict__ F
-) final;
-
-virtual void maxEigenvalue(
-  const double* __restrict__ Q, const tarch::la::Vector<Dimensions, double>& x, int normal, double* __restrict__ lambdaMax
-) final;
-
 virtual void initPointWisely(
   const tarch::la::Vector<Dimensions, double>& x, double* __restrict__ Q
 ) final;
 
 
-    
+    void reduceMaxEigenvalue(double eigenvalue);
+double getAndResetMaxEigenvalue();
 
   protected:
     static tarch::logging::Log  _log;
 
-    
+    static_assert(Dimensions == 3, "CCZ4 (ExaGRyPE) is three-dimensional only");
+static constexpr int CCZ4LapseType = 0;
+static constexpr double CCZ4ds = 1.0;
+static constexpr double CCZ4c = 1.0;
+static constexpr double CCZ4e = 1.0;
+static constexpr double CCZ4f = 0.75;
+static constexpr double CCZ4bs = 0.0;
+static constexpr double CCZ4sk = 0.0;
+static constexpr double CCZ4xi = 1.0;
+static constexpr double CCZ4itau = 1.0;
+static constexpr double CCZ4eta = 1.0;
+static constexpr double CCZ4k1 = 0.1;
+static constexpr double CCZ4k2 = 0.0;
+static constexpr double CCZ4k3 = 0.5;
+static constexpr double CCZ4GLMc = 1.2;
+static constexpr double CCZ4GLMd = 2.0;
+static constexpr double CCZ4mu = 0.2;
+double _maxEigenvalueOfTimeStep{0.0};
+tarch::multicore::BooleanSemaphore _maxEigenvalueSemaphore;
 };
 

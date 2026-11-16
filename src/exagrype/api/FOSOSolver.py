@@ -19,7 +19,7 @@ class FOSOSolver(exahype2.api.SolverHost):
     graph (@ref page_exagrype_fo_so_ccz4, @ref page_exahype_programmers_guide_coupling):
 
     - ccz4 (exagrype.api.FOSOCCZ4Solver) evolves the 25 primary unknowns of
-      CCZ4. It holds the 34 derivatives as auxiliary variables. It is the
+      CCZ4. It holds the 33 derivatives as auxiliary variables. It is the
       global_tasks_solver (@ref exahype2.api.SolverHost): Both solvers are
       realised as intermediate steps, and after concatenation and coupling, the
       host wraps the whole graph into the load balancing and dynamic mesh

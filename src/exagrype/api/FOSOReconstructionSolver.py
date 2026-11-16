@@ -18,9 +18,9 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
 
     The solver is the second partner in the ping-pong of the first-/second-order
     reconstructed CCZ4 formulation (@ref page_exagrype_fo_so_ccz4). Where the
-    CCZ4 solver sees 25 unknowns and 34 auxiliary variables (the derivatives),
-    the reconstruction solver sees the same 59 entries the other way round: its
-    34 unknowns are the derivatives, and its 25 auxiliary variables are the
+    CCZ4 solver sees 25 unknowns and 33 auxiliary variables (the derivatives),
+    the reconstruction solver sees the same 58 entries the other way round: its
+    33 unknowns are the derivatives, and its 25 auxiliary variables are the
     unknowns of the CCZ4 solver. Nothing is copied: the derivatives are the
     very patch that the CCZ4 solver holds as auxiliary variables "Derivatives",
     and the reconstruction reads the CCZ4 solver's patch.

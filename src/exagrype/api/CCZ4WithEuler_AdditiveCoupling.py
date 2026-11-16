@@ -36,7 +36,7 @@ class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
 
     Each solver reads all variables of the other one as auxiliary variables:
     ccz4 holds the set EulerFields (5 entries, resolved on the patch of CCZ4),
-    euler holds the set CCZ4Fields (59 entries, resolved on the patch of Euler).
+    euler holds the set CCZ4Fields (58 entries, resolved on the patch of Euler).
     The sets are read-only for the solvers, but they sit on the faces, and they
     change from time step to time step. The solvers hold no persistent copy of
     the fields of the other solver, i.e. the sets are temporary in the sense

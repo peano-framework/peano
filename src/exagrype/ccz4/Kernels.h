@@ -17,10 +17,10 @@ namespace exagrype {
       /**
        * Non-conservative product of the first-order CCZ4 formulation.
        *
-       * The 59 entries of CCZ4 (see @ref page_exagrype_foccz4) are handed
+       * The 58 entries of CCZ4 (see @ref page_exagrype_foccz4) are handed
        * over as two pointers: one to the 25 primary entries (indices 0 to
-       * 24) and one to the 34 secondary entries (indices 25 to 58, i.e. the
-       * derivatives of the lapse, the shift, the metric and phi, plus K0).
+       * 24) and one to the 33 secondary entries (indices 25 to 57, i.e. the
+       * derivatives of the lapse, the shift, the metric and phi).
        * The first-order formulation stores them contiguously and passes Q
        * and Q+25. The second-order formulation (exagrype.api.FOSOCCZ4Solver)
        * reconstructs the secondary entries from the primary ones and hence
@@ -35,27 +35,63 @@ namespace exagrype {
        * first-order formulation needs, and it only writes the 25 primary
        * entries of its result.
        *
+       * Neither variant holds the advection terms
+       * @f$ \beta^k \partial_k Q @f$ which need the derivative of the
+       * advected entry itself. The numerical scheme has to add them, as
+       * they are discretised with lopsided stencils (see
+       * exagrype.api.CCZ4SolverBase.lopsided_advection_quantities()). The
+       * implementation in Kernels.cpp still knows these terms, but only
+       * compiles them if its template argument Advection is set, which
+       * none of the kernels below does.
+       *
        * @param BgradQ The 25 primary entries of the result.
-       * @param BgradQaux The 34 secondary entries of the result (first-order
+       * @param BgradQaux The 33 secondary entries of the result (first-order
        *   variant only).
        * @param Q The 25 primary entries of the solution.
-       * @param Qaux The 34 secondary entries of the solution.
+       * @param Qaux The 33 secondary entries of the solution.
        * @param gradQ The derivative of the 25 primary entries along normal.
-       * @param gradQaux The derivative of the 34 secondary entries along normal.
+       * @param gradQaux The derivative of the 33 secondary entries along normal.
        * @param normal Axis along which the derivatives are given.
+       * @param CCZ4b Integer switch: variant of the Gamma driver. 1 is the
+       *   shifting shift, 0 the non-shifting shift (see below).
+       * @param CCZ4s Integer switch: 1 evolves the shift (Gamma driver), 0
+       *   freezes it.
+       *
+       * The Gamma driver reads
+       * @f$ \partial_t \beta^i = s ( b \beta^k B_k^i + f b^i ) @f$,
+       * @f$ \partial_t b^i = s ( \partial_t \hat\Gamma^i - \eta b^i + b ( \beta^k \partial_k b^i - \beta^k \partial_k \hat\Gamma^i ) ) @f$
+       * and
+       * @f$ \partial_t B_j^i = s ( b ( \beta^k \partial_k B_j^i + B_k^i B_j^k ) + f \partial_j b^i ) @f$
+       * plus the constraint terms with CCZ4mu. Here, s is CCZ4s and the
+       * factor b (without an index) is CCZ4b. With b=1, all three equations
+       * hold their advection terms (shifting shift). With b=0, none does
+       * (non-shifting shift). The time derivative of
+       * @f$ \hat\Gamma^i @f$ in the second equation is the complete one,
+       * i.e. it comprises the advection of @f$ \hat\Gamma^i @f$. As the
+       * kernels leave this advection to the numerical scheme, the
+       * non-conservative product adds it to the equation of
+       * @f$ b^i @f$ for b=0. The third equation is the derivative of
+       * the first one, which is why b also switches off the product of the
+       * derivatives of the shift
+       * (src/exagrype/ccz4/adrs/0002-ccz4b-selects-the-shifting-or-the-non-shifting-shift.md).
+       *
+       * The slicing condition is
+       * @f$ \partial_t \alpha = -\alpha^2 g(\alpha) (K - 2 c \Theta) @f$,
+       * i.e. there is no offset K0 for the trace of the extrinsic
+       * curvature, and K0 is no entry of CCZ4. The former parameters CCZ4ds
+       * and CCZ4xi are fixed to one. The rationale is written down in
+       * src/exagrype/ccz4/adrs/0001-ccz4-has-58-entries-and-integer-switches.md.
        */
       #if defined(SharedOMP)
       #pragma omp declare simd
       #endif
       void ncpFirstOrder(double* BgradQ, double* BgradQaux, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
         const int CCZ4LapseType,
-        const double CCZ4ds,
         const double CCZ4c,
         const double CCZ4e,
         const double CCZ4f,
-        const double CCZ4bs,
-        const double CCZ4sk,
-        const double CCZ4xi,
+        const int CCZ4b,
+        const int CCZ4s,
         const double CCZ4mu
       );
 
@@ -67,13 +103,11 @@ namespace exagrype {
       #endif
       void ncpSecondOrder(double* BgradQ, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
         const int CCZ4LapseType,
-        const double CCZ4ds,
         const double CCZ4c,
         const double CCZ4e,
         const double CCZ4f,
-        const double CCZ4bs,
-        const double CCZ4sk,
-        const double CCZ4xi,
+        const int CCZ4b,
+        const int CCZ4s,
         const double CCZ4mu
       );
 
@@ -91,13 +125,11 @@ namespace exagrype {
       #endif
       void sourceFirstOrder(double* S, double* Saux, const double* const Q, const double* const Qaux,
         const int CCZ4LapseType,
-        const double CCZ4ds,
         const double CCZ4c,
         const double CCZ4e,
         const double CCZ4f,
-        const double CCZ4bs,
-        const double CCZ4sk,
-        const double CCZ4xi,
+        const int CCZ4b,
+        const int CCZ4s,
         const double CCZ4itau,
         const double CCZ4eta,
         const double CCZ4k1,
@@ -113,13 +145,11 @@ namespace exagrype {
       #endif
       void sourceSecondOrder(double* S, const double* const Q, const double* const Qaux,
         const int CCZ4LapseType,
-        const double CCZ4ds,
         const double CCZ4c,
         const double CCZ4e,
         const double CCZ4f,
-        const double CCZ4bs,
-        const double CCZ4sk,
-        const double CCZ4xi,
+        const int CCZ4b,
+        const int CCZ4s,
         const double CCZ4itau,
         const double CCZ4eta,
         const double CCZ4k1,
@@ -134,7 +164,6 @@ namespace exagrype {
         const double* const Q,
         int                 normal,
         const double        CCZ4e,
-        const double        CCZ4ds,
         const double        CCZ4GLMc,
         const double        CCZ4GLMd,
         double*             maxEigenvalue
@@ -169,11 +198,11 @@ namespace exagrype {
        * area of the CCZ4 constraints. This is a local operation that we can
        * invoke after each time step per volume.
        *
-       * It works on the full set of 59 unknowns of the first-order formulation.
+       * It works on the full set of 58 unknowns of the first-order formulation.
        * It first calls enforceCCZ4constraintsOfEvolvedVariables() and then
        * additionally makes the derivatives of the conformal metric trace-free.
        */
-      void enforceCCZ4constraints(double* __restrict__  newQ);
+      void enforceCCZ4constraints(double* __restrict__  Q);
 
       /**
        * The part of enforceCCZ4constraints() which only touches the first 25
@@ -187,7 +216,7 @@ namespace exagrype {
        * metric in the second-order formulation and hence cannot violate
        * any constraint on their own.
        */
-      void enforceCCZ4constraintsOfEvolvedVariables(double* __restrict__  newQ);
+      void enforceCCZ4constraintsOfEvolvedVariables(double* __restrict__  Q);
 
       /**
        * Add the Kreiss-Oliger dissipation of a patch to its right-hand side

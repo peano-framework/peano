@@ -4,9 +4,9 @@ First-order vs. second-order reconstructed CCZ4: gauge wave benchmark
 
 This is the gauge wave benchmark (@ref benchmarks_exagrype_gauge_wave) with the
 fourth-order Finite Differences (exahype2.api.rkfd4), but we instantiate two
-solvers in one setup: exagrype.api.FOCCZ4Solver, which evolves all 59 CCZ4
+solvers in one setup: exagrype.api.FOCCZ4Solver, which evolves all 58 CCZ4
 unknowns, and exagrype.api.FOSOCCZ4Solver, which evolves 25 of them and obtains
-the 34 first derivatives from the exagrype.api.FOSOReconstructionSolver next to it
+the 33 first derivatives from the exagrype.api.FOSOReconstructionSolver next to it
 (both are hosted by an exagrype.api.FOSOSolver). Both solvers
 use the same Runge-Kutta scheme, the same lopsided advection and no
 dissipation. The two do not yield identical results: The first-order solver
@@ -100,7 +100,7 @@ initial condition, i.e. the scale of the dynamics.
 | K (xx, yy, zz) | 7.7e-5 / 4.1e-5 / 4.1e-5 | 2.3e-4 | 1.4e-1 / 7.9e-2 / 7.9e-2 |
 | lapse | 2.5e-6 | 1.0e-6 | 3.1e-2 |
 | phi | 2.0e-6 | 8.7e-7 | 1.1e-2 |
-| traceK | 1.3e-4 | 2.4e-4 | 2.3e-1 |
+| Kex | 1.3e-4 | 2.4e-4 | 2.3e-1 |
 | Z (x) | 5.0e-5 | 7.7e-5 | 3.1e-1 |
 | theta | 3.6e-5 | (not meaningful) | 1.9e-5 |
 | all others (off-diagonals, shift, b, Z_y, Z_z) | 0 | 0 | 0 |
@@ -126,10 +126,10 @@ jobs, so treat with care), one reported TimeStep phase took about 0.15 s for the
 first-order solver and about 0.21 s for the second-order solver on this mesh,
 i.e. SO is about 40% slower per step. This is expected: SO reconstructs the
 derivatives in an extra mesh sweep per Runge-Kutta stage, exchanges an extra
-halo of 34 values per stage, and gathered/scattered the 59 entries in every PDE term
+halo of 33 values per stage, and gathered/scattered the 58 entries in every PDE term
 evaluation (it does not anymore, the kernels take the primary and the secondary
 entries as two pointers). We did not profile it. SO stores fewer values per stage (25 instead of
-59 for the stage input, the right-hand-side estimates and the halo patch). A
+58 for the stage input, the right-hand-side estimates and the halo patch). A
 first, finer run (729 patches of 9^3 points) was killed by the operating system
 for the first-order solver (out of memory, 15 GB machine shared with other
 processes), while the second-order solver ran through with a resident set of
@@ -153,7 +153,7 @@ both solvers against the analytical lapse
 | RK4FD4 | 81^3 | 0.101 | 1.6e-6 | 3.1e-8 | 1.4e-8 | 2.2e-8 | 300 s | 377 s |
 
 **Reading the table.** The 27^3 row reproduces the numbers of the first table
-(the largest difference is the one of traceK). Refining the grid by a factor of three reduces the
+(the largest difference is the one of Kex). Refining the grid by a factor of three reduces the
 difference between the two solvers by a factor of about 80, and the error of each solver against the analytical lapse
 by about 80 (FO) and 75 (SO), i.e. \f$ 3^4 \f$: both formulations converge with fourth order, and the SO solver stays within a factor of
 1.5 of the first-order solver's error. On the finer grid, SO is about 25% slower than FO per run (about 15% on the 27^3 grid, where setup and plots matter more).
@@ -458,9 +458,9 @@ def compare_one(scheme, cells, verbose):
     """
     evolved = sum(exagrype.api.FOSOCCZ4Solver.Unknowns.values())
     try:
-        t, fo, x, keys_fo = snapshot(scheme, "FO", cells, 59)
+        t, fo, x, keys_fo = snapshot(scheme, "FO", cells, 58)
         _, so, _, keys_so = snapshot(scheme, "SO", cells, evolved)
-        _, initial, _, _ = snapshot(scheme, "FO", cells, 59, 0)
+        _, initial, _, _ = snapshot(scheme, "FO", cells, 58, 0)
     except (FileNotFoundError, IndexError):
         return None
     if fo is None or keys_fo != keys_so:
@@ -509,7 +509,7 @@ def compare_single(scheme, formulation, cells):
     evolved = sum(exagrype.api.FOSOCCZ4Solver.Unknowns.values())
     try:
         t, values, x, _ = snapshot(
-            scheme, formulation, cells, 59 if formulation == "FO" else evolved
+            scheme, formulation, cells, 58 if formulation == "FO" else evolved
         )
         with open(os.path.join(directory_of(scheme, formulation, cells), "wall-time.json")) as file:
             wall_time = json.load(file)["wall_time"]

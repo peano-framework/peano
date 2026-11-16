@@ -95,47 +95,32 @@ all: solver
 %.o: %.f90
 	$(FC) $(FCFLAGS) -c -o $@ $<
 
-{% if MLIR_ENABLED %}
+
 # MLIR Kernel Compilation Rules
-MLIR_SOURCES={{MLIR_SOURCES}}
-MLIR_LL_FILE={{MLIR_LL_FILE}}
-MLIR_OBJECT={{MLIR_OBJECT}}
-MLIR_SOURCES_OMP={{MLIR_SOURCES_OMP}}
-MLIR_LL_FILE_OMP={{MLIR_LL_FILE_OMP}}
-MLIR_OBJECT_OMP={{MLIR_OBJECT_OMP}}
-{% if MLIR_GPU %}
-MLIR_SOURCES_GPU={{MLIR_SOURCES_GPU}}
-MLIR_LL_FILE_GPU={{MLIR_LL_FILE_GPU}}
-MLIR_OBJECT_GPU={{MLIR_OBJECT_GPU}}
-{% endif %}
+MLIR_OBJS={{MLIR_OBJS}}
+#MLIR_PREFIXES={{MLIR_PREFIXES}}
+#MLIR_LL_FILE={{MLIR_LL_FILE}}
+#MLIR_OBJECT={{MLIR_OBJECT}}
 
 # MLIR to LLVM IR translation using mlir-opt with full dialect lowering pipeline
-kernels/{{MLIR_LL_FILE}}: kernels/{{MLIR_SOURCES}}
-	{{SERIAL_PIPELINE}} | mlir-translate --mlir-to-llvmir > $@
+#kernels/{{MLIR_LL_FILE}}: kernels/{{MLIR_SOURCES}}
+#	dslhype-opt --pass-pipeline="builtin.module(dslhype-linearize-nested-memrefs,canonicalize,cse,loop-invariant-code-motion,canonicalize,cse,loop-invariant-code-motion,cse,canonicalize,expand-strided-metadata,fold-memref-alias-ops,lower-affine,finalize-memref-to-llvm,loop-invariant-code-motion,canonicalize,cse,finalize-memref-to-llvm,convert-scf-to-cf,convert-openmp-to-llvm,convert-math-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts,canonicalize,cse)" $< | mlir-translate --mlir-to-llvmir > $@
 
 # OMP MLIR to LLVM IR translation using mlir-opt with full dialect lowering pipeline
-kernels/{{MLIR_LL_FILE_OMP}}: kernels/{{MLIR_SOURCES_OMP}}
-	{{OMP_PIPELINE}} | mlir-translate --mlir-to-llvmir > $@
+#kernels/{{MLIR_LL_FILE_OMP}}: kernels/{{MLIR_SOURCES_OMP}}
+#	dslhype-opt --pass-pipeline="builtin.module(dslhype-linearize-nested-memrefs,canonicalize,cse,loop-invariant-code-motion,canonicalize,cse,loop-invariant-code-motion,cse,canonicalize,expand-strided-metadata,fold-memref-alias-ops,lower-affine,finalize-memref-to-llvm,loop-invariant-code-motion,canonicalize,cse,convert-scf-to-openmp,finalize-memref-to-llvm,convert-scf-to-cf,convert-openmp-to-llvm,convert-math-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts,canonicalize,cse)" $< | mlir-translate --mlir-to-llvmir > $@
 
-{% if MLIR_GPU %}
-# MLIR to GPU binary translation using dslhype-opt and mlir-opt 
-kernels/{{MLIR_LL_FILE_GPU}}: kernels/{{MLIR_SOURCES_GPU}}
-	{{GPU_PIPELINE}} | mlir-translate --mlir-to-llvmir > $@
-{% endif %}
 
-kernels/{{MLIR_OBJECT}}: kernels/{{MLIR_LL_FILE}}
+{% for mlir_prefix, pipeline in MLIR_DICT.items() -%}
+{{mlir_prefix}}.ll: {{mlir_prefix}}.mlir
+	{{pipeline}} $< | mlir-translate --mlir-to-llvmir > $@
+{% endfor %}
+
+{% for mlir_prefix in MLIR_DICT.keys() -%}
+{{mlir_prefix}}_mlir.o: {{mlir_prefix}}.ll
 	llc -relocation-model=pic -filetype=obj $< -o $@
+{% endfor %}
 
-kernels/{{MLIR_OBJECT_OMP}}: kernels/{{MLIR_LL_FILE_OMP}}
-	llc -relocation-model=pic -filetype=obj $< -o $@
-
-{% if MLIR_GPU %}
-# GPU LLVM IR to object file compilation
-kernels/{{MLIR_OBJECT_GPU}}: kernels/{{MLIR_LL_FILE_GPU}}
-	llc -relocation-model=pic -filetype=obj $< -o $@
-{% endif %}
-
-{% endif %}
 
 {% for module in FORTRAN_MODULES -%}
 .NOTPARALLEL: {{module | replace(".f90", ".mod") }}
@@ -148,20 +133,20 @@ kernels/{{MLIR_OBJECT_GPU}}: kernels/{{MLIR_LL_FILE_GPU}}
 # depend objects right but not the other way round.
 #
 {% if MLIR_ENABLED %}
-{% if MLIR_GPU %}
-solver: {% for module in FORTRAN_MODULES -%} {{module | replace(".f90", ".mod") +" "}} {%- endfor %} $(CXX_OBJS) $(FORTRAN_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} kernels/{{MLIR_OBJECT_GPU}}
-	$(CXX) $(FORTRAN_MODULE_OBJS) $(FORTRAN_OBJS) $(CXX_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} kernels/{{MLIR_OBJECT_GPU}} $(LDFLAGS) $(LIBS) -o {{EXECUTABLENAME}}
-{% else %}
-solver: {% for module in FORTRAN_MODULES -%} {{module | replace(".f90", ".mod") +" "}} {%- endfor %} $(CXX_OBJS) $(FORTRAN_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} kernels/{{MLIR_OBJECT_GPU}}
-	$(CXX) $(FORTRAN_MODULE_OBJS) $(FORTRAN_OBJS) $(CXX_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} $(LDFLAGS) $(LIBS) -o {{EXECUTABLENAME}}
-{% endif %}
-{% else %}
-solver: {% for module in FORTRAN_MODULES -%} {{module | replace(".f90", ".mod") +" "}} {%- endfor %} $(CXX_OBJS) $(FORTRAN_OBJS)
-	$(CXX) $(FORTRAN_MODULE_OBJS) $(FORTRAN_OBJS) $(CXX_OBJS) $(LDFLAGS) $(LIBS) -o {{EXECUTABLENAME}}
-{% endif %}
+#{% if MLIR_GPU %}
+#solver: {% for module in FORTRAN_MODULES -%} {{module | replace(".f90", ".mod") +" "}} {%- endfor %} $(CXX_OBJS) $(FORTRAN_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} kernels/{{MLIR_OBJECT_GPU}}
+#	$(CXX) $(FORTRAN_MODULE_OBJS) $(FORTRAN_OBJS) $(CXX_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} kernels/{{MLIR_OBJECT_GPU}} $(LDFLAGS) $(LIBS) -o {{EXECUTABLENAME}}
+#{% else %}
+#solver: {% for module in FORTRAN_MODULES -%} {{module | replace(".f90", ".mod") +" "}} {%- endfor %} $(CXX_OBJS) $(FORTRAN_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} kernels/{{MLIR_OBJECT_GPU}}
+#	$(CXX) $(FORTRAN_MODULE_OBJS) $(FORTRAN_OBJS) $(CXX_OBJS) kernels/{{MLIR_OBJECT}} kernels/{{MLIR_OBJECT_OMP}} $(LDFLAGS) $(LIBS) -o {{EXECUTABLENAME}}
+#{% endif %}
+#{% else %}
+solver: {% for module in FORTRAN_MODULES -%} {{module | replace(".f90", ".mod") +" "}} {%- endfor %} $(CXX_OBJS) $(MLIR_OBJS) $(FORTRAN_OBJS)
+	$(CXX) $(FORTRAN_MODULE_OBJS) $(FORTRAN_OBJS) $(CXX_OBJS) $(MLIR_OBJS) $(LDFLAGS) $(LIBS) -o {{EXECUTABLENAME}}
+#{% endif %}
 
 clean:
-	rm -f $(CXX_OBJS) $(FORTRAN_OBJS) $(FORTRAN_MODULE_OBJS)
+	rm -f $(CXX_OBJS) $(FORTRAN_OBJS) $(FORTRAN_MODULE_OBJS) $(MLIR_OBJS)
 	rm -f *.mod
 {% if MLIR_ENABLED %}
 	rm -f kernels/{{MLIR_LL_FILE}} kernels/{{MLIR_OBJECT}}

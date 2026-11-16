@@ -76,7 +76,7 @@ Threads = 4
 TimeInBetweenPlots = 0.5
 
 ## Unknowns which the restricted Kreiss-Oliger dissipation damps: Q0-Q24
-## (G, K, theta, Z, lapse, shift, b, traceK, phi)
+## (G, K, theta, Z, lapse, shift, b, Kex, phi)
 DissipationSubset = list(range(0, 25))
 
 ## The runs: name -> (Kreiss-Oliger sigma or None, lopsided advection,
@@ -182,7 +182,7 @@ def build_and_run(name, directory, peano_installation, end_time):
     )
     solver = exagrype.api.FOCCZ4Solver(
         "CCZ4",
-        parameters={"CCZ4bs": 1.0, "CCZ4sk": 1.0},
+        parameters={"CCZ4b": 1, "CCZ4s": 1},
         initial_condition=exagrype.api.initialvalues.single_black_hole(mass=Mass),
     )
     solver.add_pde_term(

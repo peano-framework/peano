@@ -474,7 +474,7 @@ def main():
 
     solver = exagrype.api.FOCCZ4Solver(
         "CCZ4",
-        parameters={"CCZ4bs": 1.0, "CCZ4sk": 1.0},
+        parameters={"CCZ4b": 1, "CCZ4s": 1},
         initial_condition=exagrype.api.initialvalues.single_black_hole(
             mass=arguments.mass
         ),

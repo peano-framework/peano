@@ -333,3 +333,56 @@ std::string exahype2::CopyCellDataGPU<inType, outType>::toString() const {
   msg << "]";
   return msg.str();
 }
+
+template<typename inType, typename outType>
+exahype2::CellDataFlattened<inType, outType>::CellDataFlattened(
+  const exahype2::CellData<inType, outType>& cellData,
+  int inputPatchSize,
+  int outputPatchSize
+):
+  numberOfCells(cellData.numberOfCells),
+  QInStride(inputPatchSize),
+  QOutStride(outputPatchSize)
+{  
+  QIn = new inType[numberOfCells * inputPatchSize];
+  QOut = new outType[numberOfCells * outputPatchSize];
+  for (int64_t i = 0; i < cellData.numberOfCells; ++i) {
+    std::memcpy(
+      QIn + i * inputPatchSize,
+      cellData.QIn[i],
+      static_cast<std::size_t>(inputPatchSize) * sizeof(inType)
+    );
+  }
+  cellCentre = cellData.cellCentre;
+  cellSize = cellData.cellSize;
+  t = cellData.t;
+  dt = cellData.dt;
+  QInNested = cellData.QIn;
+  QOutNested = cellData.QOut;
+  maxEigenvalue = cellData.maxEigenvalue;
+}
+
+template<typename inType, typename outType>
+void exahype2::CellDataFlattened<inType, outType>::copyBackAndDestroy() {
+  for (int i = 0; i < numberOfCells; ++i) {
+    std::memcpy(
+      QOutNested[i],
+      &QOut[i * QOutStride],
+      static_cast<std::size_t>(QOutStride) * sizeof(outType)
+    );
+  }
+
+  delete[] QIn;
+  delete[] QOut;
+}
+
+template<typename inType, typename outType>
+std::string exahype2::CellDataFlattened<inType, outType>::toString() const {
+  std::ostringstream msg;
+  msg << "[";
+  for (int i = 0; i < numberOfCells; i++) {
+    
+  }
+  msg << "]";
+  return msg.str();
+}

@@ -242,7 +242,7 @@ void exagrype::ccz4::recomputeAuxiliaryVariablesFD4_4thOrder(
 namespace {
   /**
    * Shared by the reconstruction routines: copy the 25 primary variables into
-   * a 59-entry buffer, let recompute fill the derivatives and copy them back.
+   * a 58-entry buffer, let recompute fill the derivatives and copy them back.
    */
   template <typename Recompute>
   void reconstructFirstDerivatives(
@@ -256,7 +256,7 @@ namespace {
     static_assert( Dimensions==3, "ExaGRyPE is three-dimensional only" );
 
     constexpr int NumberOfPrimaryVariables = 25;
-    constexpr int NumberOfDerivatives      = 34;
+    constexpr int NumberOfDerivatives      = 33;
     constexpr int NumberOfEntries          = NumberOfPrimaryVariables + NumberOfDerivatives;
 
     const int n = numberOfGridCellsPerPatchPerAxis;
@@ -286,13 +286,12 @@ namespace {
     );
     recompute( cellData, n, haloSize, NumberOfPrimaryVariables, NumberOfDerivatives );
 
-    // K0 (the last derivative) is not reconstructed
     for (int x=0; x<n; x++)
     for (int y=0; y<n; y++)
     for (int z=0; z<n; z++) {
       const tarch::la::Vector<Dimensions,int> volume = gridCellIndex3d(x,y,z);
       const int serialisedVolume = x + n*y + n*n*z;
-      for (int k=0; k<NumberOfDerivatives-1; k++) {
+      for (int k=0; k<NumberOfDerivatives; k++) {
         firstDerivatives[ serialisedVolume*NumberOfDerivatives + k ] = buffer[ targetEnumerator(0,volume,NumberOfPrimaryVariables+k) ];
       }
     }

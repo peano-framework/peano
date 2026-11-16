@@ -5,7 +5,7 @@
 
 This is a brief sketch of the first-order second-order hybrid CCZ4 implementation in ExaGRyPE.
 
-The first-order CCZ4 solver (exagrype.api.FOCCZ4Solver) evolves 59 unknowns.
+The first-order CCZ4 solver (exagrype.api.FOCCZ4Solver) evolves 58 unknowns.
 This is the original Dumbser/Zanotti formulation introduced with ExaHyPE 2 and 
 is a "clean" first-order formulation of the CCZ4 problem. A first-order 
 formulation is not what you find in most codes in the field. Most codes start
@@ -16,8 +16,8 @@ first-order mathematical toolset can be thrown at the problem.
 
 
 In this first-order formulation, 
-34 out of the 59 unknowns are first derivatives of the other 25 (lapse, shift, conformal
-metric, phi), plus K0. So they are helper variables which now evolve in time.
+33 out of the 58 unknowns are first derivatives of the other 25 (lapse, shift, conformal
+metric, phi). So they are helper variables which now evolve in time.
 In princple however, they can always be reconstructed from the 25 dominant 
 variables. To the best of our knowledge, it is neither clear if this first-order
 formulation is faster nor if it is as stable as a second order approach. 
@@ -39,10 +39,10 @@ has to create and add to the project:
 
 | | Evolved ("real") unknowns | Auxiliary variables |
 |---|---|---|
-| exagrype.api.FOSOCCZ4Solver (FOSOSolver.ccz4) | 25 primary variables | 34 derivatives |
-| exagrype.api.FOSOReconstructionSolver (FOSOSolver.reconstruction) | 34 derivatives | 25 primary variables |
+| exagrype.api.FOSOCCZ4Solver (FOSOSolver.ccz4) | 25 primary variables | 33 derivatives |
+| exagrype.api.FOSOReconstructionSolver (FOSOSolver.reconstruction) | 33 derivatives | 25 primary variables |
 
-Both see the same 59 entries, but with swapped roles.
+Both see the same 58 entries, but with swapped roles.
 
 - The reconstruction solver runs first. A task of it invokes the reconstruction of the
   quantities that the first-order CCZ4 solver requires (exagrype::ccz4::recomputeAuxiliaryVariablesFD4_4thOrder()).
@@ -79,10 +79,10 @@ Both see the same 59 entries, but with swapped roles.
 exahype2.api.Solver
   ├── exagrype.api.CCZ4SolverBase     parameters, PDE terms (via hooks), initial
   │     │                              condition, constraint enforcement
-  │     ├── exagrype.api.FOCCZ4Solver     59 unknowns, secondary pointer is Q+25
-  │     └── exagrype.api.FOSOCCZ4Solver   25 unknowns + auxiliary variables "Derivatives" (34),
+  │     ├── exagrype.api.FOCCZ4Solver     58 unknowns, secondary pointer is Q+25
+  │     └── exagrype.api.FOSOCCZ4Solver   25 unknowns + auxiliary variables "Derivatives" (33),
   │                                        secondary pointer is "derivatives"
-  └── exagrype.api.FOSOReconstructionSolver   34 unknowns (the derivatives), no PDE terms
+  └── exagrype.api.FOSOReconstructionSolver   33 unknowns (the derivatives), no PDE terms
 
 exagrype.api.FOSOSolver                 hosts one FOSOCCZ4Solver (.ccz4) and one
                                          FOSOReconstructionSolver (.reconstruction)
@@ -96,8 +96,8 @@ lopsided advection, no constraint enforcement, no grid construction, no plotter 
 does not compute a time step size. Its C++ class forwards the time stamps and time step sizes
 of the CCZ4 solver, so the global minimum over all solvers is not spoilt.
 
-The kernels in exagrype::ccz4 always work on 59 entries, which they take as two
-pointers: one to the 25 primary entries and one to the 34 secondary entries. The
+The kernels in exagrype::ccz4 always work on 58 entries, which they take as two
+pointers: one to the 25 primary entries and one to the 33 secondary entries. The
 base class generates the PDE term implementations once. The only thing that
 differs is a tiny hook, which tells the generated code where the secondary
 entries live:
@@ -109,7 +109,7 @@ entries live:
   kernels skip it.
 
 The same holds for the initial condition: any routine from
-exagrype.api.initialvalues fills 59 entries; the SO solver wraps it, runs it on a
+exagrype.api.initialvalues fills 58 entries; the SO solver wraps it, runs it on a
 local array and splits the outcome over Q and the derivatives. Therefore, the
 initial conditions are not duplicated either.
 The constraint enforcement of the SO solver uses
@@ -245,7 +245,7 @@ For FD4, the halo has to be at least 3.
   as exahype2.api.AuxiliaryVariables without any change to ExaHyPE. The rkfd4 scheme
   already hands the solver's auxiliary variables to the kernels in the same
   array as the unknowns (unknowns first, then the auxiliary variables), which
-  is exactly the layout of the 59 CCZ4 entries. Evolving only 25 of them needs
+  is exactly the layout of the 58 CCZ4 entries. Evolving only 25 of them needs
   nothing besides the existing "copy only the unknowns back" logic.
 - **Separate graphs, concatenated by the host.** Initially, the reconstruction solver
   looked up the tasks of the CCZ4 solver by name in the one time stepping graph that the

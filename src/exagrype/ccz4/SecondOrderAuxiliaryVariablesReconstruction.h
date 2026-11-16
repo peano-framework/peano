@@ -14,7 +14,7 @@ namespace exagrype {
        *
        * We are given a patch as well as the number of mesh cells per axis
        * within this patch. I also parameterise over the unknowns and the
-       * auxiliaryVariables. By default, we'd expect 59 and 0 here, but we
+       * auxiliaryVariables. By default, we'd expect 58 and 0 here, but we
        * want to routine to work for augmented systems, too.
        *
        * The reconstruction uses a 4th order Finite Difference scheme. The
@@ -62,7 +62,7 @@ namespace exagrype {
        *   the halo is also at least three. More general, has to be bigger or
        *   equal to haloSize.
        * @param haloSize           Has to be at least 3.
-       * @param unknowns           Typically 59, but can be bigger if you hold
+       * @param unknowns           Typically 58, but can be bigger if you hold
        *   additional quantities within the PDE.
        * @param auxiliaryVariables Typically 0.
        *
@@ -101,20 +101,19 @@ namespace exagrype {
       );
 
       /**
-       * Reconstruct the 34 first derivatives of the 25 evolved CCZ4 unknowns
+       * Reconstruct the 33 first derivatives of the 25 evolved CCZ4 unknowns
        *
        * This is the entry point of exagrype.api.FOSOReconstructionSolver. The
-       * second-order solver evolves the first 25 of the 59 CCZ4 entries
-       * (conformal metric, extrinsic curvature, ..., phi); the remaining 34
-       * entries are the first derivatives of the lapse, shift, metric and phi
-       * plus K0. This routine computes the derivatives (entries 25 to 57) of
-       * one cell from the 25 evolved unknowns with their halo. K0 (entry 58)
-       * is not touched.
+       * second-order solver evolves the first 25 of the 58 CCZ4 entries
+       * (conformal metric, extrinsic curvature, ..., phi); the remaining 33
+       * entries are the first derivatives of the lapse, shift, metric and
+       * phi. This routine computes these derivatives (entries 25 to 57) of
+       * one cell from the 25 evolved unknowns with their halo.
        *
        * The routine is a thin wrapper around
        * recomputeAuxiliaryVariablesFD4_4thOrder(), i.e. the fourth-order
        * stencil @f$ [1\ -8\ 0\ 8\ -1]/(12h) @f$. That routine expects the
-       * 59 entries per grid cell interleaved, and a halo of at least three.
+       * 58 entries per grid cell interleaved, and a halo of at least three.
        * The wrapper assembles such a buffer, calls the routine and copies
        * the derivatives of the cell's own grid cells back.
        *
@@ -132,9 +131,9 @@ namespace exagrype {
        * @param numberOfGridCellsPerPatchPerAxis Grid cells per axis within
        *   the cell.
        * @param haloSize Has to be at least three.
-       * @param firstDerivatives Output, 34 entries per grid cell of the cell
+       * @param firstDerivatives Output, 33 entries per grid cell of the cell
        *   (without halo) in the layout of a patch. Entry k corresponds to
-       *   entry 25+k of the 59 CCZ4 unknowns. Entry 33 (K0) is left alone.
+       *   entry 25+k of the 58 CCZ4 unknowns.
        */
       void reconstructFirstDerivativesFD4(
         const double* __restrict__                  primaryVariablesWithHalo,
@@ -145,7 +144,7 @@ namespace exagrype {
       );
 
       /**
-       * Reconstruct the 34 first derivatives with second-order central differences
+       * Reconstruct the 33 first derivatives with second-order central differences
        *
        * Same contract as reconstructFirstDerivativesFD4(), but the stencil is
        * @f$ [-1\ 0\ 1]/(2h) @f$ (recomputeAuxiliaryVariablesFD4_centralDifferences()).

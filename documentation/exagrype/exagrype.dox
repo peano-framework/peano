@@ -87,10 +87,6 @@ evolving variables makes the code completely first-order, yielding a system of
    \hat{\Gamma}^i, b^i, A_k, B^i_k, D_{kij}, P_k \right).
 @f$
 
-The code stores one more unknown, the constant reference value @f$ K_0 @f$
-of @f$ K @f$ which enters the slicing condition, i.e. it works with 59
-unknowns in total.
-
 Both formulations are now available in the code for different scenarios.
 Users are referred to Appendix B of the paper below for more details on the
 equations and formulations used in ExaGRyPE.
@@ -201,7 +197,7 @@ It hosts the ExaGRyPE core solvers, such as
 @ref exagrype.api.FOCCZ4Solver, which are in turn subclasses of
 @ref exahype2.api.Solver.
 These ExaGRyPE-specific solvers configure the base class with the correct
-number of unknowns and PDEs (59 unknowns are used by FOCCZ4, for example), the
+number of unknowns and PDEs (58 unknowns are used by FOCCZ4, for example), the
 CCZ4 parameters, and all PDE terms of the particular system.
 Users no longer have to add PDE terms themselves.
 You still have to pick a well-suited numerical scheme, however:

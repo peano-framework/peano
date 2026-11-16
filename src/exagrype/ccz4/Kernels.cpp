@@ -48,72 +48,61 @@ void exagrype::ccz4::addKreissOligerDissipation(
   }
 }
 
-void exagrype::ccz4::enforceCCZ4constraintsOfEvolvedVariables(double * luh)
-{
-    double g_cov[3][3] = { {luh[0], luh[1], luh[2]}, {luh[1], luh[3], luh[4]}, {luh[2], luh[4], luh[5]} };
-    const double det = luh[0]*luh[3]*luh[5] - luh[0]*luh[4]*luh[4] - luh[1]*luh[1]*luh[5] + 2*luh[1]*luh[2]*luh[4] -luh[2]*luh[2]*luh[3];
-
+namespace {
+  /**
+   * Shared part of enforceCCZ4constraints() and
+   * enforceCCZ4constraintsOfEvolvedVariables(): rescale the conformal metric
+   * Q[0..5] to unit determinant, remove the trace of Aex = Q[6..11], and
+   * apply the floors of the lapse and phi. The inverse of the rescaled
+   * metric is returned, so the caller does not have to compute it again.
+   *
+   * Symmetric matrices are computed on their upper triangle, and the six
+   * entries of Q hold this triangle (0,1,2 / 3,4 / 5).
+   */
+  void enforceCCZ4constraintsOfMetricAndAex(double* Q, double g_contr[3][3]) {
+    const double det   = Q[0]*Q[3]*Q[5] - Q[0]*Q[4]*Q[4] - Q[1]*Q[1]*Q[5] + 2*Q[1]*Q[2]*Q[4] - Q[2]*Q[2]*Q[3];
     const double phisq = 1./std::cbrt(det);
-    for (int i = 0; i < 3; i++)
-    for (int j = 0; j < 3; j++) g_cov[i][j] *= phisq;
+    for (int i = 0; i < 6; i++) Q[i] *= phisq;
 
-    const double det2 = g_cov[0][0]*g_cov[1][1]*g_cov[2][2] -
-        g_cov[0][0]*g_cov[1][2]*g_cov[2][1] - g_cov[1][0]*g_cov[0][1]*g_cov[2][2] +
-        g_cov[1][0]*g_cov[0][2]*g_cov[2][1] + g_cov[2][0]*g_cov[0][1]*g_cov[1][2] -
-        g_cov[2][0]*g_cov[0][2]*g_cov[1][1];
+    const double invdet = 1./(Q[0]*Q[3]*Q[5] - Q[0]*Q[4]*Q[4] - Q[1]*Q[1]*Q[5] + 2*Q[1]*Q[2]*Q[4] - Q[2]*Q[2]*Q[3]);
+    const double g_contr_12 = -( Q[1]*Q[5]-Q[2]*Q[4])*invdet;
+    const double g_contr_13 = -(-Q[1]*Q[4]+Q[2]*Q[3])*invdet;
+    const double g_contr_23 = -( Q[0]*Q[4]-Q[2]*Q[1])*invdet;
+    g_contr[0][0] = (Q[3]*Q[5]-Q[4]*Q[4])*invdet;
+    g_contr[1][1] = (Q[0]*Q[5]-Q[2]*Q[2])*invdet;
+    g_contr[2][2] = (Q[0]*Q[3]-Q[1]*Q[1])*invdet;
+    g_contr[0][1] = g_contr[1][0] = g_contr_12;
+    g_contr[0][2] = g_contr[2][0] = g_contr_13;
+    g_contr[1][2] = g_contr[2][1] = g_contr_23;
+
+    // The upper triangle of the rescaled metric is Q[0..5], i.e. Q[i] below
+    double* Aex = Q + 6;
+    const double trAex = g_contr[0][0] * Aex[0]
+                       + g_contr[1][1] * Aex[3]
+                       + g_contr[2][2] * Aex[5]
+                       + 2.0 * ( g_contr[0][1] * Aex[1]
+                               + g_contr[0][2] * Aex[2]
+                               + g_contr[1][2] * Aex[4] );
+    for (int i = 0; i < 6; i++) Aex[i] -= 1./3. * trAex * Q[i];
+
+    // Floors of the lapse and phi
+    Q[16] = std::fmax(1e-16, Q[16]);
+    Q[24] = std::fmax(1e-16, Q[24]);
+  }
+} // namespace
 
 
-    const double invdet = 1./det2;
-    const double g_contr[3][3] = {
-        { ( g_cov[1][1]*g_cov[2][2]-g_cov[1][2]*g_cov[2][1])*invdet, -(g_cov[0][1]*g_cov[2][2]-g_cov[0][2]*g_cov[2][1])*invdet, -(-g_cov[0][1]*g_cov[1][2]+g_cov[0][2]*g_cov[1][1])*invdet},
-        {-( g_cov[1][0]*g_cov[2][2]-g_cov[1][2]*g_cov[2][0])*invdet,  (g_cov[0][0]*g_cov[2][2]-g_cov[0][2]*g_cov[2][0])*invdet, -( g_cov[0][0]*g_cov[1][2]-g_cov[0][2]*g_cov[1][0])*invdet},
-        {-(-g_cov[1][0]*g_cov[2][1]+g_cov[1][1]*g_cov[2][0])*invdet, -(g_cov[0][0]*g_cov[2][1]-g_cov[0][1]*g_cov[2][0])*invdet,  ( g_cov[0][0]*g_cov[1][1]-g_cov[0][1]*g_cov[1][0])*invdet}
-    };
-    double Aex[3][3] = { {luh[6], luh[7], luh[8]}, {luh[7], luh[9], luh[10]}, {luh[8], luh[10], luh[11]} };
-
-    double traceA = 0;
-    for (int i=0;i<3;i++)
-    for (int j=0;j<3;j++) traceA += g_contr[i][j]*Aex[i][j];
-
-    for (int i=0;i<3;i++)
-    for (int j=0;j<3;j++) Aex[i][j] -= 1./3. * traceA * g_cov[i][j];
-
-    luh[ 0] = g_cov[0][0];
-    luh[ 1] = g_cov[0][1];
-    luh[ 2] = g_cov[0][2];
-    luh[ 3] = g_cov[1][1];
-    luh[ 4] = g_cov[1][2];
-    luh[ 5] = g_cov[2][2];
-
-    luh[ 6] =   Aex[0][0];
-    luh[ 7] =   Aex[0][1];
-    luh[ 8] =   Aex[0][2];
-    luh[ 9] =   Aex[1][1];
-    luh[10] =   Aex[1][2];
-    luh[11] =   Aex[2][2];
-
-    //new constraints: a minimum for phi(chi) and alpha
-    luh[16]=std::fmax(1e-16,luh[16]);
-    luh[24]=std::fmax(1e-16,luh[24]);
+void exagrype::ccz4::enforceCCZ4constraintsOfEvolvedVariables(double * Q)
+{
+    double g_contr[3][3];
+    enforceCCZ4constraintsOfMetricAndAex(Q, g_contr);
 }
 
 
-void exagrype::ccz4::enforceCCZ4constraints(double * luh)
+void exagrype::ccz4::enforceCCZ4constraints(double * Q)
 {
-    enforceCCZ4constraintsOfEvolvedVariables(luh);
-
-    // The conformal metric now has determinant one
-    const double g_cov[3][3] = { {luh[0], luh[1], luh[2]}, {luh[1], luh[3], luh[4]}, {luh[2], luh[4], luh[5]} };
-    const double det2 = g_cov[0][0]*g_cov[1][1]*g_cov[2][2] -
-        g_cov[0][0]*g_cov[1][2]*g_cov[2][1] - g_cov[1][0]*g_cov[0][1]*g_cov[2][2] +
-        g_cov[1][0]*g_cov[0][2]*g_cov[2][1] + g_cov[2][0]*g_cov[0][1]*g_cov[1][2] -
-        g_cov[2][0]*g_cov[0][2]*g_cov[1][1];
-    const double invdet = 1./det2;
-    const double g_contr[3][3] = {
-        { ( g_cov[1][1]*g_cov[2][2]-g_cov[1][2]*g_cov[2][1])*invdet, -(g_cov[0][1]*g_cov[2][2]-g_cov[0][2]*g_cov[2][1])*invdet, -(-g_cov[0][1]*g_cov[1][2]+g_cov[0][2]*g_cov[1][1])*invdet},
-        {-( g_cov[1][0]*g_cov[2][2]-g_cov[1][2]*g_cov[2][0])*invdet,  (g_cov[0][0]*g_cov[2][2]-g_cov[0][2]*g_cov[2][0])*invdet, -( g_cov[0][0]*g_cov[1][2]-g_cov[0][2]*g_cov[1][0])*invdet},
-        {-(-g_cov[1][0]*g_cov[2][1]+g_cov[1][1]*g_cov[2][0])*invdet, -(g_cov[0][0]*g_cov[2][1]-g_cov[0][1]*g_cov[2][0])*invdet,  ( g_cov[0][0]*g_cov[1][1]-g_cov[0][1]*g_cov[1][0])*invdet}
-    };
+    double g_contr[3][3];
+    enforceCCZ4constraintsOfMetricAndAex(Q, g_contr);
 
     //
     // As suggested by our PRD referee, we also enforce the algebraic constraint that results from the first spatial derivative of the constraint
@@ -122,49 +111,26 @@ void exagrype::ccz4::enforceCCZ4constraints(double * luh)
     // \tilde{\gamma}^{ij} D_kij = 0
     //
     // and is thus a condition of trace-freeness on all submatrices D_kij for k=1,2,3.
+    // Q[37+6l .. 42+6l] hold the upper triangle of D_lij.
     //
-
-    double DD[3][3][3] = {
-        {{luh[37], luh[38], luh[39]}, {luh[38], luh[40], luh[41]}, {luh[39], luh[41], luh[42]}},
-        {{luh[43], luh[44], luh[45]}, {luh[44], luh[46], luh[47]}, {luh[45], luh[47], luh[48]}},
-        {{luh[49], luh[50], luh[51]}, {luh[50], luh[52], luh[53]}, {luh[51], luh[53], luh[54]}}
-    };
-
-    for (int l=0;l<3;l++)
+    for (int l = 0; l < 3; l++)
     {
-        double traceDk = 0;
-        for (int i=0;i<3;i++)
-        for (int j=0;j<3;j++) traceDk += g_contr[i][j]*DD[l][i][j];
-
-        for (int i=0;i<3;i++)
-        for (int j=0;j<3;j++) DD[l][i][j] -= 1./3 * g_cov[i][j]*traceDk;
+        double* DD = Q + 37 + 6 * l;
+        const double trDD = g_contr[0][0] * DD[0]
+                          + g_contr[1][1] * DD[3]
+                          + g_contr[2][2] * DD[5]
+                          + 2.0 * ( g_contr[0][1] * DD[1]
+                                  + g_contr[0][2] * DD[2]
+                                  + g_contr[1][2] * DD[4] );
+        for (int i = 0; i < 6; i++) DD[i] -= 1./3. * Q[i] * trDD;
     }
-
-    luh[37] = DD[0][0][0];
-    luh[38] = DD[0][0][1];
-    luh[39] = DD[0][0][2];
-    luh[40] = DD[0][1][1];
-    luh[41] = DD[0][1][2];
-    luh[42] = DD[0][2][2];
-
-    luh[43] = DD[1][0][0];
-    luh[44] = DD[1][0][1];
-    luh[45] = DD[1][0][2];
-    luh[46] = DD[1][1][1];
-    luh[47] = DD[1][1][2];
-    luh[48] = DD[1][2][2];
-
-    luh[49] = DD[2][0][0];
-    luh[50] = DD[2][0][1];
-    luh[51] = DD[2][0][2];
-    luh[52] = DD[2][1][1];
-    luh[53] = DD[2][1][2];
-    luh[54] = DD[2][2][2];
 }
+
+
 void exagrype::ccz4::admconstraints(double* constraints, const double* const Q, const double* const gradQSerialised)
 {
-    constexpr int nVar(59);
-    double gradQin[59][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    constexpr int nVar(58);
+    double gradQin[58][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
     // De-serialise input data and fill static array
     for (int normal=0; normal<3; normal++)
@@ -388,20 +354,22 @@ void exagrype::ccz4::admconstraints(double* constraints, const double* const Q, 
 
     tarch::memset(constraints, 0, 4*sizeof(double));
 
-    constraints[0]  =   Ham;        //59
-    constraints[1]  =   Mom[0];     //60
-    constraints[2]  =   Mom[1];     //61
-    constraints[3]  =   Mom[2];     //62
-    //constraints[4]  =   R;          //63
-    //constraints[5]  =   Kupdown;    //64
-    //constraints[6]  =   nablaZcontracted;   //65
+    constraints[0]  =   Ham;        //58
+    constraints[1]  =   Mom[0];     //59
+    constraints[2]  =   Mom[1];     //60
+    constraints[3]  =   Mom[2];     //61
+    //constraints[4]  =   R;          //62
+    //constraints[5]  =   Kupdown;    //63
+    //constraints[6]  =   nablaZcontracted;   //64
     //constraints[4]  =   1.0/invdet-1.0;
     //constraints[5]  =   traceA;
 }
+
+
 void exagrype::ccz4::Psi4Calc(double* Psi4, const double* const Q, const double* const gradQSerialised, double* coor)
 {
-    constexpr int nVar(59);
-    double gradQin[59][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    constexpr int nVar(58);
+    double gradQin[58][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
     // De-serialise input data and fill static array
     for (int normal=0; normal<3; normal++)
@@ -693,10 +661,12 @@ void exagrype::ccz4::Psi4Calc(double* Psi4, const double* const Q, const double*
 	}
 	
 }
+
+
 void exagrype::ccz4::TestingOutput(double* terms, const double* const Q, const double* const gradQSerialised)
 {
-    constexpr int nVar(59);
-    double gradQin[59][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    constexpr int nVar(58);
+    double gradQin[58][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
     // De-serialise input data and fill static array
     for (int normal=0; normal<3; normal++)
@@ -919,13 +889,13 @@ void exagrype::ccz4::TestingOutput(double* terms, const double* const Q, const d
     }
 
     tarch::memset(terms, 0, 15*sizeof(double));
-    terms[0]  =   Ham;        //59
-    terms[1]  =   Mom[0];     //60
-    terms[2]  =   Mom[1];     //61
-    terms[3]  =   Mom[2];     //62
-    terms[4]  =   R;          //63
-    terms[5]  =   Kupdown;    //64
-    terms[6]  =   nablaZcontracted;   //65
+    terms[0]  =   Ham;        //58
+    terms[1]  =   Mom[0];     //59
+    terms[2]  =   Mom[1];     //60
+    terms[3]  =   Mom[2];     //61
+    terms[4]  =   R;          //62
+    terms[5]  =   Kupdown;    //63
+    terms[6]  =   nablaZcontracted;   //64
     //calculate the terms for Px
     const double alpha = std::fmax(1e-4,Q[16]);
     const double dBB[3][3][3] = {
@@ -942,23 +912,23 @@ void exagrype::ccz4::TestingOutput(double* terms, const double* const Q, const d
     const double BB[3][3] = {
         {Q[28], Q[29], Q[30]}, {Q[31], Q[32], Q[33]}, {Q[34], Q[35], Q[36]}
     };
-    double traceB = BB[0][0] + BB[1][1] + BB[2][2];
+    double TrBB = BB[0][0] + BB[1][1] + BB[2][2];
     const double AA[3] = {Q[25], Q[26], Q[27]};
 
-    for (int l = 0; l < 3; l++) terms[7]+=BB[0][l]*PP[l]; //66
-    terms[8] = (1.0/3.0)*alpha*traceK*PP[0]; //67
-    terms[9] = -(1.0/3.0)*traceB*PP[0]; //68
-    terms[10]= (1.0/3.0)*phi*alpha*dtraceK[0]; //69
-    terms[11]= (1.0/3.0)*phi*traceK*AA[0]; //70
-    for (int l = 0; l < 3; l++) terms[12] -= 1./6.*phi*(dBB[0][l][l] + dBB[l][0][l]);  //71
+    for (int l = 0; l < 3; l++) terms[7]+=BB[0][l]*PP[l]; //65
+    terms[8] = (1.0/3.0)*alpha*traceK*PP[0]; //66
+    terms[9] = -(1.0/3.0)*TrBB*PP[0]; //67
+    terms[10]= (1.0/3.0)*phi*alpha*dtraceK[0]; //68
+    terms[11]= (1.0/3.0)*phi*traceK*AA[0]; //69
+    for (int l = 0; l < 3; l++) terms[12] -= 1./6.*phi*(dBB[0][l][l] + dBB[l][0][l]);  //70
     double temp=0;
     for (int m = 0; m < 3; m++)
     for (int n = 0; n < 3; n++) temp += g_contr[m][n]*dAex[0][m][n];
-    terms[13] += 1./3.*alpha*temp; //72
+    terms[13] += 1./3.*alpha*temp; //71
     temp=0;
     for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) temp += dgup[0][i][j]*Aex[i][j];
-    terms[14] += 1./3.*alpha*temp;  //73
+    terms[14] += 1./3.*alpha*temp;  //72
 
     //constraints[4]  =   1.0/invdet-1.0;
     //constraints[5]  =   traceA;
@@ -968,15 +938,15 @@ void exagrype::ccz4::ThetaOutputNCP(double* NCPterm, const double* const Q, cons
     const double alpha = std::exp(std::fmax(-20., std::fmin(20.,Q[16])));
     //printf("alpha %f\n",alpha);
     const double alpha2 = alpha*alpha;
-    double fa  = 1.0;
-    double faa = 0.0;
-    fa  =  2./alpha;
-    faa = -fa/alpha;
-    const double traceK = Q[23];
+    double ga  = 1.0;
+    double gaa = 0.0;
+    ga  =  2./alpha;
+    gaa = -ga/alpha;
+    const double Kex = Q[23];
 
-    constexpr int nVar(59);
+    constexpr int nVar(58);
 
-    double gradQin[59][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    double gradQin[58][3] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
     for (int i=0; i<nVar; i++) {
       gradQin[i][normal] = gradQSerialised[i];
@@ -1001,13 +971,13 @@ void exagrype::ccz4::ThetaOutputNCP(double* NCPterm, const double* const Q, cons
     // NOTE Aex is symmetric
     double Aex[3][3] = { {Q[6], Q[7], Q[8]}, {Q[7], Q[9], Q[10]}, {Q[8], Q[10], Q[11]} };
 
-    double traceA = 0;
+    double trAex = 0;
     for (int i=0;i<3;i++)
-    for (int j=0;j<3;j++) traceA+=g_contr[i][j]*Aex[i][j];
-    //traceA *= 1./3;
+    for (int j=0;j<3;j++) trAex+=g_contr[i][j]*Aex[i][j];
+    //trAex *= 1./3;
 
     for (int i=0;i<3;i++)
-    for (int j=0;j<3;j++) Aex[i][j] -= 1./3. * traceA * g_cov[i][j];
+    for (int j=0;j<3;j++) Aex[i][j] -= 1./3. * trAex * g_cov[i][j];
 
     // Matrix multiplications Amix = matmul(g_contr, Aex) Aup  = matmul(g_contr, mytranspose(Amix))
     double Amix[3][3]={0,0,0,0,0,0,0,0,0};
@@ -1170,7 +1140,6 @@ void exagrype::ccz4::maxEigenvalue(
         const double* const Q,
         int                 normal,
         const double        CCZ4e,
-        const double        CCZ4ds,
         const double        CCZ4GLMc,
         const double        CCZ4GLMd,
         double*             maxEigenvalue
@@ -1180,7 +1149,7 @@ void exagrype::ccz4::maxEigenvalue(
   const double alpha = std::max({1.0, Q[16]}) * std::max({1.0, pow(Q[24],1.0/np)})/std::sqrt(qmin);
 
   constexpr double sqrtwo = 1.4142135623730951;
-  const double tempA = alpha * std::max({sqrtwo, CCZ4e, CCZ4ds, CCZ4GLMc/alpha, CCZ4GLMd/alpha});
+  const double tempA = alpha * std::max({sqrtwo, CCZ4e, CCZ4GLMc/alpha, CCZ4GLMd/alpha});
   const double tempB = Q[17+normal];//DOT_PRODUCT(Q(18:20),nv(:))
   maxEigenvalue[0] = std::max({1.0, std::abs(-tempA-tempB), std::abs(tempA-tempB)});
 }
@@ -1189,13 +1158,11 @@ void exagrype::ccz4::maxEigenvalue(
 template <bool SecondOrder>
 static void sourceImplementation(double* S, double* Saux, const double* const Q, const double* const Qaux,
       const int CCZ4LapseType,
-      const double CCZ4ds,
       const double CCZ4c,
       const double CCZ4e,
       const double CCZ4f,
-      const double CCZ4bs,
-      const double CCZ4sk,
-      const double CCZ4xi,
+      const int CCZ4b,
+      const int CCZ4s,
       const double CCZ4itau,
       const double CCZ4eta,
       const double CCZ4k1,
@@ -1203,25 +1170,26 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
       const double CCZ4k3
       )
 {
-    // Vacuum CCZ4: 59 entries, with symmetric tensor contractions.
-    constexpr double CCZ4advection = SecondOrder ? 0.0 : 1.0;
-    constexpr double CCZ4helper = SecondOrder ? 0.0 : 1.0;
+    // Vacuum CCZ4: 58 entries, with symmetric tensor contractions.
+    // 1 in the first-order formulation: enables the advection terms which are
+    // written in the secondary entries, and the trace constraint terms of Ghat.
+    constexpr int CCZ4FO = SecondOrder ? 0 : 1;
 
     // Preserve the upstream lapse floor and alpha (not log(alpha)) variables.
     const double alpha = std::fmax(1e-4,Q[16]);
 
     // Match CCZ4PlusScalarKernels: 0 = harmonic, 1 = 1+log,
     // all other values disable the slicing driver (advection is retained).
-    double fa  = 0.0;
-    double faa = 0.0;
+    double ga  = 0.0;
+    double gaa = 0.0;
     if (CCZ4LapseType == 0)
     {
-      fa = 1.0;
+      ga = 1.0;
     }
     else if (CCZ4LapseType == 1)
     {
-      fa  =  2./alpha;
-      faa = -fa/alpha;
+      ga  =  2./alpha;
+      gaa = -ga/alpha;
     }
 
     const double np = 1.0;
@@ -1329,13 +1297,11 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
 
     const double Ghat[3] = {Q[13], Q[14], Q[15]};
 
-    // Keep DeltaGamma unscaled. Apply ds only to terms inherited from Z_i,
-    // including its contributions to Riccihat, Theta and Gammahat.
     double DeltaGamma[3];
     for (int i = 0; i < 3; i++) DeltaGamma[i] = Ghat[i] - Gtilde[i];
 
     double Zup[3] = {0};
-    for (int i = 0; i < 3; i++) Zup[i] = 0.5 * CCZ4ds * phi2 * DeltaGamma[i];
+    for (int i = 0; i < 3; i++) Zup[i] = 0.5 * phi2 * DeltaGamma[i];
 
     const double PPdotPP = g_contr[0][0] * PP[0] * PP[0]
                          + g_contr[1][1] * PP[1] * PP[1]
@@ -1382,7 +1348,7 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
             }
         }
         Riccihat[i][j] = Riccihatfactor1 * PP[i] * PP[j]
-                       + temp1 - Vp * temp2 + CCZ4ds * Vp * temp3 + temp4
+                       + temp1 - Vp * temp2 + Vp * temp3 + temp4
                        + (Riccihatfactor2 * PPdotPP - Vp * PPdotGtilde) * g_cov[i][j];
         Riccihat[j][i] = Riccihat[i][j];
     }
@@ -1441,7 +1407,7 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
                               {Qaux[6], Qaux[7], Qaux[8]},
                               {Qaux[9], Qaux[10], Qaux[11]} };
 
-    double traceBB = BB[0][0] + BB[1][1] + BB[2][2];
+    double TrBB = BB[0][0] + BB[1][1] + BB[2][2];
     const double beta[3] = {Q[17], Q[18], Q[19]};
 
     double dtgamma[3][3];
@@ -1450,14 +1416,14 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
     {
         dtgamma[i][j] = -2.0 * alpha * Aex[i][j]
                       - CCZ4itau * (det - 1.0) * g_cov[i][j]
-                      - 2.0 / 3.0 * g_cov[i][j] * traceBB;
+                      - 2.0 / 3.0 * g_cov[i][j] * TrBB;
         double temp = 0;
         for (int k = 0; k < 3; k++)
         {
             dtgamma[i][j] += g_cov[k][i] * BB[j][k] + g_cov[k][j] * BB[i][k];
             temp += beta[k] * DD[k][i][j];
         }
-        dtgamma[i][j] += CCZ4advection * 2.0 * temp;
+        dtgamma[i][j] += CCZ4FO * 2.0 * temp;
     }
 
     const double Kex = Q[23];
@@ -1468,7 +1434,7 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
     {
         dtAex[i][j] = phi2 * SecondOrderTerms[i][j]
                     + alpha * Aex[i][j] * (Kex - 2. * Theta * CCZ4c)
-                    - 2./3. * Aex[i][j] * traceBB;
+                    - 2./3. * Aex[i][j] * TrBB;
         for (int k = 0; k < 3; k++)
         {
             dtAex[i][j] +=  -2. * alpha * Aex[i][k] * Amix[k][j]
@@ -1477,18 +1443,17 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
         }
     }
 
-    const double K0 = Qaux[33];
 
     // k1 is already lapse-rescaled: retain k1, not alpha*k1, in damping.
     double dtKex = -TrDDalpha
                  + alpha * (TrRiccihat + Kex * Kex - 2.0 * CCZ4c * Theta * Kex)
                  - 3.0 * CCZ4k1 * (1.0 + CCZ4k2) * Theta;
 
-    double dtchi = CCZ4advection * ((CCZ4Sp == 0) ? 1.0 : phi) * (beta[0]*PP[0]+beta[1]*PP[1]+beta[2]*PP[2])
-                 + np / 3. * (alpha * Kex - traceBB) * chi;
+    double dtchi = CCZ4FO * ((CCZ4Sp == 0) ? 1.0 : phi) * (beta[0]*PP[0]+beta[1]*PP[1]+beta[2]*PP[2])
+                 + np / 3. * (alpha * Kex - TrBB) * chi;
 
-    double dtalpha = - alpha * alpha * fa * (Kex - K0 - 2. * CCZ4c * Theta)
-                   + CCZ4advection * Va * (beta[0]*AA[0]+beta[1]*AA[1]+beta[2]*AA[2]);
+    double dtalpha = - alpha * alpha * ga * (Kex - 2. * CCZ4c * Theta)
+                   + CCZ4FO * Va * (beta[0]*AA[0]+beta[1]*AA[1]+beta[2]*AA[2]);
 
     const double AupAdown = Aex[0][0] * Aup[0][0]
                           + Aex[1][1] * Aup[1][1]
@@ -1534,84 +1499,32 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
                                    + Christoffel_tilde[0][2][i] * Aup[0][2]
                                    + Christoffel_tilde[1][2][i] * Aup[1][2] );
 
-        dtGhat[i] = 2./3. * traceBB * ( Gtilde[i] + CCZ4k3 * CCZ4ds * DeltaGamma[i] )
-                  - ( 2./3. * alpha * Kex + CCZ4k1 ) * CCZ4ds * DeltaGamma[i]
+        dtGhat[i] = 2./3. * TrBB * ( Gtilde[i] + CCZ4k3 * DeltaGamma[i] )
+                  - ( 2./3. * alpha * Kex + CCZ4k1 ) * DeltaGamma[i]
                   - temp1
                   - 2. * Va * Theta * temp2
-                  - CCZ4k3 * CCZ4ds * temp3
+                  - CCZ4k3 * temp3
                   - 2. * Va * temp4
                   - 6. * alpha * Vp * temp5
                   + 2. * alpha * temp6
-                  - 2. * CCZ4helper * CCZ4sk * temp7;
+                  - 2. * CCZ4FO * CCZ4s * temp7;
     }
 
     const double myb[3] = {Q[20], Q[21], Q[22]};
 
     double dtmyb[3];
-    for (int i = 0; i < 3; i++) dtmyb[i] = CCZ4sk * ( CCZ4xi * dtGhat[i] - CCZ4eta * myb[i] );
+    for (int i = 0; i < 3; i++) dtmyb[i] = CCZ4s * ( dtGhat[i] - CCZ4eta * myb[i] );
 
-    // bs controls shift advection; sk controls the shift driver.
+    // CCZ4s controls the shift driver; CCZ4b its advection terms (Kernels.h).
     // SO primary-variable advection is handled outside this source term.
     double dtbeta[3];
 
     for (int i = 0; i < 3; i++)
     {
         dtbeta[i] = CCZ4f * myb[i]
-                   + CCZ4bs * CCZ4advection * (beta[0]*BB[0][i]+beta[1]*BB[1][i]+beta[2]*BB[2][i]);
+                   + CCZ4b * CCZ4FO * (beta[0]*BB[0][i]+beta[1]*BB[1][i]+beta[2]*BB[2][i]);
 
-        dtbeta[i] *= CCZ4sk;
-    }
-
-    double dtAA[3];
-    double iVa = (CCZ4Sa == 0) ? alpha : 1.0;
-
-    for (int i = 0; i < 3; i++)
-    {
-
-      dtAA[i] = - alpha * AA[i] * ( (2. - CCZ4Sa) * fa + alpha * faa ) * ( Kex - K0 - 2. * CCZ4c * Theta )
-             + CCZ4sk * iVa * fa * II[i]
-             + BB[i][0]*AA[0]+BB[i][1]*AA[1]+BB[i][2]*AA[2];
-    }
-
-    double dtBB[3][3];
-
-    for (int j = 0; j < 3; j++)
-    for (int i = 0; i < 3; i++)
-    {
-        double temp = 0.0;
-        for (int k = 0; k < 3; k++)
-            temp += BB[j][k] * BB[k][i];
-        dtBB[j][i] = CCZ4sk * temp;
-    }
-
-    double dtDD[3][3][3];
-
-    for (int k = 0; k < 3; k++)
-    for (int i = 0; i < 3; i++)
-    for (int j = i; j < 3; j++)
-    {
-        double temp = 0;
-        for (int l = 0; l < 3; l++)
-        {
-            temp += DD[l][i][j] * BB[k][l]
-                  + DD[k][l][i] * BB[j][l]
-                  + DD[k][l][j] * BB[i][l];
-        }
-        dtDD[k][i][j] = - Va * AA[k] * Aex[i][j]
-                      - 2./3. * traceBB * DD[k][i][j]
-                      - 1./3. * g_cov[i][j] * II[k]
-                      + temp;
-
-    }
-
-    double dtPP[3];
-    for (int i = 0; i < 3; i++)
-    {
-        double temp = 0;
-        for (int j = 0; j < 3; j++) temp += BB[i][j] * PP[j];
-        dtPP[i] = 1./3. / Vp * ( Va * Kex * AA[i] - CCZ4helper * CCZ4sk * II[i] )
-                + (1 - CCZ4Sp) * np/3. * (alpha * Kex - traceBB) * PP[i]
-                + temp;
+        dtbeta[i] *= CCZ4s;
     }
 
     S[0]  = dtgamma[0][0];
@@ -1638,6 +1551,59 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
     // The secondary entries. In the second-order formulation, they are not
     // evolved, and the caller may omit the pointer.
     if constexpr (!SecondOrder) {
+        double dtAA[3];
+        double iVa = (CCZ4Sa == 0) ? alpha : 1.0;
+
+        for (int i = 0; i < 3; i++)
+        {
+
+          dtAA[i] = - alpha * AA[i] * ( (2. - CCZ4Sa) * ga + alpha * gaa ) * ( Kex - 2. * CCZ4c * Theta )
+                 + CCZ4s * iVa * ga * II[i]
+                 + BB[i][0]*AA[0]+BB[i][1]*AA[1]+BB[i][2]*AA[2];
+        }
+
+        double dtBB[3][3];
+
+        for (int j = 0; j < 3; j++)
+        for (int i = 0; i < 3; i++)
+        {
+            double temp = 0.0;
+            for (int k = 0; k < 3; k++)
+                temp += BB[j][k] * BB[k][i];
+            // Derivative of the advection term beta^k B_k^i of the shift equation
+            dtBB[j][i] = CCZ4s * CCZ4b * temp;
+        }
+
+        double dtDD[3][3][3];
+
+        for (int k = 0; k < 3; k++)
+        for (int i = 0; i < 3; i++)
+        for (int j = i; j < 3; j++)
+        {
+            double temp = 0;
+            for (int l = 0; l < 3; l++)
+            {
+                temp += DD[l][i][j] * BB[k][l]
+                      + DD[k][l][i] * BB[j][l]
+                      + DD[k][l][j] * BB[i][l];
+            }
+            dtDD[k][i][j] = - Va * AA[k] * Aex[i][j]
+                          - 2./3. * TrBB * DD[k][i][j]
+                          - 1./3. * g_cov[i][j] * II[k]
+                          + temp;
+
+        }
+
+        double dtPP[3];
+        for (int i = 0; i < 3; i++)
+        {
+            double temp = 0;
+            for (int j = 0; j < 3; j++) temp += BB[i][j] * PP[j];
+            dtPP[i] = 1./3. / Vp * ( Va * Kex * AA[i] - CCZ4s * II[i] )
+                    + (1 - CCZ4Sp) * np/3. * (alpha * Kex - TrBB) * PP[i]
+                    + temp;
+        }
+
         for (int i = 0; i < 3; i++) Saux[i] = dtAA[i];
         Saux[3] = dtBB[0][0];
         Saux[4] = dtBB[0][1];
@@ -1667,55 +1633,51 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
         Saux[28] = dtDD[2][1][2];
         Saux[29] = dtDD[2][2][2];
         for (int i = 0; i < 3; i++) Saux[30+i] = dtPP[i];
-        Saux[33] = 0;
     }
 }
 
-template <bool SecondOrder>
+template <bool SecondOrder, bool Advection>
 static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
       const int CCZ4LapseType,
-      const double CCZ4ds,
       const double CCZ4c,
       const double CCZ4e,
       const double CCZ4f,
-      const double CCZ4bs,
-      const double CCZ4sk,
-      const double CCZ4xi,
+      const int CCZ4b,
+      const int CCZ4s,
       const double CCZ4mu
       )
 {
-    // Kept in the public interface; upstream has no ds-dependent NCP term.
-    (void)CCZ4ds;
-    constexpr double CCZ4advection = SecondOrder ? 0.0 : 1.0;
-    constexpr double CCZ4helper = SecondOrder ? 0.0 : 1.0;
+    // 1 in the first-order formulation: enables the advection terms which are
+    // written in the secondary entries, and the trace constraint terms of Ghat.
+    constexpr int CCZ4FO = SecondOrder ? 0 : 1;
 
-    // Advection is supplied by the solver separately; avoid double counting.
-    const double advec = 0.0;
-    const double advec_aux = 0.0;
+    // The advection terms beta^k d_k Q are compiled only if Advection is set.
+    // The kernels below do not set it: the numerical scheme adds these terms
+    // with lopsided stencils, and they must not be counted twice.
 
     const double alpha = std::fmax(1e-4,Q[16]);
 
     const double alpha2 = alpha * alpha;
     // Same slicing-driver mapping as source() and CCZ4PlusScalarKernels.
-    double fa  = 0.0;
+    double ga  = 0.0;
     if (CCZ4LapseType == 0)
     {
-      fa = 1.0;
+      ga = 1.0;
     }
     else if (CCZ4LapseType == 1)
     {
-      fa  =  2./alpha;
+      ga  =  2./alpha;
     }
 
     const double np = 1.0;
     const int CCZ4Sa = 0;
     const int CCZ4Sp = 0;
 
-    double gradQin[59][3] = {0};
+    double gradQin[58][3] = {0};
 
     // Only the derivative along the normal is given.
     for (int i = 0; i < 25; i++) gradQin[i][normal]    = gradQ[i];
-    for (int i = 0; i < 34; i++) gradQin[25+i][normal] = gradQaux[i];
+    for (int i = 0; i < 33; i++) gradQin[25+i][normal] = gradQaux[i];
 
     const double g_cov[3][3] = { {Q[0], Q[1], Q[2]},
                                  {Q[1], Q[3], Q[4]},
@@ -1863,25 +1825,30 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
 
     double dtAex[3][3];
     for (int i = 0; i < 3; i++)
-    for (int j = i; j < 3; j++)  dtAex[i][j] = phi2 * SecondOrderTerms[i][j]
-                                              + advec * (beta[0]*dAex[0][i][j]+beta[1]*dAex[1][i][j]+beta[2]*dAex[2][i][j]);
+    for (int j = i; j < 3; j++)
+    {
+        dtAex[i][j] = phi2 * SecondOrderTerms[i][j];
+        if constexpr (Advection) dtAex[i][j] += beta[0]*dAex[0][i][j]+beta[1]*dAex[1][i][j]+beta[2]*dAex[2][i][j];
+    }
 
     const double dKex[3] = {gradQin[23][0], gradQin[23][1], gradQin[23][2]};
 
-    double dtKex = - TrDDalpha + alpha * TrRiccihat + advec * (beta[0]*dKex[0]+beta[1]*dKex[1]+beta[2]*dKex[2]);
+    double dtKex = - TrDDalpha + alpha * TrRiccihat;
+    if constexpr (Advection) dtKex += beta[0]*dKex[0]+beta[1]*dKex[1]+beta[2]*dKex[2];
 
     const double dTheta[3] = {gradQin[12][0],gradQin[12][1],gradQin[12][2]};
-    double dtTheta = 0.5 * alpha * CCZ4e * CCZ4e * TrRiccihat + advec * (beta[0]*dTheta[0]+beta[1]*dTheta[1]+beta[2]*dTheta[2]);
+    double dtTheta = 0.5 * alpha * CCZ4e * CCZ4e * TrRiccihat;
+    if constexpr (Advection) dtTheta += beta[0]*dTheta[0]+beta[1]*dTheta[1]+beta[2]*dTheta[2];
 
     const double dBB[3][3][3] = {
         {
-            {CCZ4sk*gradQin[28][0],CCZ4sk*gradQin[29][0],CCZ4sk*gradQin[30][0]}, {CCZ4sk*gradQin[31][0],CCZ4sk*gradQin[32][0],CCZ4sk*gradQin[33][0]}, {CCZ4sk*gradQin[34][0],CCZ4sk*gradQin[35][0],CCZ4sk*gradQin[36][0]}
+            {gradQin[28][0],gradQin[29][0],gradQin[30][0]}, {gradQin[31][0],gradQin[32][0],gradQin[33][0]}, {gradQin[34][0],gradQin[35][0],gradQin[36][0]}
         },
         {
-            {CCZ4sk*gradQin[28][1],CCZ4sk*gradQin[29][1],CCZ4sk*gradQin[30][1]}, {CCZ4sk*gradQin[31][1],CCZ4sk*gradQin[32][1],CCZ4sk*gradQin[33][1]}, {CCZ4sk*gradQin[34][1],CCZ4sk*gradQin[35][1],CCZ4sk*gradQin[36][1]}
+            {gradQin[28][1],gradQin[29][1],gradQin[30][1]}, {gradQin[31][1],gradQin[32][1],gradQin[33][1]}, {gradQin[34][1],gradQin[35][1],gradQin[36][1]}
         },
         {
-            {CCZ4sk*gradQin[28][2],CCZ4sk*gradQin[29][2],CCZ4sk*gradQin[30][2]}, {CCZ4sk*gradQin[31][2],CCZ4sk*gradQin[32][2],CCZ4sk*gradQin[33][2]}, {CCZ4sk*gradQin[34][2],CCZ4sk*gradQin[35][2],CCZ4sk*gradQin[36][2]}
+            {gradQin[28][2],gradQin[29][2],gradQin[30][2]}, {gradQin[31][2],gradQin[32][2],gradQin[33][2]}, {gradQin[34][2],gradQin[35][2],gradQin[36][2]}
         }
     };
 
@@ -1902,79 +1869,35 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
         double temp1=0, temp2=0, temp3=0;
         for (int j = 0; j < 3; j++)
         {
-            temp1 += g_contr[i][j] * ( alpha * (dTheta[j] - 2./3. * dKex[j]) + CCZ4helper * CCZ4sk * JJ[j] );
+            temp1 += g_contr[i][j] * ( alpha * (dTheta[j] - 2./3. * dKex[j]) + CCZ4FO * CCZ4s * JJ[j] );
             for (int k = 0; k < 3; k++)
             {
                 temp2 += g_contr[j][k] * dBB[j][k][i];
                 temp3 += g_contr[i][j] * ( dBB[j][k][k] + dBB[k][j][k] );
             }
         }
-        dtGhat[i] = advec * (beta[0]*dGhat[0][i]+beta[1]*dGhat[1][i]+beta[2]*dGhat[2][i])
-                  + 2. * temp1 + temp2 + 1./6. * temp3;
-
+        dtGhat[i] = 2. * temp1 + CCZ4s * temp2 + CCZ4s * 1./6. * temp3;
+        if constexpr (Advection) dtGhat[i] += beta[0]*dGhat[0][i]+beta[1]*dGhat[1][i]+beta[2]*dGhat[2][i];
     }
 
     double dtmyb[3];
     for (int i = 0; i < 3; i++)
     {
-        dtmyb[i] = CCZ4xi * dtGhat[i]
-                 + CCZ4bs * advec *(beta[0]*gradQin[20+i][0]+beta[1]*gradQin[20+i][1]+beta[2]*gradQin[20+i][2] - beta[0]*gradQin[13+i][0]-beta[1]*gradQin[13+i][1]-beta[2]*gradQin[13+i][2]);
-
-        dtmyb[i] *= CCZ4sk;
-    }
-
-    double dtAA[3] = {0};
-    double iVa = (CCZ4Sa == 0) ? alpha : 1.0;
-
-    for (int i = 0; i < 3; i++)
-    {
-        dtAA[i] = -alpha * iVa * fa * ( dKex[i] - 2. * CCZ4c * dTheta[i] )
-                - CCZ4sk * iVa * fa * JJ[i] * CCZ4helper
-                + advec_aux * (beta[0]*dAA[0][i] + beta[1]*dAA[1][i] + beta[2]*dAA[2][i]);
-    }
-
-    double dtBB[3][3] = {{CCZ4f*gradQin[20][0],CCZ4f*gradQin[21][0],CCZ4f*gradQin[22][0]},
-                         {CCZ4f*gradQin[20][1],CCZ4f*gradQin[21][1],CCZ4f*gradQin[22][1]},
-                         {CCZ4f*gradQin[20][2],CCZ4f*gradQin[21][2],CCZ4f*gradQin[22][2]}};
-    for (int j = 0; j < 3; j++)
-    for (int i = 0; i < 3; i++)
-    {
-        double temp1=0, temp2=0;
-        for (int k = 0; k < 3; k++)
+        // d_t b = s ( d_t Ghat - eta b + CCZ4b (beta^k d_k b - beta^k d_k Ghat) ),
+        // where d_t Ghat comprises the advection of Ghat. Without Advection,
+        // dtGhat lacks this advection, and the numerical scheme advects b
+        // if CCZ4b is set. Hence, only the non-shifting shift is left to do.
+        dtmyb[i] = dtGhat[i];
+        if constexpr (Advection)
         {
-            temp1 += g_contr[i][k] * (dPP[j][k] - dPP[k][j]);
-            for (int l = 0; l < 3; l++)
-            for (int m = 0; m < 3; m++) temp2 += g_contr[i][k] * g_contr[l][m] * (dDD[j][m][k][l] - dDD[m][j][k][l]);
+            dtmyb[i] += CCZ4b * ( beta[0]*gradQin[20+i][0]+beta[1]*gradQin[20+i][1]+beta[2]*gradQin[20+i][2]
+                                 - beta[0]*gradQin[13+i][0]-beta[1]*gradQin[13+i][1]-beta[2]*gradQin[13+i][2] );
         }
-        dtBB[j][i] += CCZ4bs * advec_aux * (beta[0]*dBB[0][j][i]+beta[1]*dBB[1][j][i]+beta[2]*dBB[2][j][i])
-                    + CCZ4helper * CCZ4mu * alpha2 * (Vp * temp1 - temp2);
-        dtBB[j][i] *= CCZ4sk;
-    }
-
-    double dtDD[3][3][3];
-    for (int k = 0; k < 3; k++)
-    for (int i = 0; i < 3; i++)
-    for (int j = i; j < 3; j++)
-    {
-        double temp1=0, temp2=0;
-        for (int l = 0; l < 3; l++)
+        else if (CCZ4b == 0)
         {
-            temp1 += g_cov[i][j]* (dBB[k][l][l] + dBB[l][k][l]);
-            temp2 += g_cov[l][i]* (dBB[k][j][l] + dBB[j][k][l]) + g_cov[l][j] * (dBB[k][i][l]+dBB[i][k][l]);
+            dtmyb[i] += beta[0]*dGhat[0][i]+beta[1]*dGhat[1][i]+beta[2]*dGhat[2][i];
         }
-        dtDD[k][i][j] = -alpha * dAex[k][i][j] + 1./3. * CCZ4helper * g_cov[i][j] * JJ[k]
-                      + advec_aux * (beta[0]*dDD[0][k][i][j]+beta[1]*dDD[1][k][i][j]+beta[2]*dDD[2][k][i][j])
-                      - 1./6. * temp1 + 1./4. * temp2;
-    }
-
-    double dtPP[3];
-    for (int i = 0; i < 3; i++)
-    {
-        double temp=0;
-        for (int j = 0; j < 3; j++) temp += dBB[i][j][j] + dBB[j][i][j];
-        dtPP[i] = advec_aux * (beta[0]*dPP[0][i]+beta[1]*dPP[1][i]+beta[2]*dPP[2][i])
-                + 1./3./Vp * (alpha * dKex[i] + CCZ4helper * CCZ4sk * JJ[i])
-                - 1./6./Vp * temp;
+        dtmyb[i] *= CCZ4s;
     }
 
     // Return B(Q) grad(Q), the negative of the derivative RHS computed above.
@@ -2005,6 +1928,60 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
     // The secondary entries. In the second-order formulation, they are not
     // evolved, and the caller may omit the pointer.
     if constexpr (!SecondOrder) {
+        double dtAA[3] = {0};
+        double iVa = (CCZ4Sa == 0) ? alpha : 1.0;
+
+        for (int i = 0; i < 3; i++)
+        {
+            dtAA[i] = -alpha * iVa * ga * ( dKex[i] - 2. * CCZ4c * dTheta[i] )
+                    - CCZ4s * iVa * ga * JJ[i];
+            if constexpr (Advection) dtAA[i] += beta[0]*dAA[0][i] + beta[1]*dAA[1][i] + beta[2]*dAA[2][i];
+        }
+
+        double dtBB[3][3] = {{CCZ4f*gradQin[20][0],CCZ4f*gradQin[21][0],CCZ4f*gradQin[22][0]},
+                             {CCZ4f*gradQin[20][1],CCZ4f*gradQin[21][1],CCZ4f*gradQin[22][1]},
+                             {CCZ4f*gradQin[20][2],CCZ4f*gradQin[21][2],CCZ4f*gradQin[22][2]}};
+        for (int j = 0; j < 3; j++)
+        for (int i = 0; i < 3; i++)
+        {
+            double temp1=0, temp2=0;
+            for (int k = 0; k < 3; k++)
+            {
+                temp1 += g_contr[i][k] * (dPP[j][k] - dPP[k][j]);
+                for (int l = 0; l < 3; l++)
+                for (int m = 0; m < 3; m++) temp2 += g_contr[i][k] * g_contr[l][m] * (dDD[j][m][k][l] - dDD[m][j][k][l]);
+            }
+            dtBB[j][i] += CCZ4mu * alpha2 * (Vp * temp1 - temp2);
+            if constexpr (Advection) dtBB[j][i] += CCZ4b * (beta[0]*dBB[0][j][i]+beta[1]*dBB[1][j][i]+beta[2]*dBB[2][j][i]);
+            dtBB[j][i] *= CCZ4s;
+        }
+
+        double dtDD[3][3][3];
+        for (int k = 0; k < 3; k++)
+        for (int i = 0; i < 3; i++)
+        for (int j = i; j < 3; j++)
+        {
+            double temp1=0, temp2=0;
+            for (int l = 0; l < 3; l++)
+            {
+                temp1 += g_cov[i][j]* (dBB[k][l][l] + dBB[l][k][l]);
+                temp2 += g_cov[l][i]* (dBB[k][j][l] + dBB[j][k][l]) + g_cov[l][j] * (dBB[k][i][l]+dBB[i][k][l]);
+            }
+            dtDD[k][i][j] = -alpha * dAex[k][i][j] + 1./3. * g_cov[i][j] * JJ[k]
+                          - CCZ4s * 1./6. * temp1 + CCZ4s * 1./4. * temp2;
+            if constexpr (Advection) dtDD[k][i][j] += beta[0]*dDD[0][k][i][j]+beta[1]*dDD[1][k][i][j]+beta[2]*dDD[2][k][i][j];
+        }
+
+        double dtPP[3];
+        for (int i = 0; i < 3; i++)
+        {
+            double temp=0;
+            for (int j = 0; j < 3; j++) temp += dBB[i][j][j] + dBB[j][i][j];
+            dtPP[i] = 1./3./Vp * (alpha * dKex[i] + CCZ4s * JJ[i])
+                    - CCZ4s * 1./6./Vp * temp;
+            if constexpr (Advection) dtPP[i] += beta[0]*dPP[0][i]+beta[1]*dPP[1][i]+beta[2]*dPP[2][i];
+        }
+
         for (int i = 0; i < 3; i++) BgradQaux[i] = -dtAA[i];
         BgradQaux[3] = -dtBB[0][0];
         BgradQaux[4] = -dtBB[0][1];
@@ -2034,34 +2011,33 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
         BgradQaux[28] = -dtDD[2][1][2];
         BgradQaux[29] = -dtDD[2][2][2];
         for (int i = 0; i < 3; i++) BgradQaux[30+i] = -dtPP[i];
-        BgradQaux[33] = 0;
     }
 }
 
 
 void exagrype::ccz4::ncpFirstOrder(double* BgradQ, double* BgradQaux, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
-  const int CCZ4LapseType, const double CCZ4ds, const double CCZ4c, const double CCZ4e, const double CCZ4f, const double CCZ4bs, const double CCZ4sk, const double CCZ4xi, const double CCZ4mu
+  const int CCZ4LapseType, const double CCZ4c, const double CCZ4e, const double CCZ4f, const int CCZ4b, const int CCZ4s, const double CCZ4mu
 ) {
-  ncpImplementation<false>(BgradQ, BgradQaux, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu);
+  ncpImplementation<false, false>(BgradQ, BgradQaux, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
 }
 
 
 void exagrype::ccz4::ncpSecondOrder(double* BgradQ, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
-  const int CCZ4LapseType, const double CCZ4ds, const double CCZ4c, const double CCZ4e, const double CCZ4f, const double CCZ4bs, const double CCZ4sk, const double CCZ4xi, const double CCZ4mu
+  const int CCZ4LapseType, const double CCZ4c, const double CCZ4e, const double CCZ4f, const int CCZ4b, const int CCZ4s, const double CCZ4mu
 ) {
-  ncpImplementation<true>(BgradQ, nullptr, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu);
+  ncpImplementation<true, false>(BgradQ, nullptr, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
 }
 
 
 void exagrype::ccz4::sourceFirstOrder(double* S, double* Saux, const double* const Q, const double* const Qaux,
-  const int CCZ4LapseType, const double CCZ4ds, const double CCZ4c, const double CCZ4e, const double CCZ4f, const double CCZ4bs, const double CCZ4sk, const double CCZ4xi, const double CCZ4itau, const double CCZ4eta, const double CCZ4k1, const double CCZ4k2, const double CCZ4k3
+  const int CCZ4LapseType, const double CCZ4c, const double CCZ4e, const double CCZ4f, const int CCZ4b, const int CCZ4s, const double CCZ4itau, const double CCZ4eta, const double CCZ4k1, const double CCZ4k2, const double CCZ4k3
 ) {
-  sourceImplementation<false>(S, Saux, Q, Qaux, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
+  sourceImplementation<false>(S, Saux, Q, Qaux, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
 }
 
 
 void exagrype::ccz4::sourceSecondOrder(double* S, const double* const Q, const double* const Qaux,
-  const int CCZ4LapseType, const double CCZ4ds, const double CCZ4c, const double CCZ4e, const double CCZ4f, const double CCZ4bs, const double CCZ4sk, const double CCZ4xi, const double CCZ4itau, const double CCZ4eta, const double CCZ4k1, const double CCZ4k2, const double CCZ4k3
+  const int CCZ4LapseType, const double CCZ4c, const double CCZ4e, const double CCZ4f, const int CCZ4b, const int CCZ4s, const double CCZ4itau, const double CCZ4eta, const double CCZ4k1, const double CCZ4k2, const double CCZ4k3
 ) {
-  sourceImplementation<true>(S, nullptr, Q, Qaux, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
+  sourceImplementation<true>(S, nullptr, Q, Qaux, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3);
 }

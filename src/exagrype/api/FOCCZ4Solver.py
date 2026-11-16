@@ -14,7 +14,7 @@ class FOCCZ4Solver(CCZ4SolverBase):
 
     Solver for the Einstein equations in the first-order CCZ4 formulation
 
-    The solver is a plain exahype2.api.Solver with the 59 CCZ4 unknowns and
+    The solver is a plain exahype2.api.Solver with the 58 CCZ4 unknowns and
     the PDE terms of CCZ4 pre-registered. All terms delegate to the
     ExaGRyPE library (configure Peano with --enable-exagrype):
 
@@ -22,7 +22,7 @@ class FOCCZ4Solver(CCZ4SolverBase):
     - the volumetric source to exagrype::ccz4::sourceFirstOrder(),
     - the maximum eigenvalue to exagrype::ccz4::maxEigenvalue(),
     - the initial condition to one of the routines from
-      exagrype::initialvalues, @see exagrype.api.initialvalues.
+      exagrype::initialvalues (@ref exagrype.api.initialvalues).
 
     CCZ4 has no conservative flux. You still have to assign a numerical
     scheme, a grid construction and (optionally) a plotter, exactly as for
@@ -45,7 +45,7 @@ class FOCCZ4Solver(CCZ4SolverBase):
     - exagrype::ccz4::ncpFirstOrder() omits the advection terms
       @f$ \\beta^k \\partial _k Q @f$ of all unknowns besides the metric,
       the lapse, the shift and phi (whose advection is part of the
-      algebraic source) and K0. It expects the numerical scheme to add them
+      algebraic source). It expects the numerical scheme to add them
       with lopsided stencils. The fourth-order Finite Differences do so if
       you select the kernel CentralDifferencesWithLopsidedAdvection with
       ADVECTION_VELOCITY and lopsided_advection_quantities(). The Finite
@@ -66,7 +66,7 @@ class FOCCZ4Solver(CCZ4SolverBase):
         "lapse": 1,
         "shift": 3,
         "b": 3,
-        "traceK": 1,
+        "Kex": 1,
         "phi": 1,
         "dLapse": 3,
         "dxShift": 3,
@@ -76,13 +76,14 @@ class FOCCZ4Solver(CCZ4SolverBase):
         "dyG": 6,
         "dzG": 6,
         "P": 3,
-        "K0": 1,
     }
     """!
 
-    The unknowns of the first-order CCZ4 formulation in the order the
-    kernels in exagrype::ccz4 expect them. The names match the legacy
-    ExaGRyPE solvers.
+    The 58 unknowns of the first-order CCZ4 formulation in the order the
+    kernels in exagrype::ccz4 expect them: 25 primary entries (up to phi)
+    followed by the 33 first derivatives. Kex is the trace of the extrinsic
+    curvature, whereas K holds the six entries of the trace-free conformal
+    extrinsic curvature.
 
     """
 
@@ -97,7 +98,7 @@ class FOCCZ4Solver(CCZ4SolverBase):
         Create a first-order CCZ4 solver
 
         @param name: str
-          Name of the solver, @see exahype2.api.Solver.
+          Name of the solver (@ref exahype2.api.Solver).
 
         @param parameters: Dict[str, Union[int, float]]
           CCZ4 parameters that differ from DefaultParameters, e.g.
@@ -113,13 +114,13 @@ class FOCCZ4Solver(CCZ4SolverBase):
         super().__init__(name, self.Unknowns, parameters, initial_condition)
 
     def _ncp_implementation(self) -> str:
-        """! The secondary entries follow the 25 primary ones """
+        """! The secondary entries follow the 25 primary ones"""
         return """
   ::exagrype::ccz4::ncpFirstOrder(
     BTimesDeltaQ, BTimesDeltaQ + 25,
     Q, Q + 25,
     deltaQ, deltaQ + 25,
-    normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu
+    normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu
   );
 """
 
@@ -129,6 +130,6 @@ class FOCCZ4Solver(CCZ4SolverBase):
   ::exagrype::ccz4::sourceFirstOrder(
     S, S + 25,
     Q, Q + 25,
-    CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3
+    CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3
   );
 """

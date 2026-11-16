@@ -13,6 +13,7 @@ ExaGRyPESources = \
   ccz4/Kernels.cpp \
   ccz4/SecondOrderAuxiliaryVariablesReconstruction.cpp \
   ccz4/tests/FlatSpacetimeTest.cpp \
+  ccz4/tests/GammaDriverTest.cpp \
   euler/EulerKernels.cpp \
   euler/initialvalues/InitialValues.cpp \
   initialvalues/ApplyTwoPunctures.cpp \

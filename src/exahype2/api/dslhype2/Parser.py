@@ -56,9 +56,12 @@ class Parser:
         source = self._parse_expression(constructor.args[1])
         if not (isinstance(source, AST.Element) or isinstance(source, AST.ExternalStructField) or isinstance(source, AST.FunctionCall)):
             raise Exception(f"DataBlock source is not a supported: {type(source)}")
-        flatten_array_representation = False
-        #if isinstance(source, AST.ExternalStructField):
-        #    flatten_array_representation = True
+        
+        if isinstance(source, AST.ExternalStructField):
+            flatten_array_representation = source.struct_type.fields[source.field_name].flatten
+        else:
+            flatten_array_representation = AST.TArray.flatten_temporaries
+
         return AST.DataBlock(iteration_range, source, flatten=flatten_array_representation)
 
     def _parse_evaluation(self, call: ast.Call) -> AST.FunctionCall:
@@ -66,7 +69,7 @@ class Parser:
         assert(isinstance(function_name, AST.External))
         function_name = AST.Name(function_name.reference)
         if function_name not in self.function_map:
-            raise Exception("Function name is not recognised")
+            raise Exception(f"Function name is not recognised: {function_name.id}")
         arguments = [self._parse_expression(argument) for argument in call.args[1:]]
         return AST.FunctionCall(function_name, arguments, self.function_map[function_name], stateless = self.stateless)
 
@@ -107,7 +110,7 @@ class Parser:
 
         raise Exception(f"Function name is not supported: {call.func.id}")
 
-    def parse_unary_operation(self, operation: ast.UnaryOp) -> AST.ElementUnaryOperation | AST.Element:
+    def parse_unary_operation(self, operation: ast.UnaryOp) -> AST.ElementUnaryOperation | AST.DataBlockUnaryOperation | AST.Element:
         if isinstance(operation.op, ast.USub):
             operand = self._parse_expression(operation.operand)
             if isinstance(operand.get_type(), AST.TElement):
@@ -116,10 +119,10 @@ class Parser:
                     return AST.Integer(-operand.value)
                 return AST.ElementUnaryOperation(AST.Operator.SUBTRACTION, operand)
             else:
-                raise Exception("Unary operations are only supported for elements")
+                return AST.DataBlockUnaryOperation(AST.Operator.SUBTRACTION, operand)
         raise Exception("Only minus is supported among unary operations")
 
-    def parse_binary_operation(self, operation: ast.BinOp) -> AST.ElementBinaryOperation | AST.Element:
+    def parse_binary_operation(self, operation: ast.BinOp) -> AST.ElementBinaryOperation | AST.DataBlockBinaryOperation | AST.Element:
         lhs = self._parse_expression(operation.left)
         rhs = self._parse_expression(operation.right)
 
@@ -275,7 +278,7 @@ class Parser:
         test = if_statement.test.id
 
         for pde_term in self.enabled_pde_terms:
-            if type(pde_term).__name__ == test:
+            if pde_term.NAME == test or type(pde_term).__name__ == test:
                 pde_term_is_in_use = True
 
         statements: list[AST.Statement] = []
@@ -325,6 +328,7 @@ class Parser:
         self.external_variables = external_variables
         self.function_map = function_map
         self.stateless = stateless
+        
         AST.Variable.symbol_map = {}
         AST.ArrayAllocation.array_allocations = []
         

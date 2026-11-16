@@ -26,7 +26,7 @@ class Euler(exahype2.api.Solver):
     condition, all of them stateless. The source term is zero.
     Flux, source and eigenvalue see the CCZ4 fields, even though they ignore
     them at the moment. The solver always holds a
-    set of auxiliary variables with the 59 entries of first-order CCZ4,
+    set of auxiliary variables with the 58 entries of first-order CCZ4,
     which the user attaches (add_auxiliary_variables()); generating the
     solver without it fails. By default, the
     initial condition is a density wave which the fluid advects with

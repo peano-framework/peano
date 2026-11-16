@@ -21,7 +21,7 @@ def _project(tmp_path):
 
 
 def _realise_pair(pair, tmp_path):
-    """! Let the host realise the pair and return the time step graph of the project """
+    """! Let the host realise the pair and return the time step graph of the project"""
     exahype2_project, peano_project = _project(tmp_path)
     graphs = [peano4.api.taskgraph.Graph() for _ in range(4)]
     pair.generate_solver_realisation(exahype2_project, peano_project, *graphs)
@@ -29,7 +29,7 @@ def _realise_pair(pair, tmp_path):
 
 
 def _configure(pair, enforce=None):
-    """! Configure the CCZ4 solver of the pair with FD4 and lopsided advection """
+    """! Configure the CCZ4 solver of the pair with FD4 and lopsided advection"""
     solver = pair.ccz4
     Kernel = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel
     # Lopsided advection widens the halo to the three that the reconstruction needs
@@ -49,18 +49,18 @@ def _configure(pair, enforce=None):
 
 
 def _realise(pair, tmp_path, enforce=None):
-    """! Configure the pair with FD4, realise both solvers and return the time step graph """
+    """! Configure the pair with FD4, realise both solvers and return the time step graph"""
     _configure(pair, enforce)
     return _realise_pair(pair, tmp_path)
 
 
-def test_so_solver_splits_the_59_entries_into_25_unknowns_and_34_derivatives():
+def test_so_solver_splits_the_58_entries_into_25_unknowns_and_33_derivatives():
     first_order = exagrype.api.FOCCZ4Solver("FO")
     second_order = exagrype.api.FOSOCCZ4Solver("SO")
-    assert first_order.unknowns == 59
+    assert first_order.unknowns == 58
     assert second_order.unknowns == 25
-    assert second_order.number_of_auxiliary_variables == 34
-    assert second_order.derivatives.size == 34
+    assert second_order.number_of_auxiliary_variables == 33
+    assert second_order.derivatives.size == 33
     assert second_order.auxiliary_variables == [second_order.derivatives]
     assert second_order.derivatives.owner is second_order
     # Unknowns plus derivatives are the unknowns of the first-order solver, in order
@@ -93,8 +93,14 @@ def test_so_solver_calls_the_second_order_kernels():
         ("nonconservativeProduct", "::exagrype::ccz4::ncp%s("),
         ("volumetricSource", "::exagrype::ccz4::source%s("),
     ]:
-        assert kernel % "FirstOrder" in first_order.get_pde_term(term, stateless=True).implementation
-        assert kernel % "SecondOrder" in second_order.get_pde_term(term, stateless=True).implementation
+        assert (
+            kernel % "FirstOrder"
+            in first_order.get_pde_term(term, stateless=True).implementation
+        )
+        assert (
+            kernel % "SecondOrder"
+            in second_order.get_pde_term(term, stateless=True).implementation
+        )
     for solver in (first_order, second_order):
         assert (
             "::exagrype::ccz4::maxEigenvalue("
@@ -102,17 +108,29 @@ def test_so_solver_calls_the_second_order_kernels():
         )
     # The kernels get the primary entries and, as a second pointer, the
     # derivatives, i.e. the auxiliary variables, without any copy
-    ncp = second_order.get_pde_term("nonconservativeProduct", stateless=True).implementation
+    ncp = second_order.get_pde_term(
+        "nonconservativeProduct", stateless=True
+    ).implementation
     assert "Q, derivatives," in ncp
     assert "deltaQ, deltaDerivatives," in ncp
-    source = second_order.get_pde_term("volumetricSource", stateless=True).implementation
+    source = second_order.get_pde_term(
+        "volumetricSource", stateless=True
+    ).implementation
     assert "Q, derivatives," in source
     # The first-order solver passes the secondary entries behind the primary ones
-    assert "Q, Q + 25," in first_order.get_pde_term("volumetricSource", stateless=True).implementation
-    assert "deltaQ, deltaQ + 25," in first_order.get_pde_term("nonconservativeProduct", stateless=True).implementation
+    assert (
+        "Q, Q + 25,"
+        in first_order.get_pde_term("volumetricSource", stateless=True).implementation
+    )
+    assert (
+        "deltaQ, deltaQ + 25,"
+        in first_order.get_pde_term(
+            "nonconservativeProduct", stateless=True
+        ).implementation
+    )
     # The second-order solver has no storage for the secondary result
     assert "S,\n    Q, derivatives," in source
-    assert "[59]" not in ncp + source
+    assert "[58]" not in ncp + source
 
 
 def test_so_solver_splits_the_initial_condition():
@@ -120,7 +138,7 @@ def test_so_solver_splits_the_initial_condition():
         exagrype.api.FOSOCCZ4Solver("SO").get_pde_term("initPointWisely").implementation
     )
     assert "gaugeWave" in implementation
-    assert "initialValues[59]" in implementation
+    assert "initialValues[58]" in implementation
     assert "Q[i] = initialValues[i]" in implementation
     assert "derivatives[i] = initialValues[25 + i]" in implementation
 
@@ -128,17 +146,25 @@ def test_so_solver_splits_the_initial_condition():
 def test_so_solver_advects_all_evolved_unknowns_with_lopsided_stencils():
     # The second-order kernels remove the advection of all evolved unknowns from the kernels
     moving_puncture = exagrype.api.FOSOCCZ4Solver(
-        "SO", parameters={"CCZ4bs": 1.0, "CCZ4sk": 1.0}
+        "SO", parameters={"CCZ4b": 1, "CCZ4s": 1}
     )
     assert moving_puncture.lopsided_advection_quantities() == list(
         exagrype.api.FOSOCCZ4Solver.Unknowns
     )
-    # The default CCZ4bs=CCZ4sk=0 does not advect the shift and b
+    # The default CCZ4s=0 does not advect the shift and b
     default = exagrype.api.FOSOCCZ4Solver("SO")
     assert "shift" not in default.lopsided_advection_quantities()
     assert "b" not in default.lopsided_advection_quantities()
     assert "G" in default.lopsided_advection_quantities()
     assert "lapse" in default.lopsided_advection_quantities()
+    # Neither does the non-shifting shift
+    non_shifting = exagrype.api.FOSOCCZ4Solver(
+        "SO", parameters={"CCZ4b": 0, "CCZ4s": 1}
+    ).lopsided_advection_quantities()
+    assert set(moving_puncture.lopsided_advection_quantities()) - set(non_shifting) == {
+        "shift",
+        "b",
+    }
 
 
 def test_so_solver_enforces_only_the_constraints_of_the_evolved_unknowns():
@@ -170,8 +196,8 @@ def test_fososolver_hosts_the_ccz4_solver_and_the_reconstruction_solver():
     assert pair.reconstruction.ccz4 is pair.ccz4
     # Same data, swapped roles
     assert pair.ccz4.unknowns == 25
-    assert pair.ccz4.number_of_auxiliary_variables == 34
-    assert pair.reconstruction.unknowns == 34
+    assert pair.ccz4.number_of_auxiliary_variables == 33
+    assert pair.reconstruction.unknowns == 33
     # The unknowns of the reconstruction are the auxiliary variables of the CCZ4 solver
     assert pair.reconstruction.variable_names_per_entry() == [
         name.removeprefix("Derivatives.")
@@ -181,7 +207,9 @@ def test_fososolver_hosts_the_ccz4_solver_and_the_reconstruction_solver():
     assert pair.reconstruction.plotters == []
 
 
-def test_project_registers_the_solvers_of_the_host_but_lets_the_host_realise_them(tmp_path):
+def test_project_registers_the_solvers_of_the_host_but_lets_the_host_realise_them(
+    tmp_path,
+):
     pair = exagrype.api.FOSOSolver("SO", reconstruction_name="Recon")
     project, _ = _project(tmp_path)
     project.add_solver(pair)
@@ -191,7 +219,7 @@ def test_project_registers_the_solvers_of_the_host_but_lets_the_host_realise_the
 
 
 def test_solvers_build_separate_graphs_which_the_host_concatenates(tmp_path):
-    """! Neither solver sees the tasks of the other one, only the host's graph holds both """
+    """! Neither solver sees the tasks of the other one, only the host's graph holds both"""
     pair = exagrype.api.FOSOSolver("SO")
     _configure(pair)
     exahype2_project, peano_project = _project(tmp_path)
@@ -247,7 +275,9 @@ def test_host_reports_the_concatenated_graph(tmp_path, monkeypatch):
         titles[title] = [t.name for t in self.tasks]
 
     monkeypatch.setattr(peano4.api.taskgraph.Graph, "log_as_text", report)
-    monkeypatch.setattr(peano4.api.taskgraph.Graph, "visualise", lambda self, title="": None)
+    monkeypatch.setattr(
+        peano4.api.taskgraph.Graph, "visualise", lambda self, title="": None
+    )
     previous = peano4.api.Logger().verbosity
     peano4.api.Logger().verbosity = peano4.api.LoggerVerbosity.TEXT
     try:
@@ -279,7 +309,12 @@ def test_reconstruction_solver_forwards_the_time_step_data_of_the_ccz4_solver(tm
     pair = exagrype.api.FOSOSolver("SO")
     _realise(pair, tmp_path)
     methods = dict(pair.reconstruction._abstract_solver_methods)
-    for getter in ["getMinTimeStamp", "getMaxTimeStamp", "getMinTimeStepSize", "getMaxTimeStepSize"]:
+    for getter in [
+        "getMinTimeStamp",
+        "getMaxTimeStamp",
+        "getMinTimeStepSize",
+        "getMaxTimeStepSize",
+    ]:
         definition = methods[f"double {getter}() const override;"]("A")
         assert f"repositories::instanceOfSO.{getter}()" in definition
     assert "SolverRepository.h" in pair.reconstruction.user_solver_includes
@@ -301,12 +336,16 @@ def test_reconstruction_solver_takes_turns_with_each_stage_of_the_solver(tmp_pat
             and task.name.endswith(f" stage {stage}")
         }
         first_tasks = [
-            chain[f"SOReconstruction_Interpolate primary variables on hanging faces stage {stage}"],
+            chain[
+                f"SOReconstruction_Interpolate primary variables on hanging faces stage {stage}"
+            ],
             chain[
                 f"SOReconstruction_Interpolate derivative variables on hanging faces stage {stage}"
             ],
         ]
-        last = chain[f"SOReconstruction_Roll over derivative variable faces stage {stage}"]
+        last = chain[
+            f"SOReconstruction_Roll over derivative variable faces stage {stage}"
+        ]
         assert last in reconstruct.dependencies
         assert order.index(last) < order.index(reconstruct)
         if stage > 0:
@@ -335,7 +374,9 @@ def test_reconstruction_keeps_the_data_it_shares_with_the_solver_alive(tmp_path)
         == Access.READ_AND_WRITE
     )
     derivatives = tasks["SOReconstruction_Reconstruct derivative variables stage 1"]
-    assert derivatives.cell_data_access[solver.derivatives.patch] == Access.READ_AND_WRITE
+    assert (
+        derivatives.cell_data_access[solver.derivatives.patch] == Access.READ_AND_WRITE
+    )
     assert (
         derivatives.face_data_access[solver.derivatives.patch_overlap_current_time_step]
         == Access.READ_AND_WRITE
@@ -378,7 +419,9 @@ def test_reconstruction_runs_in_front_of_the_finite_volume_update(tmp_path):
 
 def test_reconstruction_rejects_unsupported_schemes(tmp_path):
     pair = exagrype.api.FOSOSolver("SO")
-    pair.numerical_scheme = exahype2.api.fv.RusanovWithOptimisticExplicitEuler(pair.ccz4, 9)
+    pair.numerical_scheme = exahype2.api.fv.RusanovWithOptimisticExplicitEuler(
+        pair.ccz4, 9
+    )
     with pytest.raises(Exception):
         pair.reconstruction.create_task_graph(None, None, 0, 1)
 
@@ -411,7 +454,7 @@ def test_reconstruction_adapts_to_the_larger_halo_of_the_dissipation_scheme(tmp_
     "solver_class", [exagrype.api.FOCCZ4Solver, exagrype.api.FOSOCCZ4Solver]
 )
 def test_pde_terms_are_stateless(solver_class):
-    """! Finite Volumes and Finite Differences both call the static terms """
+    """! Finite Volumes and Finite Differences both call the static terms"""
     solver = solver_class("S")
     for name in ["nonconservativeProduct", "volumetricSource", "maxEigenvalue"]:
         assert solver.get_pde_term(name, stateless=True).stateless
@@ -419,12 +462,16 @@ def test_pde_terms_are_stateless(solver_class):
             solver.get_pde_term(name)
 
 
-def test_interpolations_and_reconstructions_of_the_ccz4_solver_run_in_parallel(tmp_path):
+def test_interpolations_and_reconstructions_of_the_ccz4_solver_run_in_parallel(
+    tmp_path,
+):
     time_step = _realise(exagrype.api.FOSOSolver("SO"), tmp_path)
     tasks = {task.name: task for task in time_step.tasks}
     for stage in range(4):
         unknowns = tasks[f"SO_Interpolate hanging faces stage {stage}"]
-        derivatives = tasks[f"SO_Interpolate Derivatives on hanging faces stage {stage}"]
+        derivatives = tasks[
+            f"SO_Interpolate Derivatives on hanging faces stage {stage}"
+        ]
         reconstruct = tasks[f"SO_Reconstruct stage {stage}"]
         reconstruct_derivatives = tasks[
             f"SO_Reconstruct auxiliary variables Derivatives stage {stage}"

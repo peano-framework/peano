@@ -40,7 +40,7 @@ namespace exagrype {
     /**
      * Single Schwarzschild black hole at the origin
      *
-     * Fills the 59 unknowns of the first-order CCZ4 formulation at point x
+     * Fills the 58 unknowns of the first-order CCZ4 formulation at point x
      * with the TwoPunctures initial data of one non-spinning black hole
      * at rest. The puncture sits at the coordinate origin.
      *
@@ -61,7 +61,7 @@ namespace exagrype {
      * evaluate the routine once per degree of freedom only, i.e. at
      * startup.
      *
-     * @param Q    Output: the 59 CCZ4 unknowns at x.
+     * @param Q    Output: the 58 CCZ4 unknowns at x.
      * @param x    Position. It should not coincide with the puncture, i.e.
      *             with the origin, where the data is singular.
      * @param t    Time stamp. Ignored, as the data is static initial data.

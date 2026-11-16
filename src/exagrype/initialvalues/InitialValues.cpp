@@ -9,11 +9,11 @@
 
 
 void exagrype::initialvalues::gaugeWave(
-  double * __restrict__ Q, // Q[64+0],
+  double * __restrict__ Q, // Q[58+0],
   const tarch::la::Vector<Dimensions,double>&  x,
   double t
 ) {
-  constexpr int nVars = 59;
+  constexpr int nVars = 58;
   constexpr double pi = M_PI;
   constexpr double peak_number = 2.0;
   constexpr double ICA = 0.1; ///< Amplitude of the wave 
@@ -22,31 +22,31 @@ void exagrype::initialvalues::gaugeWave(
   double dxphi  = - pow(HH,(-7.0/6.0))*dxH/6.0;
   double phi    = pow(( 1.0 / HH),(1.0/6.0));
   double Kxx    = - 0.5*peak_number*pi*ICA*cos( peak_number * pi*(x[0] - t))/sqrt( 1.0 - ICA*sin( peak_number*pi*( x[0] - t))  );
-  double traceK = Kxx/HH;
+  double Kex = Kxx/HH;
   tarch::memset(Q, .0, nVars*sizeof(double));
   Q[0]  = phi*phi*HH ;					//\tilde(\gamma)_xx
   Q[3]  = phi*phi  ;					//\tilde(\gamma)_yy
   Q[5]  = phi*phi                            ;		//\tilde(\gamma)_zz
-  Q[6]  = phi*phi*(Kxx - 1.0/3.0*traceK*HH ) ;		//\tilde(A)_xx
-  Q[9] =  phi*phi*(0.0 - 1.0/3.0*traceK*1.0) ;		//\tilde(A)_yy
-  Q[11] = phi*phi*(0.0 - 1.0/3.0*traceK*1.0) ;		//\tilde(A)_zz
+  Q[6]  = phi*phi*(Kxx - 1.0/3.0*Kex*HH ) ;		//\tilde(A)_xx
+  Q[9] =  phi*phi*(0.0 - 1.0/3.0*Kex*1.0) ;		//\tilde(A)_yy
+  Q[11] = phi*phi*(0.0 - 1.0/3.0*Kex*1.0) ;		//\tilde(A)_zz
   Q[16] = sqrt(HH);				        //\alpha
   Q[13] = 2.0/(3.0*pow(HH,(5.0/3.0)))*dxH        ;	//\hat(\Gamma)^x
   Q[25] = 1.0/(2.0)*dxH*pow(HH,(-1.0/2.0))       ;		//A_x
   Q[37] = pow(HH,(-1.0/3.0))*dxH/3.0         ;		//D_xxx
   Q[40] = phi*dxphi                     ;		//D_xyy
   Q[42] = phi*dxphi                    ;		//D_xzz
-  Q[23] = traceK;					//K
+  Q[23] = Kex;					//K
   Q[24] = phi;					//\phi
   Q[55] = dxphi;					//P_x
 }
 
 void exagrype::initialvalues::diagonal_gaugeWave(
-  double * __restrict__ Q, // Q[64+0],
+  double * __restrict__ Q, // Q[58+0],
   const tarch::la::Vector<Dimensions,double>&  x,
   double t
 ) {
-  constexpr int nVars = 59;
+  constexpr int nVars = 58;
   constexpr double pi = M_PI;
   constexpr double peak_number = 2.0;
   constexpr double ICA = 0.1; ///< Amplitude of the wave, B in the note 
@@ -81,11 +81,11 @@ void exagrype::initialvalues::diagonal_gaugeWave(
 }
 
 void exagrype::initialvalues::linearWave(
-  double * __restrict__ Q, // Q[64+0],
+  double * __restrict__ Q, // Q[58+0],
   const tarch::la::Vector<Dimensions,double>&  X,
   double t
 ) {
-  constexpr int nVars = 59;
+  constexpr int nVars = 58;
   constexpr double pi = M_PI;
   constexpr double peak_number = 2.0;
   constexpr double ICA = 1e-4; ///< Amplitude of the wave, should be very small to keep linearized.
@@ -107,11 +107,11 @@ void exagrype::initialvalues::linearWave(
 }
 
 void exagrype::initialvalues::flat(
-  double * __restrict__ Q, // Q[64+0],
+  double * __restrict__ Q, // Q[58+0],
   const tarch::la::Vector<Dimensions,double>&  x,
   double t
 ) {
-  tarch::memset(Q, .0, 59*sizeof(double));
+  tarch::memset(Q, .0, 58*sizeof(double));
   Q[0]  = 1.0 ;          //\tilde(\gamma)_xx
   Q[3]  = 1.0  ;          //\tilde(\gamma)_yy
   Q[5]  = 1.0                            ;    //\tilde(\gamma)_zz

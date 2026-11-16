@@ -98,7 +98,7 @@ class Array(Expression):
         self.array_size = size
         assert(len(self.array_size) == 1 or len(self.array_size) == 2)
         self.element_type = element_type
-        self.flatten = flatten | TArray.always_flatten
+        self.flatten = flatten
 
     @abstractmethod
     def get_type(self) -> TArray:
@@ -198,7 +198,7 @@ class Variable(AssignableExpression):
 
         array = self.get_value()
         assert (isinstance(array, Array))
-        return Subscript(self, array.calculate_indices(indices), get_address)
+        return Subscript(self, array.calculate_indices(indices), flatten=array.flatten, get_address=get_address)
 
     def __add__(self, rhs: Element | Variable) -> Variable | Element:
         if isinstance(self.get_type(), TElement) and isinstance(rhs.get_type(), TElement):
@@ -375,8 +375,6 @@ class ExternalStructField(External):
         External.__init__(self, self.struct_name.id + "." + self.field_name.id)
 
     def get_type(self) -> Type:
-        print (self.field_name.id)
-        print ([(name.id, type) for (name, type) in self.struct_type.fields.items()])
         return self.struct_type.fields[self.field_name]
 
 class DataBlock(Array):
@@ -408,7 +406,7 @@ class DataBlock(Array):
 
 
     def calculate_indices(self, indices: Sequence[Element | Variable]) -> list[Element|Variable]:
-        if len(self.iteration_range) == 1 or self.flatten:
+        if len(self.iteration_range) == 1:
             return [Array.linearise_index(indices, self.size_in_memory)]
         else:
             outer_index = indices[-1]
@@ -457,7 +455,6 @@ class DataBlockBinaryOperation(DataBlock):
         self.rhs = rhs
 
         if isinstance(self.lhs.get_type(), TDataBlock) and isinstance(self.rhs.get_type(), TDataBlock):
-            flatten = self.lhs.get_type().flatten or self.rhs.get_type().flatten
             if isinstance(self.lhs, Variable): 
                 lhs_value = self.lhs.get_value()
                 assert(isinstance(lhs_value, DataBlock))
@@ -495,7 +492,6 @@ class DataBlockBinaryOperation(DataBlock):
                     iteration_range[0][1] = rhs_iteration_range[0][1]
 
         elif type(self.lhs.get_type()) is TDataBlock:
-            flatten = self.lhs.get_type().flatten
             if isinstance(self.lhs, Variable): 
                 lhs_value = self.lhs.get_value()
                 assert(isinstance(lhs_value, DataBlock))
@@ -505,7 +501,6 @@ class DataBlockBinaryOperation(DataBlock):
                 lhs_iteration_range = self.lhs.iteration_range
             iteration_range = deepcopy(lhs_iteration_range)
         else:
-            flatten = self.rhs.get_type().flatten
             if isinstance(self.rhs, Variable): 
                 rhs_value = self.rhs.get_value()
                 assert(isinstance(rhs_value, DataBlock))
@@ -515,7 +510,7 @@ class DataBlockBinaryOperation(DataBlock):
                 rhs_iteration_range = self.rhs.iteration_range
             iteration_range = deepcopy(rhs_iteration_range)
 
-        super().__init__(iteration_range, None, flatten)
+        super().__init__(iteration_range, None, TArray.flatten_temporaries)
 
     def index_at(self, indices: Sequence[Element | Variable], get_address = False) -> Expression:
         lhs = self.lhs.index_at(indices)
@@ -526,8 +521,23 @@ class DataBlockBinaryOperation(DataBlock):
 
 class DataBlockUnaryOperation(DataBlock):
     def __init__(self, operator: Operator, operand: Expression):
+        assert(isinstance(operand.get_type(), TDataBlock))
+        if isinstance(operand, Variable):
+            iteration_range = operand.get_value().iteration_range
+            flatten = operand.get_value().flatten
+        else:
+            iteration_range = operand.iteration_range
+            flatten = operand.flatten
+
         self.operator = operator
         self.operand = operand
+        super().__init__(iteration_range, None, flatten)
+
+
+    def index_at(self, indices: Sequence[Element | Variable], get_address = False) -> Expression:
+            element = self.operand.index_at(indices)
+            assert(isinstance(element, Element) or isinstance(element, Variable) or isinstance(element, Subscript))
+            return ElementUnaryOperation(self.operator, element)
 
 class DataBlockIndex(DataBlock):
     def __init__(self, vector_data_block: Variable, index: Index):
@@ -542,14 +552,19 @@ class DataBlockIndex(DataBlock):
         return ElementIndex(self.vector_data_block.index_at(indices), self.index)
     
 class Subscript(AssignableExpression):
-    def __init__(self, base: AssignableExpression, indices: list[Element | Variable], get_address = False):
+    def __init__(self, base: AssignableExpression, indices: list[Element | Variable], flatten = False, get_address = False):
         assert(len(indices) == 1 or len(indices) == 2)
         for index in indices:
             if not isinstance(index.get_type(), TIndex):
                 raise Exception("Index of subscript must be of index type")
+            
         self.base = base
+        self.flatten = flatten
         self.indices = indices
         self.get_address = get_address
+        if self.flatten and len(self.indices) == 2:
+            assert (isinstance(self.base, Variable) and isinstance(self.base.get_value(), Array))
+            self.flattened_index = self.indices[0] * self.base.get_value().array_size[-1] + self.indices[1]
 
     def get_type(self) -> Type:
         return self.base.get_type()

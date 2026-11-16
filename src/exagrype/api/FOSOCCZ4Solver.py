@@ -15,15 +15,15 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     Solver for the Einstein equations in the first-/second-order reconstructed
     CCZ4 formulation
 
-    The solver evolves the first 25 of the 59 CCZ4 unknowns (see
+    The solver evolves the first 25 of the 58 CCZ4 unknowns (see
     Unknowns), i.e. the conformal metric, the extrinsic curvature, the
-    gauge and the auxiliary evolution variables. The remaining 34 entries
+    gauge and the auxiliary evolution variables. The remaining 33 entries
     (DerivativeUnknowns) are the first derivatives of the lapse, the shift,
-    the conformal metric and phi, plus K0. They are not evolved but held as
+    the conformal metric and phi. They are not evolved but held as
     auxiliary variables (@ref exahype2.api.AuxiliaryVariables) named
     "Derivatives". The PDE terms hand the 25 unknowns and, as a second
-    pointer, the 34 auxiliary variables to the very same kernels as the
-    first-order solver exagrype.api.FOCCZ4Solver. The second-order kernels set the time derivative of the 34
+    pointer, the 33 auxiliary variables to the very same kernels as the
+    first-order solver exagrype.api.FOCCZ4Solver. The second-order kernels set the time derivative of the 33
     derivatives to zero, and the solver does not even ask for it.
 
     ## Ping-pong with the reconstruction solver
@@ -33,7 +33,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     yourself, but use exagrype.api.FOSOSolver, which hosts this solver (as
     ccz4) and its partner. The reconstruction solver
     runs in front of each stage of the
-    Runge-Kutta scheme of this solver, recomputes the 34 derivatives from the
+    Runge-Kutta scheme of this solver, recomputes the 33 derivatives from the
     25 unknowns of the stage and projects them onto the faces, so this solver
     finds them with a halo when it evaluates the stage. Without the
     reconstruction, the solver sees the derivatives of the initial
@@ -57,7 +57,8 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     ## Shortcomings
 
     - The second-order kernels do not advect the evolved unknowns. The
-      numerical scheme has to do it, @ref lopsided_advection_quantities().
+      numerical scheme has to do it
+      (@ref exagrype.api.FOSOCCZ4Solver.FOSOCCZ4Solver.lopsided_advection_quantities()).
     - Only the two schemes above are supported.
     - Black holes (TwoPunctures), tracers and the ADM/Psi4 postprocessing are
       not available yet.
@@ -74,7 +75,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         "lapse": 1,
         "shift": 3,
         "b": 3,
-        "traceK": 1,
+        "Kex": 1,
         "phi": 1,
     }
     """!
@@ -94,13 +95,12 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         "dyG": 6,
         "dzG": 6,
         "P": 3,
-        "K0": 1,
     }
     """!
 
-    The 34 entries of CCZ4 which this solver does not evolve, in the order the
+    The 33 entries of CCZ4 which this solver does not evolve, in the order the
     kernels expect them behind the unknowns. They are the auxiliary variables
-    "Derivatives" and the 34 unknowns of exagrype.api.FOSOReconstructionSolver.
+    "Derivatives" and the 33 unknowns of exagrype.api.FOSOReconstructionSolver.
 
     """
 
@@ -115,7 +115,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         Create a second-order reconstructed CCZ4 solver
 
         @param name: str
-          Name of the solver, @see exahype2.api.Solver.
+          Name of the solver (@ref exahype2.api.Solver).
 
         @param parameters: Dict[str, Union[int, float]]
           CCZ4 parameters that differ from DefaultParameters, e.g.
@@ -123,10 +123,10 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
           rejected, as they most likely are typos.
 
         @param initial_condition: exahype2.api.InitPointWisely
-          Initial condition. It fills the 59 entries of the first-order
+          Initial condition. It fills the 58 entries of the first-order
           formulation, i.e. it can be any routine from
           exagrype.api.initialvalues. The solver takes the first 25 as its
-          unknowns, and uses the other 34 as the initial value of the
+          unknowns, and uses the other 33 as the initial value of the
           derivatives. Defaults to exagrype.api.initialvalues.gauge_wave().
 
         """
@@ -162,18 +162,18 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         )
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-        The advection of the shift and of b is scaled with CCZ4bs and
-        CCZ4sk in the kernels (@see exagrype.api.FOCCZ4Solver.lopsided_advection_quantities()
-        for the coupling). A kernel which advects each quantity on its own
-        reproduces this only for CCZ4bs=CCZ4sk=1. If either of them is
-        zero, the routine leaves the shift and b out.
+        The advection of the shift and of b belongs to the shifting shift
+        only, i.e. the routine leaves them out unless CCZ4s=1 and CCZ4b=1
+        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.lopsided_advection_quantities()
+        explains what the non-shifting shift does to the equation of b).
 
         @return List[str]
-          Names of unknowns, @see Unknowns.
+          Names of unknowns
+          (@ref exagrype.api.FOSOCCZ4Solver.FOSOCCZ4Solver.Unknowns).
 
         """
         excluded = set()
-        if self._parameters["CCZ4bs"] == 0 or self._parameters["CCZ4sk"] == 0:
+        if self._parameters["CCZ4b"] == 0 or self._parameters["CCZ4s"] == 0:
             excluded |= {"shift", "b"}
         return [name for name in self.Unknowns if name not in excluded]
 
@@ -195,7 +195,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     BTimesDeltaQ,
     Q, derivatives,
     deltaQ, deltaDerivatives,
-    normal, CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4mu
+    normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu
   );
 """
 
@@ -205,7 +205,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
   ::exagrype::ccz4::sourceSecondOrder(
     S,
     Q, derivatives,
-    CCZ4LapseType, CCZ4ds, CCZ4c, CCZ4e, CCZ4f, CCZ4bs, CCZ4sk, CCZ4xi, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3
+    CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4itau, CCZ4eta, CCZ4k1, CCZ4k2, CCZ4k3
   );
 """
 
@@ -214,18 +214,18 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     ) -> exahype2.api.InitPointWisely:
         """!
 
-        The initial condition fills 59 entries; we split them up
+        The initial condition fills 58 entries; we split them up
 
         The routine wraps the user's implementation. It runs the
-        implementation on a local array of 59 entries (the implementation
+        implementation on a local array of 58 entries (the implementation
         sees it as Q) and then copies the first 25 entries onto Q and the
-        other 34 onto the derivatives.
+        other 33 onto the derivatives.
 
         """
         if initial_condition.implementation is None:
             raise ValueError(
                 f"Solver {self.name}: the initial condition needs an implementation "
-                "which fills the 59 entries of the first-order formulation"
+                "which fills the 58 entries of the first-order formulation"
             )
         evolved = self._number_of_evolved_entries()
         return exahype2.api.InitPointWisely(

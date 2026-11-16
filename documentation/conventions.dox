@@ -24,9 +24,6 @@ libraries.  This glue code is generated through the Python API.
 - **tests** Collection of small test cases that can be automised.
 - **benchmarks** Collection of benchmark scripts.
 - **tutorials** Holds all the tutorials.
-- **applications** Proper, real-world applications, i.e. bigger pieces of
-  code built on top of Peano or one of its extensions. Often, these features
-  are used in return by benchmarks and tutorials.
 
 
 Configuring Peano in Eclipse

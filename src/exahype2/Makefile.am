@@ -7,6 +7,7 @@ endif
 
 ExaHyPE2Sources = \
   CellAccess.cpp \
+  CellDataMLIR.cpp \
   CheckpointReader.cpp \
   LoadBalancingConfiguration.cpp \
   PlotFilter.cpp \

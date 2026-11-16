@@ -168,6 +168,9 @@ Sorted by expected benefit per effort; we did not change any code in Peano.
    deletes them again. For CCZ4 with 59 unknowns, this costs 8% of the single-thread time (plus the `memset`s that initialise them). Reusing
    thread-local scratch buffers, or fusing the loops so that the lambda and flux fields stay in registers, removes that. It lives in
    `RusanovWithExplicitEuler.py` and the DSL back end, i.e. in the code generator and not in the benchmark.
+   The 8% were measured when the solver still stored the reference value K0 as a 59th unknown. CCZ4 has 58 unknowns now
+   (`src/exagrype/ccz4/adrs/0001-ccz4-has-58-entries-and-integer-switches.md`). Whoever repeats the measurement replaces the 59 by 58 and
+   the 8% by the new share.
 4. **Reduce what the kernels compute.** `ncp` (24%) and `source` (12%) are evaluated three times (once per face direction) on averaged states, and `maxEigenvalue` is evaluated six times per volume
    (three times on the halo extent for the Rusanov flux and three times on the result for the next time step). The latter is a cheap
    routine for CCZ4, but the former two are the most expensive in the profile. Check if their arithmetic vectorises (use the optimisation report as

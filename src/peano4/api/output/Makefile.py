@@ -157,6 +157,7 @@ the SISC paper
     def clear_files(self):
         self.hfiles = []
         self.cppfiles = []
+        self.mlir_dict = {}
         self.fortranfiles = []
         self.generated_hfiles = []
         self.generated_cppfiles = []
@@ -437,6 +438,27 @@ the SISC paper
             self.generated_cppfiles.remove(filename)
         if filename in self.cppfiles:
             self.cppfiles.remove(filename)
+    
+    def add_mlir_file(self, filename, pipeline):
+        """
+        Add a new mlir filename. It gets added to a dictionary where the associated value
+        is the pipeline that should be applied to the file.
+
+        filename: String
+           Filename of an MLIR file. They have the .mlir extension.
+        pipeline: String
+            MLIR pipeline that should be applied to the file.
+        generated: Bool
+           Use this flag for generated files which can be tracked
+           by the cleaning routines 'distclean' or 'maintainer-clean' of the Makefile.
+        """
+        mlir_prefix = filename.rsplit(".", 1)[0]
+        self.mlir_dict[mlir_prefix] = pipeline
+
+    def remove_mlir_file(self, filename):
+        mlir_prefix = filename.rsplit(".", 1)[0]
+        if mlir_prefix in self.mlir_dict:
+            del self.mlir_dict[mlir_prefix]
 
     def add_Fortran_file(self, filename, generated=False):
         """
@@ -540,6 +562,10 @@ then this message can typically be ignored.
         if subdirectories:
             for subdirectory in subdirectories:
                 self.d["APP_SUBDIRECTORIES"].append(subdirectory)
+
+        #self.d["MLIR_PREFIXES"] = mlir_prefixes
+        self.d["MLIR_DICT"] = self.mlir_dict
+        self.d["MLIR_OBJS"] = " ".join([f"{prefix}_mlir.o" for prefix in self.mlir_dict.keys()])
 
         # Encapsulate file generation as a function
         def generate_output_file(input_file_path, output_file_path):

@@ -31,7 +31,7 @@ namespace exagrype {
      * afterwards, e.g. scale it by the lapse of a spacetime.
      *
      * @param Q The five conserved quantities.
-     * @param ccz4Fields The 59 entries of first-order CCZ4 in this volume
+     * @param ccz4Fields The 58 entries of first-order CCZ4 in this volume
      *   (exagrype.api.FOCCZ4Solver.Unknowns), i.e. the auxiliary variables
      *   through which the spacetime enters. The Euler equations do not use
      *   them yet; the argument is the hook through which the coupling does.
@@ -57,7 +57,7 @@ namespace exagrype {
      * of sound.
      *
      * @param Q The five conserved quantities.
-     * @param ccz4Fields The 59 entries of first-order CCZ4 in this volume
+     * @param ccz4Fields The 58 entries of first-order CCZ4 in this volume
      *   (exagrype.api.FOCCZ4Solver.Unknowns), i.e. the auxiliary variables
      *   through which the spacetime enters. The Euler equations do not use
      *   them yet; the argument is the hook through which the coupling does.
@@ -83,7 +83,7 @@ namespace exagrype {
      * changing the interface.
      *
      * @param Q The five conserved quantities.
-     * @param ccz4Fields The 59 entries of first-order CCZ4 in this volume
+     * @param ccz4Fields The 58 entries of first-order CCZ4 in this volume
      *   (exagrype.api.FOCCZ4Solver.Unknowns), i.e. the auxiliary variables
      *   through which the spacetime enters. The Euler equations do not use
      *   them yet; the argument is the hook through which the coupling does.
