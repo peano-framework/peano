@@ -47,10 +47,10 @@ Instead, it breaks down the problem into
 
 @f[
 \begin{aligned}
-\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}_{{\color{blue}{M^{(B)}}}}(Q^{(A)}, \nabla Q^{(A)}) + \mathcal{B}^{(A)}_{{\color{blue}{M^{(B)}}}}(Q^{(A)}) . \nabla Q^{(A)} & = & S^{(A)}_{{\color{blue}{M^{(B)}}}}(Q^{(A)}) \\
-\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}_{{\color{blue}{M^{(A)}}}}(Q^{(B)}, \nabla Q^{(B)}) + \mathcal{B}^{(B)}_{{\color{blue}{M^{(A)}}}}(Q^{(B)}) . \nabla Q^{(B)} & = & S^{(B)}_{{\color{blue}{M^{(A)}}}}(Q^{(B)}) \\
-{\color{blue}{M^{(A)}}} & = & Q^{(B)} \\
-{\color{blue}{M^{(B)}}} & = & Q^{(A)}
+\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}_{{\color{blue}{M^{(A)}}}}(Q^{(A)}, \nabla Q^{(A)}) + \mathcal{B}^{(A)}_{{\color{blue}{M^{(A)}}}}(Q^{(A)}) . \nabla Q^{(A)} & = & S^{(A)}_{{\color{blue}{M^{(A)}}}}(Q^{(A)}) \\
+\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}_{{\color{blue}{M^{(B)}}}}(Q^{(B)}, \nabla Q^{(B)}) + \mathcal{B}^{(B)}_{{\color{blue}{M^{(B)}}}}(Q^{(B)}) . \nabla Q^{(B)} & = & S^{(B)}_{{\color{blue}{M^{(B)}}}}(Q^{(B)}) \\
+{\color{blue}{M^{(A)}}} & = & \Pi_{B\to A}\,Q^{(B)} \\
+{\color{blue}{M^{(B)}}} & = & \Pi_{A\to B}\,Q^{(A)}
 \end{aligned}
 @f]
 
@@ -58,10 +58,10 @@ or even
 
 @f[
 \begin{aligned}
-\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}(Q^{(A)}, \nabla Q^{(A)}) + \nabla . {\color{red}{\tilde{F}^{(A)}_{{\color{blue} M^{(B)}}}(Q^{(A)}, \nabla Q^{(A)})}} + \mathcal{B}^{(A)}(Q^{(A)}) . \nabla Q^{(A)} + {\color{red}{\tilde{\mathcal{B}}^{(A)}_{{\color{blue} M^{(B)}}}(Q^{(A)})}} . \nabla Q^{(A)} & = & S^{(A)}(Q^{(A)}) + {\color{red}{\tilde{ S}^{(A)}_{{\color{blue} M^{(B)}}}(Q^{(A)})}} \\
-\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}(Q^{(B)}, \nabla Q^{(B)}) + \nabla . {\color{red}{\tilde{F}^{(B)}_{{\color{blue} M^{(A)}}}(Q^{(B)}, \nabla Q^{(B)})}} + \mathcal{B}^{(B)}(Q^{(B)}) . \nabla Q^{(B)} + {\color{red}{\tilde{\mathcal{B}}^{(B)}_{{\color{blue} M^{(A)}}}(Q^{(B)})}} . \nabla Q^{(B)} & = & S^{(B)}(Q^{(B)}) + {\color{red}{\tilde{ S}^{(B)}_{{\color{blue} M^{(A)}}}(Q^{(B)})}} \\
-{\color{blue}{M^{(A)}}} & = & Q^{(B)} \\
-{\color{blue}{M^{(B)}}} & = & Q^{(A)}
+\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}(Q^{(A)}, \nabla Q^{(A)}) + \nabla . {\color{red}{\tilde{F}^{(A)}_{{\color{blue} M^{(A)}}}(Q^{(A)}, \nabla Q^{(A)})}} + \mathcal{B}^{(A)}(Q^{(A)}) . \nabla Q^{(A)} + {\color{red}{\tilde{\mathcal{B}}^{(A)}_{{\color{blue} M^{(A)}}}(Q^{(A)})}} . \nabla Q^{(A)} & = & S^{(A)}(Q^{(A)}) + {\color{red}{\tilde{ S}^{(A)}_{{\color{blue} M^{(A)}}}(Q^{(A)})}} \\
+\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}(Q^{(B)}, \nabla Q^{(B)}) + \nabla . {\color{red}{\tilde{F}^{(B)}_{{\color{blue} M^{(B)}}}(Q^{(B)}, \nabla Q^{(B)})}} + \mathcal{B}^{(B)}(Q^{(B)}) . \nabla Q^{(B)} + {\color{red}{\tilde{\mathcal{B}}^{(B)}_{{\color{blue} M^{(B)}}}(Q^{(B)})}} . \nabla Q^{(B)} & = & S^{(B)}(Q^{(B)}) + {\color{red}{\tilde{ S}^{(B)}_{{\color{blue} M^{(B)}}}(Q^{(B)})}} \\
+{\color{blue}{M^{(A)}}} & = & \Pi_{B\to A}\,Q^{(B)} \\
+{\color{blue}{M^{(B)}}} & = & \Pi_{A\to B}\,Q^{(A)}
 \end{aligned}
 @f]
 
@@ -71,9 +71,9 @@ So here's what's happening here and what we try to express through these formula
 2. We keep the PDEs without any coupling (if something like that exists) intact where possible. 
    If the PDE terms require corrections, we model them as explicit additional terms (marked by a tilde and set in red). 
    This might not always be practicable, i.e. some terms might degenerate to nop, but the intention is to reuse building blocks (term implementations) where possible.
-3. The terms are coupled through the new auxiliary variables. We write them
-   down as plain copies in the third and fourth row, but they don't have to be exact copies:
-   We assume that the auxiliary values live in the same function space as their Q counterparts, but the two PDEs can exist in completely different function spaces.  
+3. The terms are coupled through auxiliary variables obtained by projecting each solver's solution
+   into the other solver's auxiliary-data space, as shown in the third and fourth row.
+   These projections reduce to plain copies when the corresponding function spaces coincide.
    The copy overhead can be eliminated explicitly.
 
 
