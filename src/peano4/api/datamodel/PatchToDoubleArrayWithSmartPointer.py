@@ -47,7 +47,7 @@ class PatchToDoubleArrayWithSmartPointer(PatchToDoubleArray):
             templatefile_prefix + ".template.cpp",
             self.data.name,
             self.data.namespace,
-            self.data.subdirectory + self.data.namespace[-1],
+            os.path.join(self.data.temporary_subdirectory, self.data.namespace[-1]),
             d,
             True,
         )

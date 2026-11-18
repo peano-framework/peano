@@ -28,6 +28,9 @@ class Graph:
         Every task of the other graph that depends on nothing within the other
         graph (its sources) additionally depends on every task of this graph
         that no other task of this graph depends on (its sinks, @ref sink_tasks()).
+        If a sink is a global task, the sources of the other graph depend on it,
+        and the task compiler does not fuse them into its mesh sweep
+        (@ref peano4.api.taskgraph.Task.Task.GridEntity).
         All tasks of both graphs are kept, with their own dependencies, and
         none is dropped or merged, even if the two graphs do the same work in
         parts. Removing such redundancy is up to the caller. The other graph
@@ -68,7 +71,7 @@ class Graph:
         hold is added only once.
 
         This is how a host that couples several solvers
-        (@ref exahype2.api.SolverHost) puts the task graphs side by side which
+        (@ref page_exahype_programmers_guide_coupling) puts the task graphs side by side which
         the solvers have built independently, before it wires them. Use
         append() to run one graph after the other.
 
@@ -223,12 +226,13 @@ class Graph:
         graphs here are small) rather than caching it, so adding further
         tasks/dependencies after an earlier call is always reflected.
 
-        Tasks of the kind GLOBAL_START_OF_STEP come first and tasks of the
-        kind GLOBAL_END_OF_STEP come last (@ref peano4.api.taskgraph.Task.Task.GridEntity).
-        This keeps the order topological, as the former may not depend on
-        other tasks and no task but another end-of-step task may depend on
-        the latter. Within each of the three parts, the order is the one of
-        the traversal.
+        Tasks of the kind GLOBAL_START_OF_STEP come first, as they may not
+        depend on other tasks. Tasks of the kind GLOBAL_END_OF_STEP come last
+        (@ref peano4.api.taskgraph.Task.Task.GridEntity), with one exception:
+        If another task depends on them (@ref anchored_end_of_step_tasks()), they
+        end the traversal of their last dependency and keep their place
+        among the other tasks. Within each of the three parts, the order is
+        the one of the traversal.
 
         """
         order: List[Task] = []
@@ -244,15 +248,56 @@ class Graph:
         for task in self.tasks:
             visit(task)
         Entity = Task.GridEntity
+        trailing = [
+            task
+            for task in order
+            if task.entity == Entity.GLOBAL_END_OF_STEP
+            and task not in self.anchored_end_of_step_tasks()
+        ]
         return (
             [task for task in order if task.entity == Entity.GLOBAL_START_OF_STEP]
             + [
                 task
                 for task in order
-                if task.entity not in (Entity.GLOBAL_START_OF_STEP, Entity.GLOBAL_END_OF_STEP)
+                if task.entity != Entity.GLOBAL_START_OF_STEP and task not in trailing
             ]
-            + [task for task in order if task.entity == Entity.GLOBAL_END_OF_STEP]
+            + trailing
         )
+
+    def anchored_end_of_step_tasks(self) -> List[Task]:
+        """!
+
+        End-of-step tasks which do not run at the very end of the step
+
+        A GLOBAL_END_OF_STEP task runs last in the last traversal. If another
+        task depends on it, this cannot hold: The task has to finish its
+        traversal first, and the dependent task then runs in a later one.
+        Such a task thus ends the traversal of its last dependency instead
+        (@ref peano4.api.taskgraph.compiler.FuseSteps.translate()). The same
+        holds for each end-of-step task which such a task depends on in turn.
+
+        @return List[Task]
+          The tasks in the order in which they have been added to the graph.
+
+        """
+        end_tasks = [
+            task for task in self.tasks if task.entity == Task.GridEntity.GLOBAL_END_OF_STEP
+        ]
+        anchored = {
+            end
+            for end in end_tasks
+            if any(end in task.dependencies for task in self.tasks if task not in end_tasks)
+        }
+        changed = True
+        while changed:
+            changed = False
+            for end in end_tasks:
+                if end not in anchored and any(
+                    end in other.dependencies for other in anchored
+                ):
+                    anchored.add(end)
+                    changed = True
+        return [end for end in end_tasks if end in anchored]
 
     def log_as_text(self, title: str = "Task graph"):
         """!

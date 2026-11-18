@@ -174,14 +174,15 @@ class DaStGen2GeneratorForObjectsWithSmartPointers(object):
  
         extension             = "_Flattened"
         full_qualified_name_flattened   = full_qualified_name + extension
-        full_qualified_file_without_extension_flattened = self._data.subdirectory + self._data.namespace[-1] + "/" + self._data.name + extension
+        full_qualified_file_without_extension_flattened = os.path.join(self._data.subdirectory, self._data.namespace[-1], self._data.name + extension)
+        temporary_full_qualified_file_without_extension_flattened = os.path.join(self._data.temporary_subdirectory, self._data.namespace[-1], self._data.name + extension)
         
         self._data.data.set_full_qualified_name(full_qualified_name)
-        output.add( DaStGen2Artefact( self._data.data, self._data.subdirectory + self._data.namespace[-1] + "/" + self._data.name ) )
+        output.add( DaStGen2Artefact( self._data.data, os.path.join(self._data.temporary_subdirectory, self._data.namespace[-1], self._data.name) ) )
         output.makefile.add_cpp_file( self._data.subdirectory + self._data.namespace[-1] + "/" + self._data.name + ".cpp", generated=True )
 
         flattened_data_object.set_full_qualified_name(full_qualified_name_flattened)
-        output.add( DaStGen2Artefact( flattened_data_object, full_qualified_file_without_extension_flattened ) )
+        output.add( DaStGen2Artefact( flattened_data_object, temporary_full_qualified_file_without_extension_flattened ) )
         output.makefile.add_cpp_file( full_qualified_file_without_extension_flattened + ".cpp", generated=True )
 
         
@@ -324,7 +325,7 @@ a citation of the two original DaStGen papers when you discuss the memory needs:
     self.data.add_aspect( dastgen2.aspects.MPI() )
 
 
-  def configure(self, namespace, association, subdirectory=""):
+  def configure(self, namespace, association, subdirectory="", temporary_subdirectory=""):
     """!
 
     Configure output
@@ -340,7 +341,7 @@ a citation of the two original DaStGen papers when you discuss the memory needs:
     hook into this routine. 
     
     """
-    super(DaStGen2, self).configure(namespace,association,subdirectory)
+    super(DaStGen2, self).configure(namespace,association,subdirectory,temporary_subdirectory)
     self.peano4_mpi_and_storage_aspect.dof_association = association
     
     if self.hosts_smart_pointer_attribute():

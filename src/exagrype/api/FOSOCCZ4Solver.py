@@ -6,6 +6,7 @@ from typing import Dict, List, Union
 
 import exahype2.api
 
+from . import initialvalues
 from .CCZ4SolverBase import CCZ4SolverBase
 
 
@@ -130,7 +131,14 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
           derivatives. Defaults to exagrype.api.initialvalues.gauge_wave().
 
         """
-        super().__init__(name, self.Unknowns, parameters, initial_condition)
+        super().__init__(name, self.Unknowns, parameters)
+        self.add_pde_term(
+            self._adapt_initial_condition(
+                initial_condition
+                if initial_condition is not None
+                else initialvalues.gauge_wave()
+            )
+        )
         self.derivatives = exahype2.api.AuxiliaryVariables(
             "Derivatives",
             self.DerivativeUnknowns,

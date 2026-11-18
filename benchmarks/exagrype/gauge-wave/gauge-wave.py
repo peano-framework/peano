@@ -244,10 +244,8 @@ project = exahype2.api.Project(
     executable="gauge-wave",
 )
 
-solver = exagrype.api.FOCCZ4Solver(
-    "CCZ4",
-    initial_condition=exagrype.api.initialvalues.gauge_wave(),
-)
+solver = exagrype.api.FOCCZ4Solver("CCZ4")
+solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
 
 if args.scheme in ["fv", "fv-optimistic"]:
     if args.scheme == "fv":

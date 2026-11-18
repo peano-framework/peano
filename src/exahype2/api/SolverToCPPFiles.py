@@ -217,7 +217,7 @@ class {{NAMESPACE | join("::")}}::{{CLASSNAME}}: public {{NAMESPACE | join("::")
                 cppfile_template=self.TEMPLATE_ABSTRACT_CPP_FILE,
                 classname=class_name,
                 namespace=peano_project.namespace,
-                subdirectory=peano_project.subdirectory,
+                subdirectory=peano_project.temporary_subdirectory,
                 dictionary=local_d,
                 default_overwrite=True,
                 apply_iteratively=False,

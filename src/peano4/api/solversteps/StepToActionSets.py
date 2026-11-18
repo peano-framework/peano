@@ -1,6 +1,7 @@
 # This file is part of the Peano project. For conditions of distribution and
 # use, please see the copyright notice at www.peano-framework.org
 import peano4.api.output.ActionSet
+import os
 
 class StepToActionSets(object):
   """!
@@ -34,7 +35,7 @@ class StepToActionSets(object):
         action_set_name = self.step.get_observer_class_name() + "2" + action_set.get_action_set_name() + str( self.step.action_sets.index(action_set))
 
       new_action_set = peano4.api.output.ActionSet(
-        action_set_name, self.step.project.namespace + [ subnamespace ], self.step.project.subdirectory + subnamespace, action_set
+        action_set_name, self.step.project.namespace + [ subnamespace ], os.path.join(self.step.project.temporary_subdirectory, subnamespace), action_set
       )
  
       for i in self.step.vertex_data:
@@ -74,6 +75,9 @@ class StepToActionSets(object):
       )
 
       output.artefacts.append( new_action_set )
-      output.makefile.add_cpp_file( new_action_set.get_cpp_file_name(), generated=True )
+      # This is the temporary location
+      temporary_action_set_path = new_action_set.get_cpp_file_name()
+      true_action_set_path = os.path.join(self.step.project.subdirectory, subnamespace, temporary_action_set_path.split('/')[-1])
+      output.makefile.add_cpp_file( true_action_set_path, generated=True )
 
       return subnamespace + "::" + new_action_set.classname

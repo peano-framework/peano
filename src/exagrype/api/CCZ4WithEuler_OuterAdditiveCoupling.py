@@ -12,7 +12,7 @@ from .FOCCZ4Solver import FOCCZ4Solver
 from .actionsets import CopyPatchWithLinearInterpolation, SynchroniseTimeStepSizes
 
 
-class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
+class CCZ4WithEuler_OuterAdditiveCoupling:
     """!
 
     First-order CCZ4 and an Euler fluid, coupled only at the begin and the end of each time step
@@ -22,12 +22,17 @@ class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
     The coupling is additive and affects the begin and the end of a time step
     only. In between, the solvers are independent, i.e. each solver brings its
     own numerical scheme and the schemes can differ in their time stepping, patch
-    size and halo. Assign them through the host (set_numerical_scheme(), or
-    the property numerical_scheme for CCZ4):
+    size and halo. Assign them to the solvers as for any other solver:
 
-        coupled = exagrype.api.CCZ4WithEuler_AdditiveCoupling()
-        coupled.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(coupled.ccz4, 8, rk_order=4)
-        coupled.set_numerical_scheme(coupled.euler, exahype2.api.fv.RusanovWithExplicitEuler(coupled.euler, 17))
+        coupled = exagrype.api.CCZ4WithEuler_OuterAdditiveCoupling()
+        coupled.ccz4.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(coupled.ccz4, 8, rk_order=4)
+        coupled.euler.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(coupled.euler, 17)
+
+    The host sets no initial conditions. Add them to the solvers as to any other solver:
+
+        coupled.ccz4.add_pde_term(exagrype.api.initialvalues.gauge_wave())
+
+    (Euler brings a smooth wave by default.)
 
     If you prefer one numerical scheme for the whole compound, use the
     coupling per stage instead (@ref page_exahype_programmers_guide_coupling).
@@ -103,9 +108,9 @@ class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
 
     """
 
-    EULER_FIELDS_NAME = "EulerFields"
+    EULER_AUXILIARY_COPIES_NAME = "EulerFields"
     """! Name of the auxiliary variables of CCZ4 which hold the Euler fields """
-    CCZ4_FIELDS_NAME = "CCZ4Fields"
+    CCZ4_AUXILIARY_COPIES_NAME = "CCZ4Fields"
     """! Name of the auxiliary variables of Euler which hold the CCZ4 fields """
     PREP_TASK_NAME = "Prepare auxiliary variables from {}"
     """! Name of the tasks that fill the auxiliary variables; the argument is the name of the solver that provides the data """
@@ -127,28 +132,84 @@ class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
           Name of the Euler solver.
 
         """
-        self.ccz4 = FOCCZ4Solver(
-            ccz4_name, initial_condition=_gauge_wave_initial_condition()
-        )
+        self.ccz4 = FOCCZ4Solver(ccz4_name)
         self.euler = Euler(euler_name)
         Mode = exahype2.api.AuxiliaryVariables.Mode
-        self.euler_fields = exahype2.api.AuxiliaryVariables(
-            self.EULER_FIELDS_NAME,
+        self.euler_auxiliary_copies = exahype2.api.AuxiliaryVariables(
+            self.EULER_AUXILIARY_COPIES_NAME,
             dict(Euler.Unknowns),
             mode=Mode.STATIONARY_THROUGHOUT_TIME_STEPS_ON_FACES,
             data_name="EulerFieldsForCCZ4",
         )
-        self.ccz4_fields = exahype2.api.AuxiliaryVariables(
-            self.CCZ4_FIELDS_NAME,
+        self.ccz4_auxiliary_copies = exahype2.api.AuxiliaryVariables(
+            self.CCZ4_AUXILIARY_COPIES_NAME,
             dict(FOCCZ4Solver.Unknowns),
             mode=Mode.STATIONARY_THROUGHOUT_TIME_STEPS_ON_FACES,
             data_name="CCZ4FieldsForEuler",
         )
-        self.ccz4.add_auxiliary_variables(self.euler_fields)
-        self.euler.add_auxiliary_variables(self.ccz4_fields)
-        super().__init__(f"{ccz4_name}With{euler_name}", [self.ccz4, self.euler])
+        self.ccz4.add_auxiliary_variables(self.euler_auxiliary_copies)
+        self.euler.add_auxiliary_variables(self.ccz4_auxiliary_copies)
+        self._name = f"{ccz4_name}With{euler_name}"
 
-    def couple(self, exahype2_project, peano_project, own_graphs, host_graphs):
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def solvers(self):
+        """ The solvers the project has to register; exahype2.api.Project.add_solver() asks for them """
+        return [self.ccz4, self.euler]
+
+    def generate_solver_realisation(
+        self,
+        exahype2_project,
+        peano_project,
+        setup_simulation,
+        time_step,
+        plot,
+        mesh_adaptation,
+    ):
+        """!
+
+        Realise both solvers, couple their time stepping graphs, and add the outcome to the project's graphs
+
+        The arguments are those of exahype2.api.Solver.generate_solver_realisation().
+        Both solvers are realised without global tasks. The load balancing and the dynamic
+        mesh refinement wrap the coupled time step graph afterwards, through the scheme of CCZ4.
+
+        """
+        peano4.api.Logger().new_section("Host " + self.name)
+        coupled_time_step = peano4.api.taskgraph.Graph()
+        for solver in self.solvers:
+            own_time_step = peano4.api.taskgraph.Graph()
+            solver.generate_solver_realisation(
+                exahype2_project,
+                peano_project,
+                setup_simulation,
+                own_time_step,
+                plot,
+                mesh_adaptation,
+                add_global_tasks=False,
+            )
+            coupled_time_step.merge(own_time_step)
+        self._couple(exahype2_project, peano_project, coupled_time_step)
+
+        self.ccz4.numerical_scheme.wrap_task_graph_in_load_balancing_and_amr_tasks(
+            coupled_time_step
+        )
+        if self.ccz4.mesh_adaptation is not None:
+            self.ccz4.mesh_adaptation.construct_output(
+                exahype2_project, peano_project, mesh_adaptation
+            )
+
+        title = f"Time stepping task graph for host {self.name}"
+        if peano4.api.Logger().is_visualisation:
+            coupled_time_step.visualise(title=title)
+        if peano4.api.Logger().is_text:
+            coupled_time_step.log_as_text(title=title)
+        time_step.merge(coupled_time_step)
+
+    def _couple(self, exahype2_project, peano_project, time_step):
         """!
 
         Add the preamble and the final task around the concatenated graphs
@@ -159,24 +220,20 @@ class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
         @param peano_project: peano4.api.Project
           The Peano project that the exahype2 project assembles.
 
-        @param own_graphs: Dict[exahype2.api.Solver, exahype2.api.PhaseGraphs]
-          The graphs of the two solvers.
-
-        @param host_graphs: exahype2.api.PhaseGraphs
-          The concatenated graphs. The time step graph receives the new tasks.
+        @param time_step: peano4.api.taskgraph.Graph
+          The concatenation of the time step graphs of both solvers. It
+          receives the new tasks. All its source tasks are first tasks of a
+          solver, and all its sink tasks (but the global ones) are last tasks
+          of a solver.
 
         """
-        time_step = host_graphs.time_step
         peano4.api.Logger().new_section(
             "Coupling " + self.ccz4.name + " and " + self.euler.name
         )
-        Access = peano4.api.taskgraph.Task.DataAccess
         Entity = peano4.api.taskgraph.Task.GridEntity
 
-        first_tasks = (
-            own_graphs[self.ccz4].time_step.source_tasks()
-            + own_graphs[self.euler].time_step.source_tasks()
-        )
+        ## Determine them before the prep tasks are added: those are sources, too
+        first_tasks = time_step.source_tasks()
         last_tasks = [
             task for task in time_step.sink_tasks() if task.entity != Entity.GLOBAL
         ]
@@ -185,58 +242,10 @@ class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
         ## one solver, writes the auxiliary variables of the other one, and
         ## projects them onto the faces, where the reconstruction of the halo
         ## finds them.
-        actionsets = exahype2.api.rkfd4.actionsets
-        preps = []
-        for source_solver, target_solver, fields in (
-            (self.ccz4, self.euler, self.ccz4_fields),
-            (self.euler, self.ccz4, self.euler_fields),
-        ):
-            includes = (
-                target_solver._get_default_includes()
-                + target_solver.user_solver_includes
-            )
-            prep = peano4.api.taskgraph.Task(
-                name=self.PREP_TASK_NAME.format(source_solver.name),
-                entity=Entity.CELL,
-            )
-            prep.use_cell(source_solver._patch, Access.READ_AND_WRITE)
-            prep.use_cell(fields.patch, Access.READ_AND_WRITE)
-            prep.use_face(fields.patch_overlap_update, Access.TEMPORARY)
-            prep.use_face(fields.patch_overlap_current_time_step, Access.READ_AND_WRITE)
-            prep.add_action_set(
-                CopyPatchWithLinearInterpolation(
-                    source_patch=source_solver._patch,
-                    target_patch=fields.patch,
-                    guard=target_solver.grid_selector.createCellGuard(),
-                    additional_includes=includes,
-                )
-            )
-            prep.add_action_set(
-                actionsets.ProjectPatchOntoFaces(
-                    fields.patch,
-                    fields.patch_overlap_update,
-                    guard=target_solver.grid_selector.createCellGuard(),
-                    includes=includes,
-                )
-            )
-            prep.add_action_set(
-                toolbox.blockstructured.api.RestrictHangingFaces(
-                    fields.patch_overlap_update,
-                    scheme=target_solver.numerical_scheme.restriction,
-                    clear_guard=target_solver.grid_selector.createFaceGuard(),
-                    additional_includes=includes,
-                )
-            )
-            prep.add_action_set(
-                actionsets.RollOverUpdatedFace(
-                    fields.patch_overlap_current_time_step,
-                    fields.patch_overlap_update,
-                    guard=target_solver.grid_selector.createFaceGuard(),
-                    includes=includes,
-                )
-            )
-            time_step.add_task(prep)
-            preps.append(prep)
+        preps = [
+            self._create_prep_task(time_step, self.ccz4, self.euler, self.ccz4_auxiliary_copies),
+            self._create_prep_task(time_step, self.euler, self.ccz4, self.euler_auxiliary_copies),
+        ]
         ## The solvers start only once both prep tasks have finished
         for first_task in first_tasks:
             for prep in preps:
@@ -252,7 +261,81 @@ class CCZ4WithEuler_AdditiveCoupling(exahype2.api.SolverHost):
         time_step.add_task(synchronise)
 
 
-def _gauge_wave_initial_condition():
-    from . import initialvalues
+    def _create_prep_task(
+        self, time_step, source_solver, target_solver, auxiliary_copies
+    ):
+        """!
 
-    return initialvalues.gauge_wave()
+        Create the task that fills the auxiliary variables of one solver with the solution of the other one
+
+        auxiliary copies (auxiliary_copies) of the target solver (copy, with
+        auxiliary variables auxiliary_copies of the target solver (copy, with
+        interpolation if the patches differ in size), projects them onto the
+        faces, restricts them on hanging faces, and rolls the faces over. It is
+        added to time_step, but no dependencies are set: the caller wires it.
+        It is the one place that writes new face data.
+
+        @param time_step: peano4.api.taskgraph.Graph
+          Receives the task.
+
+        @param source_solver: exahype2.api.Solver
+          Provides the data.
+
+        @param target_solver: exahype2.api.Solver
+          Holds the auxiliary variables.
+
+        @param auxiliary_copies: exahype2.api.AuxiliaryVariables
+          The auxiliary variables of the target solver.
+
+        @return peano4.api.taskgraph.Task
+          The new task.
+
+        """
+        Access = peano4.api.taskgraph.Task.DataAccess
+        Entity = peano4.api.taskgraph.Task.GridEntity
+        actionsets = exahype2.api.rkfd4.actionsets
+        includes = (
+            target_solver._get_default_includes() + target_solver.user_solver_includes
+        )
+        prep = peano4.api.taskgraph.Task(
+            name=self.PREP_TASK_NAME.format(source_solver.name),
+            entity=Entity.CELL,
+        )
+        prep.use_cell(source_solver._patch, Access.READ_AND_WRITE)
+        prep.use_cell(auxiliary_copies.patch, Access.READ_AND_WRITE)
+        prep.use_face(auxiliary_copies.patch_overlap_update, Access.TEMPORARY)
+        prep.use_face(auxiliary_copies.patch_overlap_current_time_step, Access.READ_AND_WRITE)
+        prep.add_action_set(
+            CopyPatchWithLinearInterpolation(
+                source_patch=source_solver._patch,
+                target_patch=auxiliary_copies.patch,
+                guard=target_solver.grid_selector.createCellGuard(),
+                additional_includes=includes,
+            )
+        )
+        prep.add_action_set(
+            actionsets.ProjectPatchOntoFaces(
+                auxiliary_copies.patch,
+                auxiliary_copies.patch_overlap_update,
+                guard=target_solver.grid_selector.createCellGuard(),
+                includes=includes,
+            )
+        )
+        prep.add_action_set(
+            toolbox.blockstructured.api.RestrictHangingFaces(
+                auxiliary_copies.patch_overlap_update,
+                scheme=target_solver.numerical_scheme.restriction,
+                clear_guard=target_solver.grid_selector.createFaceGuard(),
+                additional_includes=includes,
+            )
+        )
+        prep.add_action_set(
+            actionsets.RollOverUpdatedFace(
+                auxiliary_copies.patch_overlap_current_time_step,
+                auxiliary_copies.patch_overlap_update,
+                guard=target_solver.grid_selector.createFaceGuard(),
+                includes=includes,
+            )
+        )
+        time_step.add_task(prep)
+        return prep

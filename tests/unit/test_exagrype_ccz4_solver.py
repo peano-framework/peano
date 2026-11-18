@@ -34,7 +34,6 @@ def test_solver_registers_ccz4_pde_terms():
         "nonconservativeProduct",
         "volumetricSource",
         "maxEigenvalue",
-        "initPointWisely",
     }
     assert (
         "::exagrype::ccz4::ncpFirstOrder("
@@ -52,15 +51,16 @@ def test_solver_registers_ccz4_pde_terms():
     assert not solver.requires_user_class
 
 
-def test_default_initial_condition_is_gauge_wave():
+def test_solver_has_no_initial_condition_of_its_own():
     solver = exagrype.api.FOCCZ4Solver("CCZ4")
+    assert "initPointWisely" not in {term.name for term in solver.pde_terms}
+
+
+def test_initial_condition_is_added_from_outside():
+    solver = exagrype.api.FOCCZ4Solver("CCZ4")
+    solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
     assert "gaugeWave" in solver.get_pde_term("initPointWisely").implementation
-
-
-def test_initial_condition_can_be_replaced():
-    solver = exagrype.api.FOCCZ4Solver(
-        "CCZ4", initial_condition=exagrype.api.initialvalues.flat()
-    )
+    solver.add_pde_term(exagrype.api.initialvalues.flat())
     assert (
         "::exagrype::initialvalues::flat("
         in solver.get_pde_term("initPointWisely").implementation

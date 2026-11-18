@@ -55,7 +55,7 @@ nuance, as auxiliary variables are not necessarily held by the faces:
   explicit FV time step needs two instead of three mesh traversals, and dependencies
   between interpolation and reconstruction vanish.
 - Finite Volumes and Runge-Kutta host the restriction in the projection task (done).
-- Open: the ExaGRyPE FOSO coupling (`exagrype.api.FOSOSolver.couple()`) still looks up
+- Open: the ExaGRyPE FOSO coupling (`exagrype.api.FOSOSolver._couple()`) still looks up
   the interpolation tasks by name, and the FOSO reconstruction solver still has
   stand-alone interpolation and restriction tasks.
 - The interpolation scheme and the restriction scheme remain attributes of the

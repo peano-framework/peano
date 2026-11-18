@@ -169,3 +169,5 @@ distclean:
 	rm -f Makefile
 
 maintainer-clean: distclean
+
+-include $(CXX_OBJS:.o=.d)

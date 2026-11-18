@@ -251,8 +251,8 @@ For FD4, the halo has to be at least 3.
   looked up the tasks of the CCZ4 solver by name in the one time stepping graph that the
   project shares among all solvers, and added itself as an additional dependency. That entangled the
   two solvers, and the user saw only one half-finished graph after the other. Now, each
-  solver builds a graph of its own, and exahype2.api.SolverHost concatenates them and
-  lets exagrype.api.FOSOSolver.couple() add the dependencies. The price is a flag
+  solver builds a graph of its own, and exagrype.api.FOSOSolver concatenates them and
+  lets exagrype.api.FOSOSolver._couple() add the dependencies. The price is a flag
   (add_global_tasks) that all schemes honour, so the load balancing switch and the dynamic
   mesh refinement exist once.
 - **Functor over the reconstructed halos.** exagrype.api.actionsets.ApplyReconstructionFunctor runs a

@@ -281,16 +281,15 @@ class Project(object):
 
         Add a solver, or a host of several coupled solvers
 
-        @param solver: exahype2.api.Solver or exahype2.api.SolverHost
-          A host (@ref exahype2.api.SolverHost) brings its solvers along. The
-          project registers each of them with its solver repository and
-          README, but lets the host realise them, so the host can couple the
-          task graphs of its solvers.
+        @param solver: exahype2.api.Solver or a coupling
+          A coupling (e.g. exagrype.api.FOSOSolver) brings its solvers along,
+          i.e. it has an attribute solvers. The project registers each of them
+          with its solver repository and README, but lets the coupling realise
+          them (generate_solver_realisation()), so it can couple the task
+          graphs of its solvers.
 
         """
-        from .SolverHost import SolverHost
-
-        if isinstance(solver, SolverHost):
+        if hasattr(solver, "solvers"):
             self._solvers.extend(solver.solvers)
         else:
             self._solvers.append(solver)

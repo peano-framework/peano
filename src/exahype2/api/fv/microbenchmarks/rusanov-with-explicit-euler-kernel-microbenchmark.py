@@ -208,7 +208,7 @@ if args.application == "euler":
         constexpr double u           = 1.0;
         constexpr double domainLeft  = -0.1;
         constexpr double domainWidth = 0.2;
-        const double     rho         = 1.0 + 0.2 * std::sin(2.0 * M_PI * (x[0] - domainLeft) / domainWidth);
+        const double     rho         = 0.2 * std::sin(2.0 * M_PI * (x[0] - domainLeft) / domainWidth);
         Q[0] = rho;
         Q[1] = rho * u;
         Q[2] = 0.0;
@@ -269,5 +269,6 @@ formatted_num_patches = "{{{}}}".format(", ".join(str(val) for val in args.num_p
 peano4_project.constants.export_const_with_type("NumberOfPatchesToStudy", str(formatted_num_patches), "tarch::la::Vector<%s, int>" % len(args.num_patches))
 peano4_project.constants.export_constexpr_with_type("NumberOfLaunchingThreads", str(1), "int")
 
+peano4_project.output.makefile.add_CXX_flag("-MD")
 peano4_project.generate()
-peano4_project.build(make_clean_first=True)
+peano4_project.build(make_clean_first=False)

@@ -91,7 +91,6 @@ class FOCCZ4Solver(CCZ4SolverBase):
         self,
         name: str,
         parameters: Dict[str, Union[int, float]] = None,
-        initial_condition: exahype2.api.InitPointWisely = None,
     ):
         """!
 
@@ -105,13 +104,8 @@ class FOCCZ4Solver(CCZ4SolverBase):
           {"CCZ4k1": 0.0}. Keys which are not in DefaultParameters are
           rejected, as they most likely are typos.
 
-        @param initial_condition: exahype2.api.InitPointWisely
-          Initial condition. Defaults to exagrype.api.initialvalues.gauge_wave().
-          Pass any other routine from exagrype.api.initialvalues, or your
-          own exahype2.api.InitPointWisely.
-
         """
-        super().__init__(name, self.Unknowns, parameters, initial_condition)
+        super().__init__(name, self.Unknowns, parameters)
 
     def _ncp_implementation(self) -> str:
         """! The secondary entries follow the 25 primary ones"""

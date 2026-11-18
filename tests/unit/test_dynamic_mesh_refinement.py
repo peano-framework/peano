@@ -41,7 +41,7 @@ def _last_task(solver, tmp_path):
     the tasks that act at the end of the time step (such as the one that
     computes the time step size)
     """
-    exahype2_project = types.SimpleNamespace(periodic_BC=[True, True, True])
+    exahype2_project = types.SimpleNamespace(periodic_BC=[True, True, True], _dimensions=3)
     peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
     time_step = peano4.api.taskgraph.Graph()
     solver.numerical_scheme.construct_output(exahype2_project, peano_project, time_step)

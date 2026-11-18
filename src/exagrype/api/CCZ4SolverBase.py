@@ -10,7 +10,6 @@ import peano4.api
 import peano4.api.taskgraph
 import toolbox.blockstructured.api
 
-from . import initialvalues
 
 
 class CCZ4SolverBase(exahype2.api.Solver):
@@ -130,7 +129,6 @@ class CCZ4SolverBase(exahype2.api.Solver):
         name: str,
         unknowns: Dict[str, int],
         parameters: Dict[str, Union[int, float]] = None,
-        initial_condition: exahype2.api.InitPointWisely = None,
     ):
         """!
 
@@ -151,10 +149,9 @@ class CCZ4SolverBase(exahype2.api.Solver):
           (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.Switches) have
           to be the integers 0 or 1.
 
-        @param initial_condition: exahype2.api.InitPointWisely
-          Initial condition. Defaults to exagrype.api.initialvalues.gauge_wave().
-          Pass any other routine from exagrype.api.initialvalues, or your
-          own exahype2.api.InitPointWisely.
+        The solver has no initial condition. Add one as for any other solver,
+        e.g. solver.add_pde_term(exagrype.api.initialvalues.gauge_wave()), or
+        your own exahype2.api.InitPointWisely.
 
         """
         super().__init__(name, unknowns=unknowns)
@@ -199,13 +196,6 @@ class CCZ4SolverBase(exahype2.api.Solver):
         )
 
         self._register_pde_terms()
-        self.add_pde_term(
-            self._adapt_initial_condition(
-                initial_condition
-                if initial_condition is not None
-                else initialvalues.gauge_wave()
-            )
-        )
 
     def lopsided_advection_quantities(self) -> List[str]:
         """!
@@ -373,7 +363,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
             ):
                 self._insert_constraint_enforcement(time_step, [anchor], stage_input)
 
-        title = f"Time stepping task graph for {self.name}{self.task_graph_title_suffix} with CCZ4 constraint enforcement"
+        title = f"Time stepping task graph for {self.name} with CCZ4 constraint enforcement"
         if peano4.api.Logger().is_visualisation:
             time_step.visualise(title=title)
         if peano4.api.Logger().is_text:
@@ -478,16 +468,6 @@ class CCZ4SolverBase(exahype2.api.Solver):
                 implementation=self._max_eigenvalue_implementation(), stateless=True
             )
         )
-
-    def _adapt_initial_condition(
-        self, initial_condition: exahype2.api.InitPointWisely
-    ) -> exahype2.api.InitPointWisely:
-        """!
-        Hook which lets the subclass adapt the initial condition, which fills
-        58 entries, to the unknowns and auxiliary variables it holds. The default
-        passes the initial condition on.
-        """
-        return initial_condition
 
     def _ncp_implementation(self) -> str:
         """!

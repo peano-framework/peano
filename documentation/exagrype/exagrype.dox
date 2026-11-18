@@ -203,7 +203,8 @@ Users no longer have to add PDE terms themselves.
 You still have to pick a well-suited numerical scheme, however:
 
 ~~~~~~~~~~~~~~~~~~~~~~~
-solver = exagrype.api.FOCCZ4Solver("CCZ4", initial_condition=exagrype.api.initialvalues.gauge_wave())
+solver = exagrype.api.FOCCZ4Solver("CCZ4")
+solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
 solver.numerical_scheme = exahype2.api.fv.RusanovWithOptimisticExplicitEuler(solver, patch_size)
 solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(solver, volume_size=0.04)
 ~~~~~~~~~~~~~~~~~~~~~~~

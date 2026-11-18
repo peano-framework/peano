@@ -2217,11 +2217,11 @@ tarch::logging::Log {{FULL_QUALIFIED_CLASSNAME}}::_log( "{{FULL_QUALIFIED_CLASSN
         return self.subdirectory + "/" + self.classname + ".cpp"
 
     def generate(self, overwrite, directory):
-        if not os.path.exists(directory + "/" + self.subdirectory):
-            os.mkdir(directory + "/" + self.subdirectory)
+        if not os.path.exists(os.path.join(directory, self.subdirectory)):
+            os.mkdir(os.path.join(directory, self.subdirectory))
 
-        header_filename = directory + "/" + self.subdirectory + "/" + self.classname + ".h"
-        cpp_filename = directory + "/" + self.get_cpp_file_name()
+        header_filename = os.path.join(directory, self.subdirectory, self.classname + ".h")
+        cpp_filename = os.path.join(directory, self.get_cpp_file_name())
 
         header_written = write_file(overwrite, self.default_overwrite, header_filename)
         cpp_written = write_file(overwrite, self.default_overwrite, cpp_filename)

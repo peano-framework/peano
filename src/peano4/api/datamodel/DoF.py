@@ -132,7 +132,7 @@ class DoF(object):
     self.grid_selector = None
   
   
-  def configure(self,namespace,association, subdirectory=""):
+  def configure(self,namespace,association, subdirectory="", temporary_subdirectory=""):
     """
     Typically called by model as soon as you add an object to it
     """
@@ -140,6 +140,7 @@ class DoF(object):
     self.association  = association
     self.namespace   += [ get_subnamespace_for_association(association) ]   
     self.subdirectory = subdirectory
+    self.temporary_subdirectory = temporary_subdirectory
     
 
   def get_full_qualified_type(self):

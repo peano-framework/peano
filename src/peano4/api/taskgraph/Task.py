@@ -120,10 +120,13 @@ class Task:
         into prepareTraversal()/unprepareTraversal(), i.e. they realise
         global (per rank) activities such as triggering the load balancing.
         They therefore may not declare any cell, face or vertex data, may
-        not repeat, and no other task may depend on them. Task graph
-        compilers which fuse tasks append a GLOBAL task to the traversal
-        holding its last dependency
-        (@ref peano4.api.taskgraph.compiler.FuseSteps.translate()).
+        not repeat. Task graph compilers which fuse tasks append a GLOBAL
+        task to the traversal holding its last dependency
+        (@ref peano4.api.taskgraph.compiler.FuseSteps.translate()). Other
+        tasks may depend on a GLOBAL task. The compiler then does not fuse
+        them into the traversal of the GLOBAL task, as the latter acts in
+        the prepare and unprepare events of this traversal: they run in a
+        later mesh sweep.
 
         GLOBAL_START_OF_STEP and GLOBAL_END_OF_STEP are GLOBAL tasks that are
         tied to the beginning and the end of the whole task graph rather than
@@ -135,10 +138,14 @@ class Task:
           Other tasks may depend on it, but this is trivial.
         - A GLOBAL_END_OF_STEP task runs last, i.e. its action sets are the
           last ones of the last traversal, after all other tasks including
-          the other GLOBAL tasks. Only other GLOBAL_END_OF_STEP tasks may
-          depend on it, which orders them among each other. A typical
+          the other GLOBAL tasks. Other GLOBAL_END_OF_STEP tasks may depend
+          on it, which orders them among each other. A typical
           example is the global CFL condition, which reduces data in
-          unprepareTraversal() only.
+          unprepareTraversal() only. If a task that is not an end-of-step
+          task depends on it, it cannot run at the very end of the step.
+          It then ends the traversal of its last dependency, as a GLOBAL
+          task does, and the dependent task runs in a later traversal
+          (@ref peano4.api.taskgraph.Graph.Graph.anchored_end_of_step_tasks()).
 
         Task graph compilers that do not fuse tasks guarantee the same order
         (@ref peano4.api.taskgraph.Graph.Graph.ordered_tasks()).

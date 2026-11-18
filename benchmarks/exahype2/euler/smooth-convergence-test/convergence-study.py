@@ -8,7 +8,10 @@ Generates, builds and runs smooth-convergence-test.py for the three
 standard mesh widths (@ref benchmarks_exahype2_euler_smooth_setup), and
 hands the outcome to compute-errors.py. The script exits with a non-zero
 status if the order of the maximum error between the two finest meshes
-falls below the minimum order (default 3.5 for rk4fd4, which yields 4.0).
+falls below the minimum order of the scheme (e.g. 3.5 for rk4fd4, which yields 4.0).
+By default, the study runs the Finite Difference schemes rk1fd4, rk2fd4, rk3fd4 and
+rk4fd4 one after another (each in a subdirectory of the work directory) and fails
+if any of them misses its minimum order.
 
 This is part of the ExaHyPE 2 integration test (skill exahype2:integration-test).
 
@@ -37,16 +40,17 @@ parser.add_argument(
     help="Directory the runs are built in (outside of the repository)",
 )
 parser.add_argument(
-    "--scheme",
-    default="rk4fd4",
+    "--schemes",
+    nargs="+",
+    default=["rk1fd4", "rk2fd4", "rk3fd4", "rk4fd4"],
     choices=list(MINIMUM_ORDERS.keys()),
-    help="Numerical scheme, see smooth-convergence-test.py (default: rk4fd4)",
+    help="Numerical schemes, see smooth-convergence-test.py (default: rk1fd4 rk2fd4 rk3fd4 rk4fd4)",
 )
 parser.add_argument(
     "--minimum-order",
     type=float,
     default=None,
-    help="Minimum order between the two finest meshes (default: slightly below the scheme's formal order, e.g. 3.5 for rk4fd4)",
+    help="Minimum order between the two finest meshes, for all schemes (default: slightly below the scheme's formal order, e.g. 3.5 for rk4fd4)",
 )
 parser.add_argument(
     "-j",
@@ -56,42 +60,44 @@ parser.add_argument(
     help="Parallel make jobs per build; 0 or less uses all cores (default: all cores)",
 )
 args = parser.parse_args()
-minimum_order = args.minimum_order if args.minimum_order is not None else MINIMUM_ORDERS[args.scheme]
 
 work = os.path.abspath(args.work_directory)
 os.makedirs(work, exist_ok=True)
-runs = []
-for volume_size in VOLUME_SIZES:
-    run = os.path.join(work, f"run-{volume_size}")
-    runs.append(run)
-    executable = os.path.join(run, "smooth-convergence-test")
-    if not os.path.exists(
-        os.path.join(run, "solution-EulerSmooth.peano-patch-file")
-    ):
-        print(f"build and run {volume_size}", flush=True)
-        subprocess.run(
-            [
-                sys.executable,
-                os.path.join(HERE, "smooth-convergence-test.py"),
-                "--output-directory",
-                run,
-                "--volume-size",
-                volume_size,
-                "--scheme",
-                args.scheme,
-                "--build-jobs",
-                str(args.build_jobs),
-                "--verbosity",
-                "text",
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-        with open(os.path.join(run, "run.log"), "w") as log:
-            subprocess.run([executable], cwd=run, check=True, stdout=log, stderr=log)
 
-sys.exit(
-    subprocess.run(
+
+def study(scheme):
+    minimum_order = args.minimum_order if args.minimum_order is not None else MINIMUM_ORDERS[scheme]
+    print(f"scheme {scheme}", flush=True)
+    runs = []
+    for volume_size in VOLUME_SIZES:
+        run = os.path.join(work, scheme, f"run-{volume_size}")
+        runs.append(run)
+        executable = os.path.join(run, "smooth-convergence-test")
+        if not os.path.exists(
+            os.path.join(run, "solution-EulerSmooth.peano-patch-file")
+        ):
+            print(f"build and run {scheme} {volume_size}", flush=True)
+            subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(HERE, "smooth-convergence-test.py"),
+                    "--output-directory",
+                    run,
+                    "--volume-size",
+                    volume_size,
+                    "--scheme",
+                    scheme,
+                    "--build-jobs",
+                    str(args.build_jobs),
+                    "--verbosity",
+                    "text",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            with open(os.path.join(run, "run.log"), "w") as log:
+                subprocess.run([executable], cwd=run, check=True, stdout=log, stderr=log)
+    return subprocess.run(
         [
             sys.executable,
             os.path.join(HERE, "compute-errors.py"),
@@ -100,4 +106,9 @@ sys.exit(
         ]
         + runs
     ).returncode
-)
+
+
+failed = [scheme for scheme in args.schemes if study(scheme) != 0]
+if failed:
+    print(f"FAILED: {', '.join(failed)}")
+sys.exit(1 if failed else 0)

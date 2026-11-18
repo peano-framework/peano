@@ -2,6 +2,7 @@
 # use, please see the copyright notice at www.peano-framework.org
 import peano4.api
 import peano4.api.output.Jinja2TemplateStringHeaderImplementationFilePair
+import os
 
 from ..Project import Project
 
@@ -174,7 +175,7 @@ namespace {{ item }} {
                 self.TEMPLATE_CPP_FILE,
                 "SolverRepository",
                 peano_project.namespace + ["repositories"],
-                peano_project.subdirectory + "repositories",
+                os.path.join(peano_project.temporary_subdirectory, "repositories"),
                 self.solverRepositoryDictionary,
                 True,
             )

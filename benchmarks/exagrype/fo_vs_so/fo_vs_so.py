@@ -291,7 +291,8 @@ def build(scheme, formulation, cells):
     )
     initial_condition = exagrype.api.initialvalues.gauge_wave()
     if formulation == "FO":
-        solver = exagrype.api.FOCCZ4Solver(name, initial_condition=initial_condition)
+        solver = exagrype.api.FOCCZ4Solver(name)
+        solver.add_pde_term(initial_condition)
         scheme_owner = solver
     else:
         # The pair of CCZ4 and reconstruction solver. The pair holds the scheme.

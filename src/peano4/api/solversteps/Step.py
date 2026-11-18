@@ -146,6 +146,7 @@ class Step:
         self.project = project
         self.namespace = project.namespace
         self.subdirectory = project.subdirectory
+        self.temporary_subdirectory = project.temporary_subdirectory
 
     def use_cell(self, submodel):
         self.cell_data.append(submodel)

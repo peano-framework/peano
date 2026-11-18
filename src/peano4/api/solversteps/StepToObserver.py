@@ -1,7 +1,7 @@
 # This file is part of the Peano project. For conditions of distribution and
 # use, please see the copyright notice at www.peano-framework.org
 import peano4.api.output.ActionSet
-
+import os
 
 class StepToObserver(object):
   """!
@@ -46,7 +46,7 @@ class StepToObserver(object):
         which run in parallel - @ref peano4.api.output.Observer.Observer.
     """
     observer = peano4.api.output.Observer(
-      self.step.get_observer_class_name(), self.step.project.namespace + [ "observers" ], self.step.project.subdirectory + "observers",
+      self.step.get_observer_class_name(), self.step.project.namespace + [ "observers" ], os.path.join(self.step.project.temporary_subdirectory, "observers"),
       included_action_sets,
       self.step.vertex_data,
       self.step.face_data,
@@ -54,4 +54,7 @@ class StepToObserver(object):
       task_groups
     )
     output.artefacts.append( observer )
-    output.makefile.add_cpp_file( observer.get_cpp_file_name(), generated=True )
+    # This is the temporary location
+    temporary_observer_path = observer.get_cpp_file_name()
+    true_observer_path = os.path.join(self.step.project.subdirectory, "observers", temporary_observer_path.split('/')[-1])
+    output.makefile.add_cpp_file( true_observer_path, generated=True )

@@ -17,8 +17,6 @@ from .blockstructured import DirichletBoundaryConditions
 from .blockstructured import SommerfeldBoundaryConditions
 from .KernelVariants import Target, OutputLanguage, MemoryLayout
 from .Solver import Solver
-from .SolverHost import SolverHost
-from .SolverHost import PhaseGraphs
 from .AuxiliaryVariables import AuxiliaryVariables
 from .SolverToCPPFiles import SolverToCPPFiles
 from . import fv

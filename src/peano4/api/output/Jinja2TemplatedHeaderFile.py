@@ -66,9 +66,9 @@ class Jinja2TemplatedHeaderFile(object):
         output.write( rendered_text )
 
   def generate(self,overwrite,directory):
-    if not os.path.exists( directory + "/" + self.subdirectory ):
-      os.mkdir(directory + "/" + self.subdirectory)
+    if not os.path.exists( os.path.join(directory, self.subdirectory) ):
+      os.mkdir(os.path.join(directory, self.subdirectory))
 
-    header_filename = directory + "/" + self.subdirectory + "/" + self.classname + ".h"
+    header_filename = os.path.join(directory, self.subdirectory, self.classname + ".h")
 
     self.__generate_file(overwrite,header_filename,self.headerfile_template)

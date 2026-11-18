@@ -475,9 +475,9 @@ def main():
     solver = exagrype.api.FOCCZ4Solver(
         "CCZ4",
         parameters={"CCZ4b": 1, "CCZ4s": 1},
-        initial_condition=exagrype.api.initialvalues.single_black_hole(
-            mass=arguments.mass
-        ),
+    )
+    solver.add_pde_term(
+        exagrype.api.initialvalues.single_black_hole(mass=arguments.mass)
     )
     solver.enforce_ccz4_constraint(EnforceModes[arguments.enforce_constraints])
     solver.add_pde_term(

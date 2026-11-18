@@ -104,6 +104,7 @@ def _postprocessed_time_step(
     import exagrype.api
 
     solver = exagrype.api.FOCCZ4Solver("Probe")
+    solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
     solver.numerical_scheme = scheme_factory(solver)
     solver.grid_construction = grid_construction_factory(solver)
     solver.enforce_ccz4_constraint(enforce)

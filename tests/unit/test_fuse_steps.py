@@ -338,13 +338,43 @@ def test_start_of_step_task_may_not_depend_on_anything():
         FuseSteps.translate(graph, "S", None)
 
 
-def test_only_end_of_step_tasks_may_depend_on_end_of_step_tasks():
-    end = Task("end", END)
-    cell = Task("c", CELL)
-    cell.add_dependency(end)
-    graph = _graph_with_global_tasks(end, cell)
-    with pytest.raises(AssertionError, match="only other GLOBAL_END_OF_STEP"):
-        FuseSteps.translate(graph, "S", None)
+def test_task_depending_on_a_global_task_does_not_share_its_traversal():
+    first, second = Task("c1", CELL), Task("c2", CELL)
+    global_task = Task("g", Task.GridEntity.GLOBAL)
+    global_task.add_dependency(first)
+    second.add_dependency(global_task)
+    graph = _graph_with_global_tasks(first, global_task, second)
+    assert _action_sets_per_step(graph) == [["c1", "g"], ["c2"]]
+    # Without the global task, the two cell tasks run in one traversal
+    plain = _graph_with_global_tasks(first, second)
+    second.dependencies.remove(global_task)
+    second.add_dependency(first)
+    assert _action_sets_per_step(plain) == [["c1", "c2"]]
+
+
+def test_end_of_step_task_with_a_dependent_task_ends_its_traversal_instead_of_the_step():
+    first, second = Task("c1", CELL), Task("c2", CELL)
+    anchored_end, trailing_end = Task("end1", END), Task("end2", END)
+    anchored_end.add_dependency(first)
+    second.add_dependency(anchored_end)
+    trailing_end.add_dependency(second)
+    graph = _graph_with_global_tasks(trailing_end, second, anchored_end, first)
+    assert graph.anchored_end_of_step_tasks() == [anchored_end]
+    assert _action_sets_per_step(graph) == [["c1", "end1"], ["c2", "end2"]]
+    # The order stays topological
+    order = graph.ordered_tasks()
+    assert order.index(first) < order.index(anchored_end) < order.index(second) < order.index(trailing_end)
+
+
+def test_end_of_step_task_which_an_anchored_one_depends_on_is_anchored_too():
+    first, second = Task("c1", CELL), Task("c2", CELL)
+    inner_end, outer_end = Task("end1", END), Task("end2", END)
+    inner_end.add_dependency(first)
+    outer_end.add_dependency(inner_end)
+    second.add_dependency(outer_end)
+    graph = _graph_with_global_tasks(first, second, inner_end, outer_end)
+    assert set(graph.anchored_end_of_step_tasks()) == {inner_end, outer_end}
+    assert _action_sets_per_step(graph) == [["c1", "end1", "end2"], ["c2"]]
 
 
 def test_repeating_first_and_last_traversal_get_their_own_start_and_end_traversal():

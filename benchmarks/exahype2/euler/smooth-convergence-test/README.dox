@@ -58,7 +58,7 @@ convergence-study.py does the same in one go and checks the order (it is part of
 integration test, skill exahype2:integration-test):
 
 ~~~~~~~~~~~~~~~~~~~~~~~
-python3 convergence-study.py --scheme rk4fd4 --work-directory <directory-outside-of-the-repository>
+python3 convergence-study.py --schemes rk1fd4 rk2fd4 rk3fd4 rk4fd4 --work-directory <directory-outside-of-the-repository>
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 The three volume sizes yield 27, 81 and 243 grid cells per axis, as each mesh

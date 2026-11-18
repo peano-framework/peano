@@ -700,7 +700,7 @@ Patch overlap data
             "false"
         )
 
-    def __create_kernels(self, output_directory):
+    def __create_kernels(self, peano4_project):
         """!
 
         Translate the DSLHyPE kernels into C++
@@ -789,6 +789,10 @@ Patch overlap data
                     self.max_eigenvalue_kernel_name,
                 ),
             ]
+
+        output_directory = peano4_project.directory
+        temporary_output_directory = peano4_project.temporary_directory
+            
         for function, file_suffix, function_name in kernels:
             dslhype.translate_dslhype_function(
                 function=function,
@@ -800,12 +804,12 @@ Patch overlap data
                 target=dslhype.Target.Serial,
                 stateless=False,
                 function_name=function_name,
-                output_directory=output_directory,
+                output_directory=temporary_output_directory,
             )
 
         for _, file_suffix, _ in kernels:
             include_implementation_into_header(
-                os.path.join(output_directory, "kernels"),
+                os.path.join(temporary_output_directory, "kernels"),
                 f"{self._solver.name}{file_suffix}",
             )
 
@@ -820,7 +824,7 @@ Patch overlap data
             if file_suffix.endswith("3d")
         )
         with open(
-            os.path.join(output_directory, "kernels", f"{self._solver.name}_fd4.h"), "w"
+            os.path.join(temporary_output_directory, "kernels", f"{self._solver.name}_fd4.h"), "w"
         ) as file:
             file.write(
                 f"""#pragma once
@@ -1112,7 +1116,7 @@ Patch overlap data
             self.max_eigenvalue_kernel_call = self.__construct_kernel_call(
                 self.max_eigenvalue_kernel_name, []
             )
-        self.__create_kernels(peano_project.directory)
+        self.__create_kernels(peano_project)
 
         cell_guard = self._solver.grid_selector.createCellGuard()
         face_guard = self._solver.grid_selector.createFaceGuard()
@@ -1454,13 +1458,9 @@ Patch overlap data
 
         if peano4.api.Logger().is_visualisation:
             time_step.visualise(
-                title="Time stepping task graph for {}{}".format(
-                    name, self._solver.task_graph_title_suffix
-                )
+                title="Time stepping task graph for {}".format(name)
             )
         if peano4.api.Logger().is_text:
             time_step.log_as_text(
-                title="Time stepping task graph for {}{}".format(
-                    name, self._solver.task_graph_title_suffix
-                )
+                title="Time stepping task graph for {}".format(name)
             )

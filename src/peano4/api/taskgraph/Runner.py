@@ -1,7 +1,7 @@
 # This file is part of the Peano project. For conditions of distribution and
 # use, please see the copyright notice at www.peano-framework.org
 import peano4.api.output
-
+import os
 
 TEMPLATE_RUNNER_HEADER_FILE = """
 // This file is part of the ExaHyPE2 project. For conditions of distribution and
@@ -158,7 +158,7 @@ def create_runner(peano_project, identifier, steps):
         cppfile_template    = TEMPLATE_RUNNER_CPP_FILE,
         classname           = identifier,
         namespace           = peano_project.namespace + ["runners"],
-        subdirectory        = peano_project.subdirectory + "runners",
+        subdirectory        = os.path.join(peano_project.temporary_subdirectory, "runners"),
         dictionary          = {
             "PROJECT_NAMESPACE": peano_project.namespace,
             "SUBNAMESPACE":      peano_project._subdirectory + "::" if peano_project._subdirectory else "",

@@ -61,7 +61,7 @@ def write_file(path, binary, patches=2, datasets=("Q",), evil=False):
                     raw = EVIL + raw[8:]
                 out += raw + b"\n"
             else:
-                out += ("    " + " ".join(repr(v) for v in values) + "\n").encode()
+                out += ("    " + " ".join(repr(float(v)) for v in values) + "\n").encode()
             out += b"  end cell-values\n"
         out += b"end patch\n\n"
     path.write_bytes(out)

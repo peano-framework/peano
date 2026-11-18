@@ -90,7 +90,7 @@ class ModelToDataRepository(object):
         templatefile_prefix+".template.cpp",
         class_name, 
         namespace,
-        self.model.subdirectories[i] + namespace[-1],
+        os.path.join(self.model.temporary_subdirectories[i], namespace[-1]),
         local_d,
         True)
       output.add(generated_files)

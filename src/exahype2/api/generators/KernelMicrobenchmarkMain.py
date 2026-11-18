@@ -574,7 +574,7 @@ int main(int argc, char** argv) {
             cppfile_template    = self.CPP_TEMPLATE,
             classname           = main_name,
             namespace           = self.project.rootnamespace,
-            subdirectory        = "./",
+            subdirectory        = self.project.temporary_directory,
             dictionary          = d,
             default_overwrite   = True,
         )

@@ -23,7 +23,7 @@ def _time_step(scheme, tmp_path):
     solver.add_pde_term(exahype2.api.Flux(implementation="F[0] = Q[0]; F[1] = Q[1];"))
     solver.add_pde_term(exahype2.api.MaxEigenvalue(implementation="*lambdaMax = 1.0;"))
     solver.numerical_scheme = SCHEMES[scheme](solver, 9)
-    exahype2_project = types.SimpleNamespace(periodic_BC=[True, True, True])
+    exahype2_project = types.SimpleNamespace(periodic_BC=[True, True, True], _dimensions=3)
     peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
     graph = peano4.api.taskgraph.Graph()
     solver.numerical_scheme.construct_output(exahype2_project, peano_project, graph)
@@ -127,3 +127,14 @@ def test_update_eigenvalue_and_reduction_fold_into_one_traversal(scheme, tmp_pat
     assert "ProjectPatchOntoFaces" in names[-1]
     assert "ReduceMaxEigenvalue" in names[-1]
     assert "ComputeGlobalCFLCondition" in names[-1]
+
+
+def test_eigenvalue_task_calls_the_eigenvalue_kernel(tmp_path):
+    """!
+    The eigenvalue task must call the eigenvalue kernel (not the time step
+    kernel).
+    """
+    solver, _, _ = _time_step("explicit", tmp_path)
+    call = solver.numerical_scheme.max_eigenvalue_kernel_call
+    assert "maxEigenvalueOverPatch" in call
+    assert "timeStepWithRusanov" not in call

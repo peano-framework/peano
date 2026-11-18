@@ -133,13 +133,13 @@ class ActionSet(object):
     return full_qualified_classname
 
   def __generate_header(self,overwrite,directory):
-    filename = directory + "/" + self.subdirectory + "/" + self.classname + ".h";
+    import inspect, os
+    filename = os.path.join(directory, self.subdirectory, self.classname + ".h")
     default_overwrite = True
     if self.implementation.user_should_modify_template():
       default_overwrite = False
 
     if write_file(overwrite,default_overwrite,filename):
-      import inspect, os
       print( "{} written by {}".format(filename, os.path.basename(inspect.getfile(self.__class__))))
 
       with open( filename, "w" ) as outputfile:
@@ -210,12 +210,12 @@ class ActionSet(object):
     return self.subdirectory + "/" + self.classname + ".cpp"
 
   def __generate_implementation(self,overwrite,directory):
-    filename = directory + "/" + self.get_cpp_file_name()
+    import inspect, os
+    filename = os.path.join(directory, self.get_cpp_file_name())
     default_overwrite = True
     if self.implementation.user_should_modify_template():
       default_overwrite = False
     if write_file(overwrite,default_overwrite,filename):
-      import inspect, os
       print( "{} written by {}".format(filename, os.path.basename(inspect.getfile(self.__class__))))
       outputfile = open( filename, "w" )
 
@@ -259,7 +259,7 @@ class ActionSet(object):
         outputfile.write( "}\n\n\n" )
 
   def generate(self,overwrite,directory):
-    if not os.path.exists( directory + "/" + self.subdirectory ):
-      os.mkdir(directory + "/" + self.subdirectory)
+    if not os.path.exists( os.path.join(directory, self.subdirectory) ):
+      os.mkdir(os.path.join(directory, self.subdirectory))
     self.__generate_header(overwrite,directory)
     self.__generate_implementation(overwrite,directory)

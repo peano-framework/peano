@@ -64,7 +64,7 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
     6. Roll the face data over.
 
     The graph has no dependencies between stages. The host concatenates the graph with the
-    one of the CCZ4 solver (exagrype.api.FOSOSolver.couple()): The first tasks of
+    one of the CCZ4 solver (exagrype.api.FOSOSolver._couple()): The first tasks of
     a stage wait for what the CCZ4 solver's interpolation of the derivatives
     in this stage waited for, and the interpolation of the primary variables
     additionally waits for the CCZ4 solver's interpolation of the unknowns (both
@@ -221,7 +221,7 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
           interpolate the derivatives, and reconstruct the unknowns (halo).
           The first reconstruction tasks of the stage wait for what the second one
           waits for, and the second and third one wait for the last
-          reconstruction task. @ref exagrype.api.FOSOSolver.couple()
+          reconstruction task. @ref exagrype.api.FOSOSolver._couple()
 
         """
         ccz4 = self.ccz4

@@ -121,14 +121,14 @@ class Solver(abc.ABC):
               erase requests for the mesh adaptation phase, and then
               switches the load balancing on again and informs it that the
               time step has finished. It waits for all tasks of the graph that
-              nothing else waits for. Global tasks do not count, as nothing
-              may depend on a GLOBAL_END_OF_STEP task.
+              nothing else waits for. Global tasks do not count: The
+              task runs last in the step, so no other task may wait for it.
 
             The tasks pick up whatever is in time_step when the routine is
             called. Consequently, construct_output() calls it last if its flag
             add_global_tasks is set, i.e. after all tasks of the scheme have
-            been added. A host that merges the graphs of several solvers
-            (@ref exahype2.api.SolverHost) calls it on the merged graph
+            been added. A coupling that merges the graphs of several solvers
+            (@ref page_exahype_programmers_guide_coupling) calls it on the merged graph
             instead.
 
             Schemes that do not own a mesh override the routine with an empty
@@ -655,51 +655,6 @@ class Solver(abc.ABC):
         Unique solver name. Feeds into all generated class and instance names.
         """
         return self._name
-
-    @property
-    def task_graph_title_suffix(self) -> str:
-        """!
-        Appended to the solver name in the title of the solver's task graphs.
-        Empty by default. Solvers which are one part of a host
-        (exahype2.api.SolverHost) use it to say which part they are.
-        """
-        return ""
-
-    def create_task_graph(
-        self, exahype2_project, peano_project, stage: int, number_of_stages: int
-    ):
-        """!
-
-        Return the tasks of this solver for one stage of its host's time stepping
-
-        A solver which is hosted (@ref exahype2.api.SolverHost) has no numerical
-        scheme of its own. Instead, the host's scheme asks it for its task graph
-        once per stage of the Runge-Kutta scheme (once if there is no stage), and
-        composes the graphs it receives: The graphs are returned as they are, i.e.
-        without any dependency on tasks of other solvers. The host adds those
-        through dependencies. Solvers which are not hosted do not implement
-        the routine.
-
-        @param exahype2_project: exahype2.api.Project
-          The project that hosts the solvers.
-
-        @param peano_project: peano4.api.Project
-          The Peano project that the exahype2 project assembles. The solver
-          adds the data it needs to it.
-
-        @param stage: int
-          Stage for which the graph is built, starting with 0.
-
-        @param number_of_stages: int
-          Number of stages of the host's time stepping scheme.
-
-        @return peano4.api.taskgraph.Graph
-          Fresh graph with tasks that belong to this stage only.
-
-        """
-        raise NotImplementedError(
-            f"Solver {self._name} cannot be hosted, as it does not provide a task graph"
-        )
 
     @property
     def numerical_scheme(self) -> "Solver.NumericalScheme":

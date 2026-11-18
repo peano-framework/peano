@@ -76,7 +76,9 @@ dictionary entries besides the ones manually handed over by the user.
         output.write( rendered_text )
 
   def generate(self,overwrite,directory):
-    subdirectory_path = os.path.normpath( directory + "/" + self.subdirectory )
+    subdirectory_path = os.path.normpath( self.subdirectory )
+    print (directory)
+    print (self.subdirectory)
     if not os.path.exists( subdirectory_path ):
       os.mkdir(subdirectory_path)
 

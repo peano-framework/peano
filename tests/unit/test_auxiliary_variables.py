@@ -159,7 +159,7 @@ def test_stateful_kernel_call_slices_the_kernel_buffer():
 
 
 def _graphs(solvers, tmp_path):
-    exahype2_project = types.SimpleNamespace(periodic_BC=[True] * 3)
+    exahype2_project = types.SimpleNamespace(periodic_BC=[True] * 3, _dimensions=3)
     peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
     setup = peano4.api.taskgraph.Graph()
     time_step = peano4.api.taskgraph.Graph()
@@ -230,7 +230,7 @@ def test_optimistic_scheme_rejects_auxiliary_variables(tmp_path):
     )
     with pytest.raises(NotImplementedError):
         solver.numerical_scheme.construct_output(
-            types.SimpleNamespace(periodic_BC=[True] * 3),
+            types.SimpleNamespace(periodic_BC=[True] * 3, _dimensions=3),
             peano4.api.Project(["probe"], "probe", str(tmp_path)),
             peano4.api.taskgraph.Graph(),
         )
@@ -265,7 +265,7 @@ def test_fd4_reconstructs_the_halos_of_auxiliary_variables(tmp_path):
     solver.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
         solver, patch_size=6, rk_order=2, time_step_size=0.1
     )
-    exahype2_project = types.SimpleNamespace(periodic_BC=[True] * 3)
+    exahype2_project = types.SimpleNamespace(periodic_BC=[True] * 3, _dimensions=3)
     peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
     time_step = peano4.api.taskgraph.Graph()
     solver.numerical_scheme.construct_output(exahype2_project, peano_project, time_step)
@@ -326,7 +326,7 @@ def _fd4_time_step(tmp_path, mode, rk_order=3):
     solver.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
         solver, patch_size=6, rk_order=rk_order, time_step_size=0.1
     )
-    exahype2_project = types.SimpleNamespace(periodic_BC=[True] * 3)
+    exahype2_project = types.SimpleNamespace(periodic_BC=[True] * 3, _dimensions=3)
     peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
     time_step = peano4.api.taskgraph.Graph()
     solver.numerical_scheme.construct_output(exahype2_project, peano_project, time_step)
