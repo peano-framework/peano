@@ -11,19 +11,18 @@ import peano4.api.taskgraph
 import toolbox.blockstructured.api
 
 
-
 class CCZ4SolverBase(exahype2.api.Solver):
     """!
 
     Everything the first-order and the second-order CCZ4 solvers share
 
     The base class hosts the CCZ4 parameters, the PDE terms (which delegate
-    to the kernels in exagrype::ccz4), the initial conditions and the
-    optional enforcement of the CCZ4 constraints. The kernels always work on
-    the 58 entries of CCZ4, see exagrype.api.FOCCZ4Solver.Unknowns, which
-    they take as two pointers: one to the 25 primary and one to the 33
-    secondary entries. The two subclasses differ only in where the secondary
-    entries live:
+    to the kernels in exagrype::ccz4) and the optional enforcement of the
+    CCZ4 constraints. The initial condition is up to the user. The kernels
+    always work on the 58 entries of CCZ4, see
+    exagrype.api.FOCCZ4Solver.Unknowns, which they take as two pointers:
+    one to the 25 primary and one to the 33 secondary entries. The two
+    subclasses differ only in where the secondary entries live:
 
     - exagrype.api.FOCCZ4Solver evolves all 58 as unknowns. The secondary
       entries follow the primary ones, i.e. the pointers are Q and Q+25.
@@ -32,6 +31,9 @@ class CCZ4SolverBase(exahype2.api.Solver):
 
     The subclasses therefore override the hooks _ncp_implementation() and
     _source_implementation(), which call the kernel of their formulation.
+    The base class appends the advection terms to the non-conservative
+    product if the numerical scheme does not add them
+    (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection()).
 
     @ref exagrype.api.FOCCZ4Solver, @ref exagrype.api.FOSOCCZ4Solver
 
@@ -118,9 +120,10 @@ class CCZ4SolverBase(exahype2.api.Solver):
     ADVECTION_VELOCITY = "shift"
     """!
 
-    The variable which advects the unknowns, i.e. the velocity to pass to
-    lopsided advection kernels
-    (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.lopsided_advection_quantities()).
+    The variable which advects the unknowns, i.e. the velocity of the
+    advection terms, whoever adds them: the lopsided advection of the
+    numerical scheme or the non-conservative product
+    (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.advected_quantities()).
 
     """
 
@@ -190,37 +193,45 @@ class CCZ4SolverBase(exahype2.api.Solver):
         self.add_user_solver_includes(
             """
 #include "exagrype/ccz4/Kernels.h"
+#include "exahype2/fd/CentralAdvection.h"
 #include "exagrype/initialvalues/InitialValues.h"
 #include "exagrype/initialvalues/ApplyTwoPunctures.h"
 """
         )
 
+        self._non_conservative_product = None
         self._register_pde_terms()
 
-    def lopsided_advection_quantities(self) -> List[str]:
+    def advected_quantities(self) -> List[str]:
         """!
 
-        The unknowns whose advection terms exagrype::ccz4::ncpFirstOrder() and ncpSecondOrder() omits
+        The unknowns whose advection terms the kernels of exagrype::ccz4 leave out
 
-        exagrype::ccz4::ncpFirstOrder() and ncpSecondOrder() is invoked with its advection switched off.
-        The unknowns returned are those whose advection terms
-        @f$ \\beta^k \\partial _k Q @f$ hence have to be added by the
-        numerical scheme, e.g. via
+        The kernels hold no advection terms @f$ \\beta^k \\partial _k Q_q @f$
+        which need the derivative of the advected unknown q itself. This list
+        is the only place which defines these unknowns. Either the numerical
+        scheme adds their advection with lopsided stencils, e.g. via
 
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
           solver, patch_size, rk_order=4,
           right_hand_side_kernel = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel.CentralDifferencesWithLopsidedAdvection,
           advection_velocity     = exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
-          advected_quantities    = solver.lopsided_advection_quantities(),
+          advected_quantities    = solver.advected_quantities(),
         )
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         These are all unknowns besides the conformal metric G, the lapse,
         the shift and phi: The advection terms of the metric, the lapse,
         the shift and phi are part of the algebraic source
-        (exagrype::ccz4::sourceFirstOrder() and sourceSecondOrder()), which expresses them through the
+        (exagrype::ccz4::sourceFirstOrder()), which expresses them through the
         auxiliary unknowns, i.e. the first derivatives.
+
+        or the solver appends it to the non-conservative product, discretised
+        with the central differences of the scheme
+        (exahype2::fd::addCentralAdvection()), if the scheme adds none. The
+        solver rejects a scheme which advects other quantities
+        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection()).
 
         The advection of b and of the derivatives of the shift (dxShift,
         dyShift, dzShift) belongs to the shifting shift only, i.e. the
@@ -229,11 +240,10 @@ class CCZ4SolverBase(exahype2.api.Solver):
         The equation of b holds the time derivative of Ghat (the unknown
         Z), which comprises the advection of Ghat. The shifting shift
         subtracts this advection again, i.e. only the advection of b itself
-        is left, which the numerical scheme adds as for any other unknown.
-        The non-shifting shift (CCZ4b=0) keeps the advection of Ghat in the
-        equation of b. A scheme which advects each quantity on its own
-        cannot add it there, so exagrype::ccz4::ncpFirstOrder() and
-        ncpSecondOrder() do so with the derivatives they are given
+        is left, which is added as for any other unknown. The non-shifting
+        shift (CCZ4b=0) keeps the advection of Ghat in the equation of b.
+        Who advects each quantity on its own cannot add it there, so the
+        kernel does so with the derivatives it is given
         (src/exagrype/ccz4/adrs/0002-ccz4b-selects-the-shifting-or-the-non-shifting-shift.md).
 
         @return List[str]
@@ -245,6 +255,96 @@ class CCZ4SolverBase(exahype2.api.Solver):
         if self._parameters["CCZ4b"] == 0 or self._parameters["CCZ4s"] == 0:
             excluded |= {"b", "dxShift", "dyShift", "dzShift"}
         return [name for name in self.Unknowns if name not in excluded]
+
+    def ncp_adds_advection(self) -> bool:
+        """!
+
+        Whether the non-conservative product has to add the advection terms
+
+        The advection terms @f$ \\beta^k \\partial _k Q_q @f$ of the unknowns
+        of advected_quantities() are added either by the numerical
+        scheme or by the non-conservative product, never by both. You choose
+        the formulation (the solver class) and whether the Finite Differences
+        use lopsided advection (the kernel of the numerical scheme). The
+        solver decides which fits this choice, and
+        generate_solver_realisation() registers the non-conservative product
+        accordingly:
+
+        - exahype2.api.rkfd4.CentralDifferencesWithRungeKutta (and its
+          subclass exagrype.api.FD4WithKODissipation) with the kernel
+          CentralDifferences adds no advection terms. The non-conservative
+          product adds them, discretised with the central differences of
+          the scheme.
+        - The same scheme with CentralDifferencesWithLopsidedAdvection adds
+          the advection itself, and the non-conservative product adds none.
+          The scheme has to advect exactly
+          @ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.advected_quantities()
+          with ADVECTION_VELOCITY. Otherwise, it would add some terms twice or
+          miss some, and the routine raises a ValueError.
+        - The Finite Volumes of exahype2.api.fv add no advection terms, and
+          the non-conservative product adds none either, i.e. they solve CCZ4
+          without these advection terms, as before
+          (@ref exagrype.api.FOCCZ4Solver). Whether the non-conservative
+          product should add them is open.
+
+        The rationale is written down in
+        src/exagrype/ccz4/adrs/0003-the-solver-picks-who-adds-the-advection.md.
+
+        @return bool
+          True if the non-conservative product has to add the advection terms.
+
+        """
+        scheme = self.numerical_scheme
+        match scheme:
+            case (
+                exahype2.api.fv.RusanovWithExplicitEuler()
+                | exahype2.api.fv.RusanovWithOptimisticExplicitEuler()
+            ):
+                return False
+            case exahype2.api.rkfd4.CentralDifferencesWithRungeKutta():
+                Kernel = (
+                    exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel
+                )
+                if scheme.right_hand_side_kernel == Kernel.CentralDifferences:
+                    return True
+                velocity, advected = self._advection_indices()
+                if scheme.advection_velocity != velocity or sorted(
+                    scheme.advected_quantities
+                ) != sorted(advected):
+                    raise ValueError(
+                        f"Solver {self.name}: the lopsided advection of the "
+                        f"numerical scheme advects the quantities "
+                        f"{scheme.advected_quantities} with the velocity "
+                        f"{scheme.advection_velocity}, but the kernels leave the "
+                        f"quantities {advected} to the scheme, to be advected "
+                        f"with the velocity {velocity}. Pass "
+                        f"advection_velocity={type(self).__name__}.ADVECTION_VELOCITY "
+                        f"and advected_quantities=solver.advected_quantities() "
+                        f"to the scheme, or use its kernel CentralDifferences "
+                        f"instead, which lets the solver add the advection."
+                    )
+                return False
+            case _:
+                raise TypeError(
+                    f"Solver {self.name}: cannot decide who adds the advection "
+                    f"terms for the numerical scheme {type(scheme).__name__}. "
+                    "Supported are exahype2.api.fv.RusanovWithExplicitEuler, "
+                    "exahype2.api.fv.RusanovWithOptimisticExplicitEuler and "
+                    "exahype2.api.rkfd4.CentralDifferencesWithRungeKutta."
+                )
+
+    def _advection_indices(self):
+        """!
+        Indices of the velocity components (ADVECTION_VELOCITY) and of the
+        advected unknowns (advected_quantities()) within Q, in the
+        form both the lopsided advection of the scheme and
+        exahype2::fd::addCentralAdvection() take them
+        """
+        resolve = exahype2.api.rkfd4.resolve_quantities
+        return (
+            resolve(self, [self.ADVECTION_VELOCITY]),
+            resolve(self, self.advected_quantities()),
+        )
 
     def enforce_ccz4_constraint(self, value: "CCZ4SolverBase.EnforceCCZ4Constraint"):
         """!
@@ -282,9 +382,15 @@ class CCZ4SolverBase(exahype2.api.Solver):
 
         Create the solver's task graphs and insert the constraint enforcement
 
-        The routine first calls the superclass, which lets the grid
-        construction, the numerical scheme and the plotter add their tasks.
-        If the constraint enforcement is switched on
+        The routine first registers the non-conservative product, with the
+        advection terms if the numerical scheme does not add them
+        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection()).
+        The solver cannot do this earlier, as the numerical scheme is
+        assigned after the solver has been created. Afterwards, the routine
+        calls the superclass, which lets the grid construction, the
+        numerical scheme and the plotter add their tasks and generates the
+        solver class with the PDE terms. If the constraint enforcement is
+        switched on
         (enforce_ccz4_constraint()), it afterwards inserts the enforcement
         after each tagged solution update of the numerical scheme. Which
         patch a tagged task writes and which guard it uses depends on the
@@ -311,6 +417,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
         logs the graph once more.
 
         """
+        self._register_non_conservative_product(self.ncp_adds_advection())
         super().generate_solver_realisation(
             exahype2_project,
             peano_project,
@@ -363,7 +470,9 @@ class CCZ4SolverBase(exahype2.api.Solver):
             ):
                 self._insert_constraint_enforcement(time_step, [anchor], stage_input)
 
-        title = f"Time stepping task graph for {self.name} with CCZ4 constraint enforcement"
+        title = (
+            f"Time stepping task graph for {self.name} with CCZ4 constraint enforcement"
+        )
         if peano4.api.Logger().is_visualisation:
             time_step.visualise(title=title)
         if peano4.api.Logger().is_text:
@@ -445,19 +554,18 @@ class CCZ4SolverBase(exahype2.api.Solver):
     def _register_pde_terms(self):
         """!
 
-        Register the non-conservative product, the source and the maximum eigenvalue
+        Register the source and the maximum eigenvalue
 
         The terms are stateless, i.e. static functions: they only use the
         compile-time constants of the solver and the kernels of
         exagrype::ccz4. Both the Finite Volumes (exahype2.api.fv) and the
-        Finite Differences (exahype2.api.rkfd4) call stateless terms.
+        Finite Differences (exahype2.api.rkfd4) call stateless terms. The
+        non-conservative product is not registered here: which one fits
+        depends on the numerical scheme, which is assigned after the solver
+        has been created, so generate_solver_realisation() registers it
+        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase._register_non_conservative_product()).
 
         """
-        self.add_pde_term(
-            exahype2.api.NonconservativeProduct(
-                implementation=self._ncp_implementation(), stateless=True
-            )
-        )
         self.add_pde_term(
             exahype2.api.VolumetricSource(
                 implementation=self._source_implementation(), stateless=True
@@ -468,6 +576,55 @@ class CCZ4SolverBase(exahype2.api.Solver):
                 implementation=self._max_eigenvalue_implementation(), stateless=True
             )
         )
+
+    def _register_non_conservative_product(self, advection: bool):
+        """!
+
+        Register the non-conservative product, with or without the advection terms
+
+        generate_solver_realisation() calls this routine, as the
+        non-conservative product depends on the numerical scheme
+        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection()).
+        The term calls the kernel of the formulation (_ncp_implementation())
+        and, if advection is set, adds the advection terms of
+        advected_quantities() with ADVECTION_VELOCITY
+        (_advection_implementation()). It replaces the term of a former
+        realisation, so a project can be generated several times.
+
+        Any other non-conservative product, i.e. one added through
+        add_pde_term(), is rejected: The solver would replace it silently, and
+        it could add advection terms which the scheme adds as well, or miss
+        them (src/exagrype/ccz4/adrs/0003-the-solver-picks-who-adds-the-advection.md).
+        Whoever needs another non-conservative product derives a solver class
+        and overrides _ncp_implementation().
+
+        @param advection: bool
+          Whether the term adds the advection terms.
+
+        """
+        name = exahype2.api.NonconservativeProduct.NAME
+        foreign = [
+            term
+            for term in self.pde_terms
+            if term.name == name and term is not self._non_conservative_product
+        ]
+        if foreign:
+            raise ValueError(
+                f"Solver {self.name}: a non-conservative product has been added "
+                f"with add_pde_term(). {type(self).__name__} registers its "
+                f"non-conservative product itself when it is realised, as the "
+                f"advection terms depend on the numerical scheme "
+                f"(ncp_adds_advection()), and would replace yours. Derive a "
+                f"solver class from {type(self).__name__} and override "
+                f"_ncp_implementation() instead."
+            )
+        implementation = self._ncp_implementation()
+        if advection:
+            implementation += self._advection_implementation()
+        self._non_conservative_product = exahype2.api.NonconservativeProduct(
+            implementation=implementation, stateless=True
+        )
+        self.add_pde_term(self._non_conservative_product)
 
     def _ncp_implementation(self) -> str:
         """!
@@ -482,6 +639,29 @@ class CCZ4SolverBase(exahype2.api.Solver):
 
         """
         raise NotImplementedError
+
+    def _advection_implementation(self) -> str:
+        """!
+
+        C++ which adds the advection terms to the non-conservative product
+
+        The term adds @f$ \\beta^n \\partial _n Q_q @f$ for the normal n of the
+        call and each unknown q of advected_quantities(),
+        discretised with the derivative the scheme hands over
+        (exahype2::fd::addCentralAdvection()). The indices are those which
+        the lopsided advection of a scheme gets, so either way the same
+        terms are added. Both formulations hold the unknowns in Q, and Q
+        holds the shift.
+
+        """
+        velocity, quantities = self._advection_indices()
+        return f"""
+  {{
+    constexpr int velocity[] = {{{", ".join(str(i) for i in velocity)}}};
+    constexpr int quantities[] = {{{", ".join(str(i) for i in quantities)}}};
+    ::exahype2::fd::addCentralAdvection(Q, deltaQ, BTimesDeltaQ, normal, velocity, quantities, {len(quantities)});
+  }}
+"""
 
     def _source_implementation(self) -> str:
         """!

@@ -147,7 +147,7 @@ def test_resolve_quantities_selects_names_and_indices():
             resolve(solver, quantities)
 
 
-def test_ccz4_lopsided_advection_quantities():
+def test_ccz4_advected_quantities():
     solver = exagrype.api.FOCCZ4Solver("CCZ4", parameters={"CCZ4b": 1, "CCZ4s": 1})
     scheme = exagrype.api.FD4WithKODissipation(
         solver,
@@ -156,7 +156,7 @@ def test_ccz4_lopsided_advection_quantities():
         kreiss_oliger_sigma=1.0,
         right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
         advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
-        advected_quantities=solver.lopsided_advection_quantities(),
+        advected_quantities=solver.advected_quantities(),
     )
     assert scheme.advection_velocity == [17, 18, 19]
     # Everything but G (0-5), lapse (16), shift (17-19) and phi (24)
@@ -165,13 +165,13 @@ def test_ccz4_lopsided_advection_quantities():
     )
     # Without the advection of the shift, b and the derivatives of the shift
     # are not advected
-    assert "b" not in exagrype.api.FOCCZ4Solver("CCZ4").lopsided_advection_quantities()
+    assert "b" not in exagrype.api.FOCCZ4Solver("CCZ4").advected_quantities()
     # The non-shifting shift advects everything but b and the derivatives of
     # the shift, too
     non_shifting = exagrype.api.FOCCZ4Solver(
         "CCZ4", parameters={"CCZ4b": 0, "CCZ4s": 1}
-    ).lopsided_advection_quantities()
-    shifting = solver.lopsided_advection_quantities()
+    ).advected_quantities()
+    shifting = solver.advected_quantities()
     assert set(shifting) - set(non_shifting) == {"b", "dxShift", "dyShift", "dzShift"}
 
 
@@ -184,7 +184,7 @@ def test_dissipation_runs_after_lopsided_advection(tmp_path):
         kreiss_oliger_sigma=1.0,
         right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
         advection_velocity="shift",
-        advected_quantities=solver.lopsided_advection_quantities(),
+        advected_quantities=solver.advected_quantities(),
     )
     assert solver.numerical_scheme.overlap == 3
     tasks = _tasks(solver, tmp_path)

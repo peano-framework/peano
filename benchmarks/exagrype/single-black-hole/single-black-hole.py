@@ -154,7 +154,8 @@ def parse_arguments():
     scheme.add_argument(
         "--lopsided",
         action="store_true",
-        help="Add the lop-sided advection terms along the shift (fd4 only).",
+        help="Discretise the advection terms along the shift with lop-sided stencils (fd4 only). "
+        "Without it, the solver adds them with central differences.",
     )
     scheme.add_argument(
         "--enforce-constraints",
@@ -332,7 +333,7 @@ def create_numerical_scheme(solver, arguments):
             options = dict(
                 right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
                 advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
-                advected_quantities=solver.lopsided_advection_quantities(),
+                advected_quantities=solver.advected_quantities(),
             )
         if arguments.ko_sigma > 0.0:
             solver.numerical_scheme = exagrype.api.FD4WithKODissipation(

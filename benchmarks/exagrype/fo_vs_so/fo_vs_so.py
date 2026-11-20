@@ -313,7 +313,7 @@ def build(scheme, formulation, cells):
                     rk_order=4 if scheme == "RK4FD4" else 1,
                     right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
                     advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
-                    advected_quantities=solver.lopsided_advection_quantities(),
+                    advected_quantities=solver.advected_quantities(),
                 )
             )
             solver.grid_construction = exahype2.api.rkfd4.SetupSimulationOverRegularGrid(

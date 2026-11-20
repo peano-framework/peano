@@ -272,7 +272,7 @@ else:
         rk_order=int(args.scheme[2]),
         right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
         advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
-        advected_quantities=solver.lopsided_advection_quantities(),
+        advected_quantities=solver.advected_quantities(),
     )
     solver.grid_construction = exahype2.api.rkfd4.SetupSimulationOverRegularGrid(
         solver, volume_size=volume_size

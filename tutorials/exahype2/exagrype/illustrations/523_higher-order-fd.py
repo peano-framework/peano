@@ -125,7 +125,7 @@ def create_scheme(name, solver):
             arguments = dict(
                 right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
                 advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
-                advected_quantities=solver.lopsided_advection_quantities(),
+                advected_quantities=solver.advected_quantities(),
             )
         if sigma is None:
             solver.numerical_scheme = (

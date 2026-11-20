@@ -57,9 +57,12 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
 
     ## Shortcomings
 
-    - The second-order kernels do not advect the evolved unknowns. The
-      numerical scheme has to do it
-      (@ref exagrype.api.FOSOCCZ4Solver.FOSOCCZ4Solver.lopsided_advection_quantities()).
+    - The source holds no advection terms. They are added either by the
+      Finite Differences with lopsided advection
+      (@ref exagrype.api.FOSOCCZ4Solver.FOSOCCZ4Solver.advected_quantities())
+      or by the non-conservative product
+      (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection()).
+      The Finite Volumes add none of them.
     - Only the two schemes above are supported.
     - Black holes (TwoPunctures), tracers and the ADM/Psi4 postprocessing are
       not available yet.
@@ -151,7 +154,7 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     def task_graph_title_suffix(self) -> str:
         return " (CCZ4 part)"
 
-    def lopsided_advection_quantities(self) -> List[str]:
+    def advected_quantities(self) -> List[str]:
         """!
 
         The unknowns whose advection terms the kernels omit
@@ -166,14 +169,17 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
           solver, patch_size, rk_order=4,
           right_hand_side_kernel = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel.CentralDifferencesWithLopsidedAdvection,
           advection_velocity     = exagrype.api.FOSOCCZ4Solver.ADVECTION_VELOCITY,
-          advected_quantities    = solver.lopsided_advection_quantities(),
+          advected_quantities    = solver.advected_quantities(),
         )
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         The advection of the shift and of b belongs to the shifting shift
         only, i.e. the routine leaves them out unless CCZ4s=1 and CCZ4b=1
-        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.lopsided_advection_quantities()
+        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.advected_quantities()
         explains what the non-shifting shift does to the equation of b).
+        Either the numerical scheme or the non-conservative product adds the
+        advection of the unknowns returned
+        (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection()).
 
         @return List[str]
           Names of unknowns

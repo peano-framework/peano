@@ -117,7 +117,7 @@ ccz4.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
     rk_order=4,
     right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
     advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
-    advected_quantities=ccz4.lopsided_advection_quantities(),
+    advected_quantities=ccz4.advected_quantities(),
 )
 ccz4.grid_construction = exahype2.api.rkfd4.SetupSimulationOverRegularGrid(
     ccz4, volume_size=ccz4_volume_size
