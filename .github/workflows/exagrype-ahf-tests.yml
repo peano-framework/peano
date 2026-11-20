@@ -1,0 +1,88 @@
+name: AHF tests
+
+# Runs on a push to any branch that touches the module, so a branch in a fork
+# is checked before its PR is opened, and on PRs into the shared ExaGRyPE
+# branches that touch it. The PR path filter keeps the job off unrelated PRs,
+# such as the frequent p4 -> exagrype merges upstream. It also means the job
+# cannot be a required check, since a PR that does not trigger it could never
+# be merged: drop the filter before a ruleset requires it.
+on:
+  push:
+    paths:
+      - src/exagrype/ahf/**
+      - .github/workflows/exagrype-ahf-tests.yml
+  pull_request:
+    branches:
+      - exagrype
+      - exagrype-*
+    paths:
+      - src/exagrype/ahf/**
+      - .github/workflows/exagrype-ahf-tests.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Both jobs run the same steps; keep them identical. The job names carry no
+# compiler versions, so they stay stable should a ruleset require them.
+#
+# Debug, never Release: the tests check with assert, which NDEBUG removes, and
+# Debug also turns on the std::array and std::vector bounds checks. VTK is left
+# out: the runners do not have it, and two of the three suites that need it
+# read snapshots that are not in the repository (ccz4Results/).
+jobs:
+  linux:
+    name: Linux (GCC)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: src/exagrype/ahf
+
+      - name: Configure
+        run: >
+          cmake -S src/exagrype/ahf -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DENABLE_CCZ4_AHF_TESTS=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_VTK=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4 --timeout 1200
+
+  # macOS runners can queue for many minutes, so PRs wait only for Linux.
+  # macOS runs on pushes instead: a branch in a fork before its PR is opened,
+  # and the shared branch after each merge.
+  macos:
+    name: macOS arm64 (Apple clang)
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: src/exagrype/ahf
+
+      - name: Configure
+        run: >
+          cmake -S src/exagrype/ahf -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DENABLE_CCZ4_AHF_TESTS=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_VTK=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4 --timeout 1200
