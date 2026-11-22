@@ -1,6 +1,6 @@
 ---
 name: peano:couple-exahype-solvers
-description: Take two solvers from ExaHyPE and couple them together, so they work as a unit, with a minimalist plain-class coupling (outer additive or outer multiplicative).
+description: Take two solvers from ExaHyPE and couple them together, so they work as a unit, with a minimalist plain-class coupling (outer additive, outer multiplicative, inner additive or inner multiplicative).
 ---
 
 #Couple ExaHyPE solvers
@@ -8,22 +8,23 @@ description: Take two solvers from ExaHyPE and couple them together, so they wor
 ## Capture Intent
 
 Couplings in ExaGRyPE are deliberately **minimalist**, and so are the ones you write. The two reference couplings,
-`exagrype.api.CCZ4WithEuler_OuterAdditiveCoupling` and `exagrype.api.CCZ4WithEuler_OuterMultiplicativeCoupling`, are plain classes:
+`exagrype.api.euler.CCZ4WithEuler_OuterAdditiveCoupling` and `exagrype.api.euler.CCZ4WithEuler_OuterMultiplicativeCoupling`, are plain classes:
 no base class, two named solvers, no loops, no generic helpers, and next to the docstrings only a few dozen lines of code. 
 Whatever the user does not ask for is not built. Ask **at most** the following questions, propose the default in brackets, and 
 move on as soon as the user accepts it:
 
 1. Which two solvers should be coupled? (Euler + CCZ4: use the existing classes in `exagrype.api` and stop here, unless the user wants a variation.)
 2. Do the solvers run **in parallel** (additive) or **one after the other** (multiplicative)? [additive, the benchmark]
-   Both are **outer** couplings: each solver keeps a complete numerical scheme of its own and the solvers exchange data once per time step. 
-   Inner couplings (one shared scheme, exchange per Runge-Kutta stage) are only placeholders below; if the user wants one, say so and offer an outer coupling.
+   **Outer** couplings: each solver keeps a complete numerical scheme of its own and the solvers exchange data once per time step. The coupling is first order in time at best.
+   **Inner** couplings: one numerical scheme (a "generator") for the whole coupled system, which the user assigns to the coupling, never to the solvers; the solvers exchange data in every
+   Runge-Kutta stage and keep the order of the time integrator. Ask which one the user wants. [outer; inner if the user cares about the order in time]
    If multiplicative: which solver runs first? [the one whose data the other one consumes]
 3. In which direction do data flow? [both directions: one prep task per direction. If only one solver consumes data of the other one, you need **one** prep task
    and the coupling gets even smaller: see the minimal skeleton below.]
 4. What is the class called, and where do the files go? [`<A>With<B>_<Outer…>Coupling` in `src/exagrype/api`, i.e. next to its siblings]
 
 Do **not** ask about, and do not build, the following unless the user brings it up: data-race analyses, restricting the copied unknowns,
-global user-defined synchronisation, bi-directional physics terms, Runge-Kutta stage coupling. They are listed as optional extras at the end.
+global user-defined synchronisation, bi-directional physics terms. They are listed as optional extras at the end.
 Defaults you do not ask about: copy **all** unknowns of the producer, interpolate piecewise linearly, enforce the **minimum** time step size, 
 the first solver owns load balancing and AMR.
 
@@ -31,7 +32,7 @@ the first solver owns load balancing and AMR.
 
 Keep it simple. There is no generic framework class to derive from: write one plain
 Python class per coupling, with a few dozen lines of code, and copy the pattern from
-`exagrype.api.CCZ4WithEuler_OuterAdditiveCoupling` (outer coupling) rather than inventing
+`exagrype.api.euler.CCZ4WithEuler_OuterAdditiveCoupling` (outer coupling) rather than inventing
 new machinery. Do not add base classes, registries or hooks. The class is what the user adds
 to the project (`project.add_solver(coupled)`). It offers
 
@@ -115,8 +116,8 @@ For a second direction, add a second auxiliary set and a second prep task. For t
 
 In an **outer** coupling every solver has a complete numerical scheme of its own, assigned as for any
 other solver (`coupled.ccz4.numerical_scheme = ...`, `coupled.euler.numerical_scheme = ...`).
-Only an **inner** coupling (one scheme per Runge-Kutta stage) needs a scheme that is shared; see the
-placeholders below and `exagrype.api.FOSOSolver`, which hands the reconstruction solver a forwarding scheme.
+In an **inner** coupling the user assigns one scheme (a generator) to the coupling and none to the solvers; see the
+section on inner couplings below and `exagrype.api.scalarfield`.
 The mapping of each solver to C++ (`SolverToCPPFiles`, grid construction, plotters) remains solver-specific.
 
 ### Where the task graphs are composed
@@ -145,9 +146,10 @@ variables accordingly. After that, change the data association accordingly.
 
 ## Algorithmic coupling
 
-The outer types are complete. Outer additive is the one in `benchmarks/exagrype/gauge-wave-with-Euler`. Outer multiplicative has a host in
-`exagrype.api` which was validated by generating the Euler + CCZ4 project (no C++ build or run yet); it has no benchmark.
-The inner types are placeholders, which keep the notes we had before the split into outer and inner. Do not claim that they are validated.
+Outer additive is the one in `benchmarks/exagrype/gauge-wave-with-Euler`. Outer multiplicative has a host in
+`exagrype.api.euler` which was validated by generating the Euler + CCZ4 project (no C++ build or run yet), and one in `exagrype.api.scalarfield`
+(benchmark `benchmarks/exagrype/gauge-wave-with-scalar-field`). The inner types (one worked example each, for CCZ4 with a scalar field) are described below, after the outer ones.
+Do not claim more than what the benchmark's convergence study shows.
 
 ### Outer coupling (multiplicative and additive)
 
@@ -161,8 +163,8 @@ Ask the user which flavour they want (Capture Intent) and then follow Steps 1 to
 | Wiring of the graphs | in sequence: A, copy, B | in parallel: copy, A and B together |
 | What B sees of A | A's **updated** state | A's state at the **begin** of the time step |
 | Prep tasks | two, one in front of A and one between A and B | two, both in front of A and B, run in parallel |
-| Host in the repository | `exagrype.api.CCZ4WithEuler_OuterMultiplicativeCoupling` | `exagrype.api.CCZ4WithEuler_OuterAdditiveCoupling` |
-| Benchmark | none yet (same driver as the additive one, other host class) | `benchmarks/exagrype/gauge-wave-with-Euler` |
+| Host in the repository | `exagrype.api.euler.CCZ4WithEuler_OuterMultiplicativeCoupling` | `exagrype.api.euler.CCZ4WithEuler_OuterAdditiveCoupling` |
+| Benchmark | `benchmarks/exagrype/gauge-wave-with-scalar-field` (`--coupling outer-multiplicative`, scalar field instead of Euler) | `benchmarks/exagrype/gauge-wave-with-Euler` |
 
 For Euler + CCZ4, the driver of the benchmark is the template for both. The two host classes are independent of each other and differ in how they wire the graphs only; everything else
 (constructor, `generate_solver_realisation()`, `_create_prep_task()`) is deliberately repeated, so that each class reads on its own. If the user wants exactly this pair,
@@ -268,7 +270,7 @@ Take `benchmarks/exagrype/gauge-wave-with-Euler/gauge-wave-with-Euler.py`. Only 
 1. Only the coupling goes into `project.add_solver(coupled)`; never the individual solvers. The coupling sets no initial conditions: add them to the solvers as to any other solver
    (`ccz4.add_pde_term(exagrype.api.initialvalues.gauge_wave())`; Euler brings a smooth wave by default).
 2. Schemes per solver: `ccz4.numerical_scheme = ...`, `euler.numerical_scheme = ...`.
-   - CCZ4: `rkfd4.CentralDifferencesWithRungeKutta(ccz4, p, rk_order=4, right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection, advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY, advected_quantities=ccz4.lopsided_advection_quantities())`
+   - CCZ4: `rkfd4.CentralDifferencesWithRungeKutta(ccz4, p, rk_order=4, right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection, advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY, advected_quantities=ccz4.advected_quantities())`
    - Euler: `fv.RusanovWithExplicitEuler(euler, 2*p+1)`
 3. Grid construction and plotter per solver in the solver's flavour (`rkfd4.SetupSimulationOverRegularGrid` + `rkfd4.PlotAsVTKFile`,
    `fv.SetupSimulationOverRegularGrid` + `fv.PlotAsVTKFile`). **Both solvers have to end up on the same mesh cells**: pass
@@ -289,8 +291,8 @@ Take `benchmarks/exagrype/gauge-wave-with-Euler/gauge-wave-with-Euler.py`. Only 
   (see how `exagrype.api.euler.Euler` hands auxiliary values to its PDE terms), and whether data should flow in both directions.
   With a purely uni-directional coupling, drop the prep task that is not needed. For the multiplicative flavour, the producer then runs first.
 - Compare the generated code against the benchmark (task names, data uses, action-set order) and list the deviations.
-  The additive flavour should match the benchmark. For the multiplicative one no benchmark exists yet (its host has been validated by generating the
-  project only): offer to add a sibling of `gauge-wave-with-Euler` and to run the convergence check of `exahype2:integration-test` on it.
+  The additive flavour should match the benchmark. For the multiplicative one, the scalar field benchmark (`gauge-wave-with-scalar-field`, with a convergence study
+  against an exact solution) is the reference; for Euler it has no benchmark yet (its host has been validated by generating the project only).
 
 #### Check: do the copied data have to be projected onto the faces?
 
@@ -306,40 +308,43 @@ If both solvers read and write the same mesh data other than the exchanged sets,
 read by the prep tasks, which finish before the consumer starts, so the answer is usually no. Ask the user anyway. If yes, add a temporary copy to a prep task and redirect one solver's access to it.
 
 
-### Inner multiplicative coupling (placeholder)
+### Inner coupling (multiplicative and additive)
 
-@todo To be written. The host holds the numerical scheme and calls the solvers one after the other per
-(Runge-Kutta) stage; see `coupling.dox`. 
-The notes below were written before the split into outer and inner. 
-`exagrype.api.FOSOSolver` is a worked example of this type
-(the reconstruction tasks are inserted per Runge-Kutta stage in front of the CCZ4 stage which consumes them).
+Worked example: `exagrype.api.scalarfield` (`CCZ4WithScalarField_InnerCoupling` and four generators), driven by
+`benchmarks/exagrype/gauge-wave-with-scalar-field` (design notes: `DESIGN.md` there). `coupling.dox` explains the concepts.
 
-`_couple()` makes tasks of one solver wait for tasks of the other one. The graphs are already
-concatenated (or `Graph.append()` them yourself if a solver's stage graph simply follows the
-stage of another one), so there is nothing to copy: look up the tasks to be tied together (ideally 
-through tags that the solver's scheme puts on them - names only as a fallback, and then ask 
-the solver's scheme for the names rather than hard-coding them), take over the dependencies 
-of the consuming task, and make the consuming task depend on the producer. The first task of 
-the second solver has to depend on the last task of the first solver, or, for 
-a coupling per time step stage, each stage of the consumer on the matching stage of the 
-producer. We create a chain of subtasks.
-`exagrype.api.FOSOSolver` is a worked example. 
+An inner coupling has **one numerical scheme for the whole system**. It is a *generator*, i.e. a class that assigns itself to the coupled solver. The class structure is as small as the outer one:
 
-If possible, display a rendering of the arising task graph to the user.
+1. **The host** (`CCZ4WithScalarField_InnerCoupling`) is a plain class like the outer hosts, with `solvers`, `name` and `generate_solver_realisation()`, and a property `numerical_scheme`. Its setter
+   rejects aggregated solvers which already hold a numerical scheme, then lets the generator install itself (`generator.attach_to(host)`). `generate_solver_realisation()` only
+   delegates to `numerical_scheme.construct_output(...)`. The auxiliary set which carries the data from the producer to the consumer is `Mode.CHANGING_ON_FACES`, as it changes in every stage.
+   The user assigns grid construction and plotter to the solvers as always, but never a numerical scheme.
+2. **The generator base class** (`InnerCouplingGenerator`) implements `attach_to()` (installs the building-block scheme on each solver) and `construct_output()`:
+   realise each solver into a graph of its own (`add_global_tasks=False`), merge the graphs, then per stage `k`
+   - create the copy task `create_copy_task(name, stage_input_of_producer, consumer, auxiliary_set)` (the same function as the outer coupling uses),
+     which depends on the end of stage `k-1` of both solvers,
+   - make the first tasks of the stage `k` of both solvers depend on the copy task. **Additive:** that is all. **Multiplicative:** additionally,
+     the first tasks of the consumer's stage depend on the end of the producer's stage `k`,
+   then add the final `GLOBAL_END_OF_STEP` task (`SynchroniseTimeStepSizes`) and wrap the graph (`wrap_task_graph_in_load_balancing_and_amr_tasks()` of the producer's scheme).
+3. **Four generators**, for Finite Volumes (`RusanovWithExplicitEuler`, one stage) and Runge-Kutta with fourth-order Finite Differences
+   (`CentralDifferencesWithRungeKutta`, `rk_order` stages), each multiplicative and additive. Each provides `_create_scheme(solver)`,
+   `_number_of_stages()`, `_stage_input(solver, stage)` (`_patch`, or `_stage_input` for stages after the first) and `_end_of_stage(solver, graph, stage)` (the roll-over task of the stage,
+   found by name, or all non-global sinks for the last stage). The multiplicative and additive variant differ in the class attribute `MULTIPLICATIVE` only.
 
+Rules that make the order of the time integrator survive (the reasons are in `coupling.dox`):
 
-### Inner additive coupling (placeholder)
+- **Copy the stage input of the producer, not its outcome.** The consumer's stage `k` must see the producer at the time stamp of that stage. The copy task reads
+  the stage input with `READ_AND_WRITE`, so it survives, and it runs before the producer's `Reconstruct stage k` (which discards the stage input for `k>0`).
+- **The first tasks of stage `k` are those that wait for the end of stage `k-1`** (stage 0: the sources of the solver's graph). Compute them before you add the copy task.
+- **Do not assign schemes to the aggregated solvers.** The generator does, as its building blocks create the data and kernels of the solvers.
+  Say to the user that this composes existing schemes, instead of rewriting them.
+- A one-directional coupling needs one auxiliary set and one copy task per stage. For both directions, add a second set on the producer and a second copy task, both before the stage.
+- Finite Volumes have one stage: the additive wiring is then identical to the outer additive one.
 
-@todo To be revised. The notes below predate the distinction between outer and inner. They describe a coupling per
-Runge-Kutta stage with one numerical scheme in the host.
+### Choosing between outer and inner
 
-The coupling's shared scheme asks each solver for its graph per Runge-Kutta
-stage (a method of the hosted solver, as `FOSOReconstructionSolver.create_task_graph()`; `Solver` itself has no such hook), i.e. there is one instance of each graph per stage. In `_couple()`,
-add a KickOff task (`GridEntity.GLOBAL_START_OF_STEP`) per stage which the first task of each solver's stage graph depends on. Make the 
-KickOff of stage `k+1` depend on the sinks of stage `k`.
-No worked example exists for this type at the moment: the former `CCZ4WithEuler` host with KickOff/WrapUp tasks per stage has been removed (see git history). Write the host from scratch.
-
-If possible, display a rendering of the arising task graph to the user.
+Outer couplings freeze the spacetime within the consumer's time step: first order in time, whatever the order of the time integrators. Inner couplings keep the order of the time integrator.
+If the user shows convergence plots or asks for high order, take the inner coupling. The outer coupling is the right choice if the solvers must be free to pick different schemes or patch sizes.
 
 ### Optional: end of time step coupling (global coupling)
 
@@ -359,16 +364,8 @@ to supply the missing information.
 
 ### Support for Runge-Kutta time stepping
 
-(Outer additive coupling: nothing to do. Each solver runs its stages internally, and the host's tasks sit
-in front of the first and behind the last task of the whole time step. The paragraph below concerns the other types.)
-
-As we always want to support multi-step time stepping, too, we have to reread all
-of the descriptions above re time steps as "subgraph per time step". The host
-instantiates the subgraph of each hosted solver once per stage (through a method of the solver, not through a `Solver` hook), 
-so the same task chain exists several times, once per stage, and the multiplicative scheme ties each instance to the 
-matching stage of the consumer (`FOSOSolver._couple()`). For the additive scheme, WrapUp and KickOff 
-might have to be inserted multiple times at the corresponding markers. Tasks at the stages are 
-looked up in the concatenated graph in `_couple()`.
+(Outer couplings: nothing to do. Each solver runs its stages internally, and the host's tasks sit
+in front of the first and behind the last task of the whole time step. Inner couplings handle the stages themselves, see above.)
 
 
 ## Optional extras (only on request)

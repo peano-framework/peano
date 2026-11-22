@@ -124,6 +124,7 @@ option(ENABLE_EXAHYPE "Enable ExaHyPE 2" OFF)
 option(ENABLE_EXAGRYPE "Enable ExaGRyPE (3d only, requires ExaHyPE 2)" OFF)
 option(ENABLE_MGHYPE "Enable MGHyPE" OFF)
 option(ENABLE_EXAPARTY "Enable ExaParty" OFF)
+option(ENABLE_CCZ4_AHF_POSTPROCESSOR "Build ExaGRyPE's apparent-horizon-finder postprocessing executable (requires ExaGRyPE)" OFF)
 
 list(APPEND AVAILABLE_TOOLCHAINS
   "no"

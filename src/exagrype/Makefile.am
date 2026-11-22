@@ -17,7 +17,8 @@ ExaGRyPESources = \
   euler/EulerKernels.cpp \
   euler/initialvalues/InitialValues.cpp \
   initialvalues/ApplyTwoPunctures.cpp \
-  initialvalues/InitialValues.cpp
+  initialvalues/InitialValues.cpp \
+  scalarfield/ScalarFieldKernels.cpp
 
 #
 # TwoPunctures (initial data for black holes) needs GSL

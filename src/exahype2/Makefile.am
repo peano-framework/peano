@@ -38,6 +38,7 @@ ExaHyPE2Sources = \
   enumerator/AoSoALexicographicEnumerator.cpp \
   enumerator/FaceAoSLexicographicEnumerator.cpp \
   fd/PatchUtils.cpp \
+  fd/CentralAdvection.cpp \
   fd/LopsidedAdvection.cpp \
   fd/LoopBody.cpp \
   fv/BoundaryConditions.cpp \

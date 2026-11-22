@@ -333,6 +333,7 @@ src/unittests/UnitTests*
 *.err
 *.out
 *.txt
+!src/exagrype/ahf/CMakeLists.txt
 *.csv
 
 *.o.*

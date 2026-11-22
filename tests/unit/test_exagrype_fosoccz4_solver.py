@@ -39,7 +39,7 @@ def _configure(pair, enforce=None):
         rk_order=4,
         right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
         advection_velocity=exagrype.api.FOSOCCZ4Solver.ADVECTION_VELOCITY,
-        advected_quantities=solver.lopsided_advection_quantities(),
+        advected_quantities=solver.advected_quantities(),
     )
     solver.grid_construction = exahype2.api.rkfd4.SetupSimulationOverRegularGrid(
         solver, volume_size=1.0 / 27.0
@@ -86,20 +86,24 @@ def test_so_solver_has_no_formulation_switch_parameter():
         exagrype.api.FOSOCCZ4Solver("SO", parameters={"CCZ4SO": 0})
 
 
+def _ncp_call(solver):
+    """!
+    C++ which calls the kernel of the non-conservative product. The solver
+    registers its non-conservative product only when it is realised, so it
+    is taken from the hook which writes it.
+    """
+    return solver._ncp_implementation()
+
+
 def test_so_solver_calls_the_second_order_kernels():
     first_order = exagrype.api.FOCCZ4Solver("FO")
     second_order = exagrype.api.FOSOCCZ4Solver("SO")
-    for term, kernel in [
-        ("nonconservativeProduct", "::exagrype::ccz4::ncp%s("),
-        ("volumetricSource", "::exagrype::ccz4::source%s("),
-    ]:
+    assert "::exagrype::ccz4::ncpFirstOrder(" in _ncp_call(first_order)
+    assert "::exagrype::ccz4::ncpSecondOrder(" in _ncp_call(second_order)
+    for solver, order in [(first_order, "FirstOrder"), (second_order, "SecondOrder")]:
         assert (
-            kernel % "FirstOrder"
-            in first_order.get_pde_term(term, stateless=True).implementation
-        )
-        assert (
-            kernel % "SecondOrder"
-            in second_order.get_pde_term(term, stateless=True).implementation
+            f"::exagrype::ccz4::source{order}("
+            in solver.get_pde_term("volumetricSource", stateless=True).implementation
         )
     for solver in (first_order, second_order):
         assert (
@@ -108,9 +112,7 @@ def test_so_solver_calls_the_second_order_kernels():
         )
     # The kernels get the primary entries and, as a second pointer, the
     # derivatives, i.e. the auxiliary variables, without any copy
-    ncp = second_order.get_pde_term(
-        "nonconservativeProduct", stateless=True
-    ).implementation
+    ncp = _ncp_call(second_order)
     assert "Q, derivatives," in ncp
     assert "deltaQ, deltaDerivatives," in ncp
     source = second_order.get_pde_term(
@@ -122,12 +124,7 @@ def test_so_solver_calls_the_second_order_kernels():
         "Q, Q + 25,"
         in first_order.get_pde_term("volumetricSource", stateless=True).implementation
     )
-    assert (
-        "deltaQ, deltaQ + 25,"
-        in first_order.get_pde_term(
-            "nonconservativeProduct", stateless=True
-        ).implementation
-    )
+    assert "deltaQ, deltaQ + 25," in _ncp_call(first_order)
     # The second-order solver has no storage for the secondary result
     assert "S,\n    Q, derivatives," in source
     assert "[58]" not in ncp + source
@@ -148,20 +145,20 @@ def test_so_solver_advects_all_evolved_unknowns_with_lopsided_stencils():
     moving_puncture = exagrype.api.FOSOCCZ4Solver(
         "SO", parameters={"CCZ4b": 1, "CCZ4s": 1}
     )
-    assert moving_puncture.lopsided_advection_quantities() == list(
+    assert moving_puncture.advected_quantities() == list(
         exagrype.api.FOSOCCZ4Solver.Unknowns
     )
     # The default CCZ4s=0 does not advect the shift and b
     default = exagrype.api.FOSOCCZ4Solver("SO")
-    assert "shift" not in default.lopsided_advection_quantities()
-    assert "b" not in default.lopsided_advection_quantities()
-    assert "G" in default.lopsided_advection_quantities()
-    assert "lapse" in default.lopsided_advection_quantities()
+    assert "shift" not in default.advected_quantities()
+    assert "b" not in default.advected_quantities()
+    assert "G" in default.advected_quantities()
+    assert "lapse" in default.advected_quantities()
     # Neither does the non-shifting shift
     non_shifting = exagrype.api.FOSOCCZ4Solver(
         "SO", parameters={"CCZ4b": 0, "CCZ4s": 1}
-    ).lopsided_advection_quantities()
-    assert set(moving_puncture.lopsided_advection_quantities()) - set(non_shifting) == {
+    ).advected_quantities()
+    assert set(moving_puncture.advected_quantities()) - set(non_shifting) == {
         "shift",
         "b",
     }
@@ -454,9 +451,14 @@ def test_reconstruction_adapts_to_the_larger_halo_of_the_dissipation_scheme(tmp_
     "solver_class", [exagrype.api.FOCCZ4Solver, exagrype.api.FOSOCCZ4Solver]
 )
 def test_pde_terms_are_stateless(solver_class):
-    """! Finite Volumes and Finite Differences both call the static terms"""
+    """!
+    Finite Volumes and Finite Differences both call the static terms. The
+    non-conservative product is registered when the solver is realised
+    (test_realisation_registers_the_ncp_which_fits_the_numerical_scheme in
+    test_exagrype_ccz4_solver.py checks that it is stateless).
+    """
     solver = solver_class("S")
-    for name in ["nonconservativeProduct", "volumetricSource", "maxEigenvalue"]:
+    for name in ["volumetricSource", "maxEigenvalue"]:
         assert solver.get_pde_term(name, stateless=True).stateless
         with pytest.raises(KeyError):
             solver.get_pde_term(name)

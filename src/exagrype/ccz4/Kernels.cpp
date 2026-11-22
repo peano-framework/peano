@@ -1636,7 +1636,7 @@ static void sourceImplementation(double* S, double* Saux, const double* const Q,
     }
 }
 
-template <bool SecondOrder, bool Advection>
+template <bool SecondOrder>
 static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
       const int CCZ4LapseType,
       const double CCZ4c,
@@ -1651,9 +1651,11 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
     // written in the secondary entries, and the trace constraint terms of Ghat.
     constexpr int CCZ4FO = SecondOrder ? 0 : 1;
 
-    // The advection terms beta^k d_k Q are compiled only if Advection is set.
-    // The kernels below do not set it: the numerical scheme adds these terms
-    // with lopsided stencils, and they must not be counted twice.
+    // The kernel holds no advection beta^k d_k Q_q which needs the derivative
+    // of the entry q itself. The numerical scheme (lopsided stencils) or the
+    // solver (central differences) adds these terms, and they must not be
+    // counted twice
+    // (src/exagrype/ccz4/adrs/0003-the-solver-picks-who-adds-the-advection.md).
 
     const double alpha = std::fmax(1e-4,Q[16]);
 
@@ -1828,17 +1830,14 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
     for (int j = i; j < 3; j++)
     {
         dtAex[i][j] = phi2 * SecondOrderTerms[i][j];
-        if constexpr (Advection) dtAex[i][j] += beta[0]*dAex[0][i][j]+beta[1]*dAex[1][i][j]+beta[2]*dAex[2][i][j];
     }
 
     const double dKex[3] = {gradQin[23][0], gradQin[23][1], gradQin[23][2]};
 
     double dtKex = - TrDDalpha + alpha * TrRiccihat;
-    if constexpr (Advection) dtKex += beta[0]*dKex[0]+beta[1]*dKex[1]+beta[2]*dKex[2];
 
     const double dTheta[3] = {gradQin[12][0],gradQin[12][1],gradQin[12][2]};
     double dtTheta = 0.5 * alpha * CCZ4e * CCZ4e * TrRiccihat;
-    if constexpr (Advection) dtTheta += beta[0]*dTheta[0]+beta[1]*dTheta[1]+beta[2]*dTheta[2];
 
     const double dBB[3][3][3] = {
         {
@@ -1877,23 +1876,21 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
             }
         }
         dtGhat[i] = 2. * temp1 + CCZ4s * temp2 + CCZ4s * 1./6. * temp3;
-        if constexpr (Advection) dtGhat[i] += beta[0]*dGhat[0][i]+beta[1]*dGhat[1][i]+beta[2]*dGhat[2][i];
     }
 
     double dtmyb[3];
     for (int i = 0; i < 3; i++)
     {
         // d_t b = s ( d_t Ghat - eta b + CCZ4b (beta^k d_k b - beta^k d_k Ghat) ),
-        // where d_t Ghat comprises the advection of Ghat. Without Advection,
-        // dtGhat lacks this advection, and the numerical scheme advects b
-        // if CCZ4b is set. Hence, only the non-shifting shift is left to do.
+        // where d_t Ghat comprises the advection of Ghat. dtGhat lacks this
+        // advection, which is added outside of the kernel together with the
+        // one of b. For the shifting shift (CCZ4b=1), the advection of Ghat
+        // hence cancels, and only the one of b is left, which is added
+        // outside, too. The non-shifting shift (CCZ4b=0) keeps the advection
+        // of Ghat, which the kernel adds
+        // (src/exagrype/ccz4/adrs/0002-ccz4b-selects-the-shifting-or-the-non-shifting-shift.md).
         dtmyb[i] = dtGhat[i];
-        if constexpr (Advection)
-        {
-            dtmyb[i] += CCZ4b * ( beta[0]*gradQin[20+i][0]+beta[1]*gradQin[20+i][1]+beta[2]*gradQin[20+i][2]
-                                 - beta[0]*gradQin[13+i][0]-beta[1]*gradQin[13+i][1]-beta[2]*gradQin[13+i][2] );
-        }
-        else if (CCZ4b == 0)
+        if (CCZ4b == 0)
         {
             dtmyb[i] += beta[0]*dGhat[0][i]+beta[1]*dGhat[1][i]+beta[2]*dGhat[2][i];
         }
@@ -1935,7 +1932,6 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
         {
             dtAA[i] = -alpha * iVa * ga * ( dKex[i] - 2. * CCZ4c * dTheta[i] )
                     - CCZ4s * iVa * ga * JJ[i];
-            if constexpr (Advection) dtAA[i] += beta[0]*dAA[0][i] + beta[1]*dAA[1][i] + beta[2]*dAA[2][i];
         }
 
         double dtBB[3][3] = {{CCZ4f*gradQin[20][0],CCZ4f*gradQin[21][0],CCZ4f*gradQin[22][0]},
@@ -1952,7 +1948,6 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
                 for (int m = 0; m < 3; m++) temp2 += g_contr[i][k] * g_contr[l][m] * (dDD[j][m][k][l] - dDD[m][j][k][l]);
             }
             dtBB[j][i] += CCZ4mu * alpha2 * (Vp * temp1 - temp2);
-            if constexpr (Advection) dtBB[j][i] += CCZ4b * (beta[0]*dBB[0][j][i]+beta[1]*dBB[1][j][i]+beta[2]*dBB[2][j][i]);
             dtBB[j][i] *= CCZ4s;
         }
 
@@ -1969,7 +1964,6 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
             }
             dtDD[k][i][j] = -alpha * dAex[k][i][j] + 1./3. * g_cov[i][j] * JJ[k]
                           - CCZ4s * 1./6. * temp1 + CCZ4s * 1./4. * temp2;
-            if constexpr (Advection) dtDD[k][i][j] += beta[0]*dDD[0][k][i][j]+beta[1]*dDD[1][k][i][j]+beta[2]*dDD[2][k][i][j];
         }
 
         double dtPP[3];
@@ -1979,7 +1973,6 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
             for (int j = 0; j < 3; j++) temp += dBB[i][j][j] + dBB[j][i][j];
             dtPP[i] = 1./3./Vp * (alpha * dKex[i] + CCZ4s * JJ[i])
                     - CCZ4s * 1./6./Vp * temp;
-            if constexpr (Advection) dtPP[i] += beta[0]*dPP[0][i]+beta[1]*dPP[1][i]+beta[2]*dPP[2][i];
         }
 
         for (int i = 0; i < 3; i++) BgradQaux[i] = -dtAA[i];
@@ -2018,14 +2011,14 @@ static void ncpImplementation(double* BgradQ, double* BgradQaux, const double* c
 void exagrype::ccz4::ncpFirstOrder(double* BgradQ, double* BgradQaux, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
   const int CCZ4LapseType, const double CCZ4c, const double CCZ4e, const double CCZ4f, const int CCZ4b, const int CCZ4s, const double CCZ4mu
 ) {
-  ncpImplementation<false, false>(BgradQ, BgradQaux, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
+  ncpImplementation<false>(BgradQ, BgradQaux, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
 }
 
 
 void exagrype::ccz4::ncpSecondOrder(double* BgradQ, const double* const Q, const double* const Qaux, const double* const gradQ, const double* const gradQaux, const int normal,
   const int CCZ4LapseType, const double CCZ4c, const double CCZ4e, const double CCZ4f, const int CCZ4b, const int CCZ4s, const double CCZ4mu
 ) {
-  ncpImplementation<true, false>(BgradQ, nullptr, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
+  ncpImplementation<true>(BgradQ, nullptr, Q, Qaux, gradQ, gradQaux, normal, CCZ4LapseType, CCZ4c, CCZ4e, CCZ4f, CCZ4b, CCZ4s, CCZ4mu);
 }
 
 

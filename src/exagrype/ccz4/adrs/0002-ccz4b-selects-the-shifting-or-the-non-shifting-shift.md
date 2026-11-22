@@ -50,9 +50,10 @@ shifting shift, b=0 the non-shifting shift, and the third equation is the deriva
 first one for both. In the code:
 
 - The source multiplies `B_k^i B_j^k` with `CCZ4b`.
-- The non-conservative product adds `beta^k d_k Ghat^i` to the equation of b if `CCZ4b` is 0
-  and the advection terms are not compiled into the kernel.
-- `lopsided_advection_quantities()` of the solvers stays as it is: The numerical scheme
+- The non-conservative product adds `beta^k d_k Ghat^i` to the equation of b if `CCZ4b` is 0.
+  The kernels hold no other advection terms (ADR 0003).
+- `advected_quantities()` of the solvers (then called `lopsided_advection_quantities()`,
+  see ADR 0003) stays as it is: The numerical scheme
   advects b and the derivatives of the shift (in the second-order formulation: the shift
   and b) only if both switches are 1.
 

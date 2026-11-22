@@ -47,10 +47,10 @@ Instead, it breaks down the problem into
 
 @f[
 \begin{aligned}
-\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}_{{\color{blue}{M^{(B)}}}}(Q^{(A)}, \nabla Q^{(A)}) + \mathcal{B}^{(A)}_{{\color{blue}{M^{(B)}}}}(Q^{(A)}) . \nabla Q^{(A)} & = & S^{(A)}_{{\color{blue}{M^{(B)}}}}(Q^{(A)}) \\
-\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}_{{\color{blue}{M^{(A)}}}}(Q^{(B)}, \nabla Q^{(B)}) + \mathcal{B}^{(B)}_{{\color{blue}{M^{(A)}}}}(Q^{(B)}) . \nabla Q^{(B)} & = & S^{(B)}_{{\color{blue}{M^{(A)}}}}(Q^{(B)}) \\
-{\color{blue}{M^{(A)}}} & = & Q^{(B)} \\
-{\color{blue}{M^{(B)}}} & = & Q^{(A)}
+\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}_{{\color{blue}{M^{(A)}}}}(Q^{(A)}, \nabla Q^{(A)}) + \mathcal{B}^{(A)}_{{\color{blue}{M^{(A)}}}}(Q^{(A)}) . \nabla Q^{(A)} & = & S^{(A)}_{{\color{blue}{M^{(A)}}}}(Q^{(A)}) \\
+\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}_{{\color{blue}{M^{(B)}}}}(Q^{(B)}, \nabla Q^{(B)}) + \mathcal{B}^{(B)}_{{\color{blue}{M^{(B)}}}}(Q^{(B)}) . \nabla Q^{(B)} & = & S^{(B)}_{{\color{blue}{M^{(B)}}}}(Q^{(B)}) \\
+{\color{blue}{M^{(A)}}} & = & \Pi_{B\to A}\,Q^{(B)} \\
+{\color{blue}{M^{(B)}}} & = & \Pi_{A\to B}\,Q^{(A)}
 \end{aligned}
 @f]
 
@@ -58,10 +58,10 @@ or even
 
 @f[
 \begin{aligned}
-\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}(Q^{(A)}, \nabla Q^{(A)}) + \nabla . {\color{red}{\tilde{F}^{(A)}_{{\color{blue} M^{(B)}}}(Q^{(A)}, \nabla Q^{(A)})}} + \mathcal{B}^{(A)}(Q^{(A)}) . \nabla Q^{(A)} + {\color{red}{\tilde{\mathcal{B}}^{(A)}_{{\color{blue} M^{(B)}}}(Q^{(A)})}} . \nabla Q^{(A)} & = & S^{(A)}(Q^{(A)}) + {\color{red}{\tilde{ S}^{(A)}_{{\color{blue} M^{(B)}}}(Q^{(A)})}} \\
-\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}(Q^{(B)}, \nabla Q^{(B)}) + \nabla . {\color{red}{\tilde{F}^{(B)}_{{\color{blue} M^{(A)}}}(Q^{(B)}, \nabla Q^{(B)})}} + \mathcal{B}^{(B)}(Q^{(B)}) . \nabla Q^{(B)} + {\color{red}{\tilde{\mathcal{B}}^{(B)}_{{\color{blue} M^{(A)}}}(Q^{(B)})}} . \nabla Q^{(B)} & = & S^{(B)}(Q^{(B)}) + {\color{red}{\tilde{ S}^{(B)}_{{\color{blue} M^{(A)}}}(Q^{(B)})}} \\
-{\color{blue}{M^{(A)}}} & = & Q^{(B)} \\
-{\color{blue}{M^{(B)}}} & = & Q^{(A)}
+\frac{\partial Q^{(A)}}{\partial t} + \nabla . F^{(A)}(Q^{(A)}, \nabla Q^{(A)}) + \nabla . {\color{red}{\tilde{F}^{(A)}_{{\color{blue} M^{(A)}}}(Q^{(A)}, \nabla Q^{(A)})}} + \mathcal{B}^{(A)}(Q^{(A)}) . \nabla Q^{(A)} + {\color{red}{\tilde{\mathcal{B}}^{(A)}_{{\color{blue} M^{(A)}}}(Q^{(A)})}} . \nabla Q^{(A)} & = & S^{(A)}(Q^{(A)}) + {\color{red}{\tilde{ S}^{(A)}_{{\color{blue} M^{(A)}}}(Q^{(A)})}} \\
+\frac{\partial Q^{(B)}}{\partial t} + \nabla . F^{(B)}(Q^{(B)}, \nabla Q^{(B)}) + \nabla . {\color{red}{\tilde{F}^{(B)}_{{\color{blue} M^{(B)}}}(Q^{(B)}, \nabla Q^{(B)})}} + \mathcal{B}^{(B)}(Q^{(B)}) . \nabla Q^{(B)} + {\color{red}{\tilde{\mathcal{B}}^{(B)}_{{\color{blue} M^{(B)}}}(Q^{(B)})}} . \nabla Q^{(B)} & = & S^{(B)}(Q^{(B)}) + {\color{red}{\tilde{ S}^{(B)}_{{\color{blue} M^{(B)}}}(Q^{(B)})}} \\
+{\color{blue}{M^{(A)}}} & = & \Pi_{B\to A}\,Q^{(B)} \\
+{\color{blue}{M^{(B)}}} & = & \Pi_{A\to B}\,Q^{(A)}
 \end{aligned}
 @f]
 
@@ -71,9 +71,9 @@ So here's what's happening here and what we try to express through these formula
 2. We keep the PDEs without any coupling (if something like that exists) intact where possible. 
    If the PDE terms require corrections, we model them as explicit additional terms (marked by a tilde and set in red). 
    This might not always be practicable, i.e. some terms might degenerate to nop, but the intention is to reuse building blocks (term implementations) where possible.
-3. The terms are coupled through the new auxiliary variables. We write them
-   down as plain copies in the third and fourth row, but they don't have to be exact copies:
-   We assume that the auxiliary values live in the same function space as their Q counterparts, but the two PDEs can exist in completely different function spaces.  
+3. The terms are coupled through auxiliary variables obtained by projecting each solver's solution
+   into the other solver's auxiliary-data space, as shown in the third and fourth row.
+   These projections reduce to plain copies when the corresponding function spaces coincide.
    The copy overhead can be eliminated explicitly.
 
 
@@ -98,7 +98,7 @@ and has the responsibility to inject the additional coupling logic and terms (re
 </div>
 
 
-A user adds one coupling object (a "host", e.g. exagrype.api.CCZ4WithEuler_OuterAdditiveCoupling), which then brings its embedded solvers along. 
+A user adds one coupling object (a "host", e.g. exagrype.api.euler.CCZ4WithEuler_OuterAdditiveCoupling), which then brings its embedded solvers along. 
 These aggregated solvers then later will create their task graphs how to realise a feature independently,
 and it is then the host who has to merge these subgraphs properly:
 
@@ -186,7 +186,7 @@ In many cases, this reduces the overall convergence order, but there are solvers
 
 ExaHyPE internally works with the notion of a task graph, which simplies the modelling of this type of coupling dramatically.
 We simply take the task graph of solver 1 and merge the one of solver 2 into it, and then wire them,
-(@ref exagrype.api.CCZ4WithEuler_OuterMultiplicativeCoupling is the worked example for Euler and CCZ4;
+(@ref exagrype.api.euler.CCZ4WithEuler_OuterMultiplicativeCoupling is the worked example for Euler and CCZ4;
 @ref exagrype.api.FOSOSolver is the example for the inner variant, where tasks are inserted per
 Runge-Kutta stage).
 All the remainder (notably finding the right number of required mesh sweeps) is done by ExaHyPE and Peano under the hood.
@@ -245,7 +245,7 @@ where the actual physics remains determined by
  
 ### Example: CCZ4 followed by Euler
 
-The host @ref exagrype.api.CCZ4WithEuler_OuterMultiplicativeCoupling chains the graphs of the running example:
+The host @ref exagrype.api.euler.CCZ4WithEuler_OuterMultiplicativeCoupling chains the graphs of the running example:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 prepare (from Euler) -> graph of CCZ4 -> prepare (from CCZ4) -> graph of Euler -> synchronise
@@ -279,7 +279,66 @@ The host decides how time advances.
 Per internal step, it now calls the sequence of solvers.
 So if we have Runge-Kutta of fourth order with four shots, then each shot triggers two substeps if we wire together two steps.
 
-@todo Continue write up
+The numerical scheme of such a coupled solver is called a <b>generator</b>. The user assigns it to the host (the coupled solver),
+and <b>not</b> to the aggregated solvers: the host rejects aggregated solvers which hold a numerical scheme of their own.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+coupled = exagrype.api.scalarfield.CCZ4WithScalarField_InnerCoupling()
+coupled.numerical_scheme = exagrype.api.scalarfield.RungeKuttaFD4InnerMultiplicative(patch_size=9, rk_order=4)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There is one generator for each combination of Finite Volumes (explicit Euler) and Runge-Kutta with
+fourth-order Finite Differences, and of multiplicative and additive coupling (four in total,
+@ref exagrype.api.scalarfield.FiniteVolumesInnerMultiplicative,
+@ref exagrype.api.scalarfield.FiniteVolumesInnerAdditive,
+@ref exagrype.api.scalarfield.RungeKuttaFD4InnerMultiplicative and
+@ref exagrype.api.scalarfield.RungeKuttaFD4InnerAdditive).
+All of them derive from @ref exagrype.api.scalarfield.InnerCouplingGenerator.
+
+### What the generator builds
+
+The generator constructs the task graph of the whole combination:
+
+1. It installs the building blocks of its kind (the schemes of the standalone solvers) on the aggregated solvers.
+   The user never sees them. They create the data and kernels of their solver and the task chain of each stage.
+2. It merges the stage graphs of both solvers, and adds one <b>copy task</b> per stage of the time integrator.
+   The copy task fills the auxiliary variables of the consuming solver with the input of the stage of the producing solver,
+   projects them onto the faces, restricts them on hanging faces, and rolls them over.
+   It reads the producer's input before the producer's reconstruction discards it, and it waits for the end of the previous stage of both solvers.
+3. Multiplicative: the stage of the consumer waits for the end of the producer's stage.
+   Additive: both stages only wait for the copy task, i.e. they run in parallel.
+4. A global end-of-step task enforces the minimum of the time step sizes, and load balancing and mesh refinement wrap the whole graph.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+stage 0:  copy -> CCZ4 stage 0 -> scalar field stage 0 ->
+stage 1:  copy -> CCZ4 stage 1 -> scalar field stage 1 -> ... -> synchronise     (multiplicative)
+
+stage 0:  copy -> CCZ4 stage 0 || scalar field stage 0 ->
+stage 1:  copy -> CCZ4 stage 1 || scalar field stage 1 -> ... -> synchronise     (additive)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We deliberately compose building blocks and do not rewrite the numerical schemes: a rewrite would duplicate
+the data structures, the kernels and the boundary treatment of both schemes for each pair of solvers.
+
+### Which data do the solvers see?
+
+In stage @f$ k @f$ of a Runge-Kutta scheme, a solver evaluates its right-hand side at the stage input @f$ Y_k @f$, which belongs to the time stamp @f$ t + c_k \Delta t @f$.
+For the integrator to keep its order, each solver has to see the data of the other solver at the same time stamp, i.e. the other solver's stage input @f$ Y_k @f$.
+It is not the other solver's outcome @f$ Y_{k+1} @f$ of this stage: this belongs to a different time stamp, and the order condition
+@f$ \sum_k b_k c_k = 1/2 @f$ would break (the classic Runge-Kutta scheme of order four yields 3/4, i.e. the scheme would be first order).
+Consequently,
+
+<div style="background-color: #cfc ; padding: 10px; border: 1px solid green;">
+  In an inner coupling, both flavours copy the stage input of the producer before the stage starts.
+  For a one-directional coupling, multiplicative and additive coupling therefore yield the same numbers.
+  They differ in the schedule: the additive stages run in parallel, the multiplicative ones one after the other.
+  If data flow in both directions, or if a solver changes data which the other one reads, the flavours differ in what they see; the
+  multiplicative flavour then allows a stage to see what the preceding stage has written.
+</div>
+
+In an outer coupling, the consumer works through all of its stages with the data of one time stamp (the one when the producer finished, or started).
+This is why outer couplings are first order in time: the spacetime is frozen within the time step.
+Inner couplings retain the order of the time integrator.
 
 ## Outer additive coupling
 
@@ -332,7 +391,7 @@ They only are coupled in the outer time integration loop.
 
 ### Example: CCZ4 and Euler in parallel
 
-The host @ref exagrype.api.CCZ4WithEuler_OuterAdditiveCoupling (driven by `benchmarks/exagrype/gauge-wave-with-Euler`) puts the graphs of the 
+The host @ref exagrype.api.euler.CCZ4WithEuler_OuterAdditiveCoupling (driven by `benchmarks/exagrype/gauge-wave-with-Euler`) puts the graphs of the 
 running example next to each other:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -388,7 +447,7 @@ The additive tasks of A and B can overlap, whereas multiplicative steps are logi
 task depends on the end of the whole graph in both cases. Each solver's graph ends with a global end-of-step task, which
 computes the time step size. In the multiplicative coupling, the prep task of B waits for the one of A, too, and the task graph compiler does not
 fuse it into the mesh sweep of that task: it runs in a sweep of its own (one sweep more than if it only waited for the last cell tasks).
-The additive reference is `exagrype.api.CCZ4WithEuler_OuterAdditiveCoupling`, driven by `benchmarks/exagrype/gauge-wave-with-Euler`. The AI skill
+The additive reference is `exagrype.api.euler.CCZ4WithEuler_OuterAdditiveCoupling`, driven by `benchmarks/exagrype/gauge-wave-with-Euler`. The AI skill
 (see below) generates both flavours from the same recipe.
 
 ## Inner additive coupling
@@ -397,11 +456,34 @@ Internal additive coupling follows the pattern we have seen when we distinguish 
 Here, the time integrator sits in the host.
 Users are not allowed to attach a time integrator to the aggregated solvers.
 
-As the time integrator steps through time with potentially many Runge Kutta shots, 
+As the time integrator steps through time with potentially many Runge Kutta shots,
 each intermediate step exchanges the auxiliary data and launches the solvers' fundamental steps in parallel.
+The generators @ref exagrype.api.scalarfield.FiniteVolumesInnerAdditive and
+@ref exagrype.api.scalarfield.RungeKuttaFD4InnerAdditive realise this: per stage, the copy task precedes
+the first tasks of both solvers, and nothing orders the two stages relative to each other. The task graph compiler
+fuses the tasks of the two solvers into the same mesh sweeps.
+The details are in the section on inner multiplicative coupling above.
 
 
- 
+### Example: CCZ4 and an advected scalar field
+
+The benchmark `benchmarks/exagrype/gauge-wave-with-scalar-field` (design notes: `DESIGN.md` there) couples
+CCZ4 on the gauge wave to four scalar fields (@ref exagrype.api.scalarfield.ScalarField),
+which the lapse of CCZ4 advects:
+
+@f$ \partial_t \phi + \alpha^2 \partial_x \phi = 0. @f$
+
+The coupling is a fake coupling: only the advection velocity depends on the spacetime, the field does not feed back.
+There is one auxiliary set, which holds the 58 entries of CCZ4 in the scalar field solver, and hence one copy task per stage.
+The advection velocity is the metric component @f$ g_{xx} = 1 - A \sin(2 \pi (x-t)) @f$ of the gauge wave, and the equation has the closed-form solution
+
+@f$ \phi_m(x,t) = \sin(2 \theta_0 + m \pi/4), \quad \tan \theta_0 = e^{2 \pi A t} \tan (\pi (x-t)), @f$
+
+so that the error of the scalar field is measurable. The script `convergence-study.py` there runs the outer multiplicative coupling and both
+inner couplings with `rk4fd4` and with Finite Volumes, and checks the estimated orders. The data-flow argument above predicts a first-order outer coupling and
+inner couplings which reach the order of the scheme. At the time of writing, the benchmark generates and runs for all combinations tried, but the
+convergence study has not been completed (see `DESIGN.md`), i.e. these orders are expectations and not yet measurements.
+
 
 ## Synchronise solvers
 

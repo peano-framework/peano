@@ -36,13 +36,19 @@ namespace exagrype {
        * entries of its result.
        *
        * Neither variant holds the advection terms
-       * @f$ \beta^k \partial_k Q @f$ which need the derivative of the
-       * advected entry itself. The numerical scheme has to add them, as
-       * they are discretised with lopsided stencils (see
-       * exagrype.api.CCZ4SolverBase.lopsided_advection_quantities()). The
-       * implementation in Kernels.cpp still knows these terms, but only
-       * compiles them if its template argument Advection is set, which
-       * none of the kernels below does.
+       * @f$ \beta^k \partial_k Q_q @f$ which need the derivative of the
+       * advected entry q itself, and none must ever do so: Either the
+       * numerical scheme adds them with lopsided stencils, or the solver
+       * appends them with the central differences of the scheme
+       * (exahype2::fd::addCentralAdvection()). Both add the terms of the
+       * entries which exagrype.api.CCZ4SolverBase.advected_quantities()
+       * names, i.e. this list is the only place that defines them. A kernel
+       * that held one of these terms would add it a second time. The
+       * rationale is written down in
+       * src/exagrype/ccz4/adrs/0003-the-solver-picks-who-adds-the-advection.md.
+       * The non-shifting shift (CCZ4b=0) is the one exception: the
+       * advection of Ghat in the equation of b is no advection of b itself,
+       * and the kernel adds it (see below).
        *
        * @param BgradQ The 25 primary entries of the result.
        * @param BgradQaux The 33 secondary entries of the result (first-order
@@ -68,8 +74,8 @@ namespace exagrype {
        * (non-shifting shift). The time derivative of
        * @f$ \hat\Gamma^i @f$ in the second equation is the complete one,
        * i.e. it comprises the advection of @f$ \hat\Gamma^i @f$. As the
-       * kernels leave this advection to the numerical scheme, the
-       * non-conservative product adds it to the equation of
+       * kernels leave this advection to the numerical scheme or the solver,
+       * the non-conservative product adds it to the equation of
        * @f$ b^i @f$ for b=0. The third equation is the derivative of
        * the first one, which is why b also switches off the product of the
        * derivatives of the shift

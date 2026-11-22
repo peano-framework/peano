@@ -7,9 +7,9 @@ import peano4.api
 import peano4.api.taskgraph
 import toolbox.blockstructured.api
 
-from .euler import Euler
-from .FOCCZ4Solver import FOCCZ4Solver
-from .actionsets import CopyPatchWithLinearInterpolation, SynchroniseTimeStepSizes
+from .Euler import Euler
+from ..FOCCZ4Solver import FOCCZ4Solver
+from ..actionsets import CopyPatchWithLinearInterpolation, SynchroniseTimeStepSizes
 
 
 class CCZ4WithEuler_OuterMultiplicativeCoupling:

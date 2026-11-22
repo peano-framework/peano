@@ -19,10 +19,14 @@ class FOCCZ4Solver(CCZ4SolverBase):
     ExaGRyPE library (configure Peano with --enable-exagrype):
 
     - the non-conservative product to exagrype::ccz4::ncpFirstOrder(),
+      plus the advection terms if the numerical scheme does not add them
+      (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection());
+      it is registered only when the solver is realised,
     - the volumetric source to exagrype::ccz4::sourceFirstOrder(),
-    - the maximum eigenvalue to exagrype::ccz4::maxEigenvalue(),
-    - the initial condition to one of the routines from
-      exagrype::initialvalues (@ref exagrype.api.initialvalues).
+    - the maximum eigenvalue to exagrype::ccz4::maxEigenvalue().
+
+    The solver has no initial condition. Add one as for any other solver,
+    e.g. a routine of exagrype.api.initialvalues via add_pde_term().
 
     CCZ4 has no conservative flux. You still have to assign a numerical
     scheme, a grid construction and (optionally) a plotter, exactly as for
@@ -42,15 +46,16 @@ class FOCCZ4Solver(CCZ4SolverBase):
       (exagrype::ccz4::enforceCCZ4constraints()) only if you switch it on
       via enforce_ccz4_constraint(). Without it, long runs drift away from
       the constraint surface.
-    - exagrype::ccz4::ncpFirstOrder() omits the advection terms
-      @f$ \\beta^k \\partial _k Q @f$ of all unknowns besides the metric,
-      the lapse, the shift and phi (whose advection is part of the
-      algebraic source). It expects the numerical scheme to add them
-      with lopsided stencils. The fourth-order Finite Differences do so if
-      you select the kernel CentralDifferencesWithLopsidedAdvection with
-      ADVECTION_VELOCITY and lopsided_advection_quantities(). The Finite
-      Volumes of exahype2.api.fv do not add them, i.e. they evolve CCZ4
-      without these advection terms.
+    - The advection terms @f$ \\beta^k \\partial _k Q @f$ of all
+      unknowns besides the metric, the lapse, the shift and phi (whose
+      advection is part of the algebraic source) are added either by the
+      fourth-order Finite Differences, if you select their kernel
+      CentralDifferencesWithLopsidedAdvection with ADVECTION_VELOCITY and
+      advected_quantities(), or by the non-conservative product
+      with central differences otherwise. The Finite Volumes of
+      exahype2.api.fv add none of them, i.e. they evolve CCZ4 without
+      these advection terms
+      (@ref exagrype.api.CCZ4SolverBase.CCZ4SolverBase.ncp_adds_advection()).
     - Black holes are limited to a single one
       (exagrype.api.initialvalues.single_black_hole()). Tracers and the
       ADM/Psi4 postprocessing are not available yet. The second-order

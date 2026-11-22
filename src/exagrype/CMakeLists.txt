@@ -9,6 +9,10 @@ if(NOT WITH_GSL)
   list(FILTER SOURCES EXCLUDE REGEX "/twopunctures/")
   list(FILTER HEADERS EXCLUDE REGEX "/twopunctures/")
 endif()
+# The apparent-horizon finder is a standalone postprocessing tool with its own
+# build (ahf/CMakeLists.txt), not part of the ExaGRyPE library
+list(FILTER SOURCES EXCLUDE REGEX "/ahf/")
+list(FILTER HEADERS EXCLUDE REGEX "/ahf/")
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${HEADERS})
 
@@ -47,3 +51,7 @@ foreach(pattern IN LISTS HEADER_EXTENSIONS_TO_GLOB)
     PATTERN ${pattern}
   )
 endforeach()
+
+if(ENABLE_CCZ4_AHF_POSTPROCESSOR)
+  add_subdirectory(ahf)
+endif()
