@@ -103,13 +103,11 @@ def add_clearing_tasks(graph: "peano4.api.taskgraph.Graph") -> list:
     Every task of the graph which holds a RestrictHangingFaces action set with averaging gets
     a task of its own (ClearFaceProjections, working on the faces) which it depends on. The
     face data which the projection task writes are TEMPORARY, i.e. clearing and projection have to
-    share one mesh traversal.
-    The clearing task therefore does not wait for the projection's direct
-    dependencies but for their dependencies: It is a sibling of what the projection task waits
-    for. It then acts in touchFaceFirstTime() in the traversal of its siblings, and the projection
-    follows in the same traversal, i.e. clearing costs no mesh sweep. If the siblings end in
-    an event that is later than touchFaceFirstTime(), the compiler puts clearing into an earlier traversal than
-    the projection only if it has to, i.e. whenever a task between them is not fusable.
+    share one mesh traversal. The clearing task therefore waits for the same tasks as the projection
+    task, and the projection task waits for it. Placing it earlier is not safe: if
+    a task between them is split into producer and consumer, the compiler puts clearing and projection into
+    different traversals, and the projection accumulates onto uninitialised memory (see
+    src/exahype2/api/rkfd4/adrs/0002-eigenvalue-follows-projection.md).
 
     @param graph: peano4.api.taskgraph.Graph
       The graph is altered.
@@ -139,9 +137,7 @@ def add_clearing_tasks(graph: "peano4.api.taskgraph.Graph") -> list:
                 clearing.use_face(restriction.patch_overlap, task.face_data_access[restriction.patch_overlap])
             clearing.add_action_set(ClearFaceProjections(restriction))
         for dependency in task.dependencies:
-            for grandparent in dependency.dependencies:
-                if grandparent not in clearing.dependencies:
-                    clearing.add_dependency(grandparent)
+            clearing.add_dependency(dependency)
         task.add_dependency(clearing)
         graph.add_task(clearing)
         result.append(clearing)

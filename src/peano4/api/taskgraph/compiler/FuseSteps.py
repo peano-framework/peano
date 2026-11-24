@@ -45,12 +45,12 @@ def translate(
        its first touch, destroying it as its last touch. A task's first
        and last event follow from the events its action sets use (@ref peano4.api.taskgraph.Task.Task.event_label,
        e.g. VERTEX_FIRST_CELL_LAST). A node can be appended to the traversal
-       built up so far if and only if its first event is not before the last event of the
-       traversal. A task which acts in touchFaceLastTime() therefore never
-       shares a traversal with a subsequent task which acts in touchCellFirstTime().
-       Tasks of one dependency layer (see
-       below) are independent of each other, so this constraint does not
-       apply among them.
+       built up so far if and only if its first event is not before the last event of each
+       task of the traversal which it depends on (directly or through other tasks). A task which acts in touchFaceLastTime() therefore never
+       shares a traversal with a subsequent task which depends on it and acts in touchCellFirstTime().
+       Tasks which do not depend on each other, i.e. which a numerical scheme models as parallel, are always
+       fusable as far as this constraint is concerned, whatever their events are. This
+       includes all tasks of one dependency layer (see below).
     2. **No conflicting face or vertex data.** A face or a vertex is shared
        between several cells. If one task of a traversal writes a face or
        vertex submodel (WRITE or READ_AND_WRITE) while another task of the
@@ -271,6 +271,29 @@ def translate(
             for dependency in global_task.dependencies
         )
 
+    ancestors_of_task = {}
+
+    def ancestors(task: Task) -> set:
+        """All tasks which task depends on, directly or through other tasks"""
+        if task not in ancestors_of_task:
+            result = set()
+            for dependency in task.dependencies:
+                result.add(dependency)
+                result |= ancestors(dependency)
+            ancestors_of_task[task] = result
+        return ancestors_of_task[task]
+
+    def events_are_in_order(tasks: List[Task], further_tasks: List[Task]) -> bool:
+        """Constraint 1: Every task in further_tasks which depends on a task in tasks acts only after the latter has finished"""
+        return not any(
+            task in ancestors(further_task)
+            and task.last_event is not None
+            and further_task.first_event is not None
+            and task.last_event > further_task.first_event
+            for task in tasks
+            for further_task in further_tasks
+        )
+
     depth_of_task = {}
 
     def depth(task: Task) -> int:
@@ -308,10 +331,7 @@ def translate(
     # Step 3: greedy fusion along the sequence of nodes
     groups = []
     current_group = None
-    highest_event_of_current_group = None
     for node in nodes:
-        lowest_event = min(task.first_event for task in node)
-        highest_event = max(task.last_event for task in node)
         is_repeating = len(node) == 1 and node[0].has_to_repeat
         tasks_of_current_group = [task for group_node in current_group or [] for task in group_node]
         # A task which depends on a global task runs after the traversal that holds the global task
@@ -325,14 +345,12 @@ def translate(
             not is_repeating
             and current_group is not None
             and not waits_for_current_group
-            and lowest_event >= highest_event_of_current_group
+            and events_are_in_order(tasks_of_current_group, node)
             and can_be_combined(tasks_of_current_group, node, respect_entity_order=True)
         ):
             current_group.append(node)
-            highest_event_of_current_group = max(highest_event_of_current_group, highest_event)
         else:
             current_group = [node]
-            highest_event_of_current_group = highest_event
             groups.append(current_group)
         if is_repeating:
             current_group = None

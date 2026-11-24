@@ -358,7 +358,7 @@ class Task:
 
         The traversal events in which the task's action sets are not empty
 
-        If the action sets use no event at all (they might not exist yet), the
+        If the action sets use no event at all (or there are none yet), the
         task acts in the first event of its primary declared entity, i.e. a CELL task in
         CELL_FIRST. Global tasks without events act in none.
 

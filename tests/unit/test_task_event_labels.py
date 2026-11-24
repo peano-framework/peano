@@ -74,7 +74,10 @@ def test_traversal_events_are_first_and_last_of_the_order():
 
 def test_task_without_events_acts_in_the_first_event_of_its_declared_entity():
     task = Task(name="t", entity=CELL)
+    task.add_action_set(_EventsActionSet("a"))
     assert task.events == {Event.CELL_FIRST}
+    assert Task(name="t", entity=CELL).events == {Event.CELL_FIRST}
+    assert Task(name="t", entity=Task.GridEntity.GLOBAL).events == frozenset()
 
 
 def test_event_order_is_the_order_of_the_traversal():
@@ -107,3 +110,22 @@ def test_face_last_touch_tasks_fuse_with_each_other():
     a = _task("a", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME)
     b = _task("b", ActionSet.OPERATION_TOUCH_FACE_LAST_TIME, dependencies=[a])
     assert _number_of_traversals(a, b) == 1
+
+
+def test_independent_tasks_fuse_whatever_their_events_are():
+    start = _task("start", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
+    late = _task(
+        "late", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME, dependencies=[start]
+    )
+    middle = _task("middle", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[start])
+    early = _task("early", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[middle])
+    assert _number_of_traversals(start, late, middle, early) == 1
+
+
+def test_dependent_task_still_waits_for_the_late_event_of_its_predecessor():
+    start = _task("start", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
+    late = _task(
+        "late", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME, dependencies=[start]
+    )
+    after_late = _task("after late", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[late])
+    assert _number_of_traversals(start, late, after_late) == 2

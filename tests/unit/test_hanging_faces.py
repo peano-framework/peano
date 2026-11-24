@@ -181,11 +181,11 @@ def _projection_graph(averaging=True):
     return graph, other, update, projection, patch
 
 
-def test_clearing_task_is_a_sibling_of_the_dependencies_of_the_projection():
+def test_clearing_task_waits_for_the_dependencies_of_the_projection_which_waits_for_it():
     graph, other, update, projection, patch = _projection_graph()
     [clearing] = toolbox.blockstructured.api.ClearFaceProjections.add_clearing_tasks(graph)
     assert clearing in graph.tasks
-    assert clearing.dependencies == [other]
+    assert clearing.dependencies == [update]
     assert clearing in projection.dependencies and update in projection.dependencies
     assert clearing.face_data == [patch]
     assert clearing.face_data_access[patch] == peano4.api.taskgraph.Task.DataAccess.TEMPORARY

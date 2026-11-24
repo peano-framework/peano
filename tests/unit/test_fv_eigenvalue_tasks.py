@@ -117,15 +117,14 @@ def test_update_eigenvalue_and_reduction_fold_into_one_traversal(scheme, tmp_pat
     ]
     assert len(holders) == 1, names
     # The projection writes the face data which the reconstruction reads at the
-    # beginning of a traversal, i.e. it follows in the next one. As it rolls over
-    # the faces in touchFaceLastTime(), the reduction (touchCellFirstTime()) cannot
-    # follow in the same traversal. The time step size acts in the last traversal
+    # beginning of a traversal, i.e. it follows in the next one, together with
+    # the reduction. The time step size acts in the last traversal
     assert "ProjectPatchOntoFaces" not in holders[0]
     assert "ReduceMaxEigenvalue" not in holders[0]
     # The reconstruction interpolates the hanging faces itself, i.e. no
     # traversal is spent on the interpolation
-    assert len(names) == 3, names
-    assert any("ProjectPatchOntoFaces" in step_names for step_names in names[1:2])
+    assert len(names) == 2, names
+    assert "ProjectPatchOntoFaces" in names[-1]
     assert "ReduceMaxEigenvalue" in names[-1]
     assert "ComputeGlobalCFLCondition" in names[-1]
 

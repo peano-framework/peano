@@ -188,12 +188,6 @@ class Solver(abc.ABC):
                 source.add_dependency(disable_task)
             time_step.add_task(disable_task)
 
-            refinement_task = peano4.api.taskgraph.Task(
-                name=f"{solver.name}_{self.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
-                entity=Entity.CELL,
-                may_spawn_background_tasks=False,
-            )
-            refinement_task.use_cell(solver._patch, Access.READ_AND_WRITE)
             dynamic_mesh_refinement = create_dynamic_mesh_refinement_action_set(
                 solver,
                 self.patch_size,
@@ -201,7 +195,13 @@ class Solver(abc.ABC):
                 min_volume_size=self.min_volume_size,
                 max_volume_size=self.max_volume_size,
             )
+            refinement_task = peano4.api.taskgraph.Task(
+                name=f"{solver.name}_{self.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
+                entity=Entity.CELL if dynamic_mesh_refinement is not None else Entity.GLOBAL,
+                may_spawn_background_tasks=False,
+            )
             if dynamic_mesh_refinement is not None:
+                refinement_task.use_cell(solver._patch, Access.READ_AND_WRITE)
                 refinement_task.add_action_set(dynamic_mesh_refinement)
             for sink in sinks:
                 refinement_task.add_dependency(sink)

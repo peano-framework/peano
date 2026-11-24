@@ -22,7 +22,7 @@ as its last touch (`ValidateTaskGraph.EVENTS_OF_OPERATIONS`).
 `VERTEX_FIRST_CELL_LAST`, or `CELL_FIRST` if both coincide. A task without events acts in the first
 event of its declared entity.
 
-Two tasks A and B can share a traversal if the last event of A is not after the first event of B.
+Two tasks A and B can share a traversal if B does not depend on A (directly or through other tasks), or if the last event of A is not after the first event of B. Tasks which a scheme models as parallel are thus always fusable with respect to the event order.
 A conflict on face (vertex) data between two fused tasks is ignored if the earlier task acts in face
 (vertex) events only.
 
