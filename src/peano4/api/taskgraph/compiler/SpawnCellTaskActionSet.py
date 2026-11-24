@@ -194,46 +194,38 @@ class SpawnCellTaskActionSet(ActionSet):
         first = self._accessor(self._first_task_attribute_name)
         last = self._accessor(self._last_task_attribute_name)
         children = self._accessor(self._children_tasks_attribute_name)
+        no_number = "tarch::multicore::TaskEnumerator::NoNumber"
         result = f"""
-  for (int i=0; i<ThreePowerD; i++) {{
-    {fine}.set{children}( i, tarch::multicore::TaskEnumerator::NoNumber );
-  }}
+  peano4::datamanagement::clearChildrenTasks( [&](int i, int value) {{ {fine}.set{children}( i, value ); }} );
 """
         if self.has_body_of(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME):
             result += f"""
   {fine}.set{last}( {fine}.getTaskEnumerator().getNumber() );
-  {{
-    const int childIndex = peano4::utils::dLinearised( marker.getRelativePositionWithinFatherCell(), 3 );
-    if (childIndex>=0 and childIndex<ThreePowerD) {{
-      {coarse}.set{children}( childIndex, {fine}.get{last}() );
-    }}
+  if ( const int childIndex = peano4::datamanagement::getIndexWithinParent( marker.getRelativePositionWithinFatherCell() ); childIndex>=0 ) {{
+    {coarse}.set{children}( childIndex, {fine}.get{last}() );
   }}
 """
         else:
-            result += (
-                f"  {fine}.set{last}( tarch::multicore::TaskEnumerator::NoNumber );\n"
-            )
+            result += f"  {fine}.set{last}( {no_number} );\n"
         if self.has_body_of(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME):
-            dependencies = "  std::set<tarch::multicore::TaskNumber> inDependencies;\n"
-            if self._previous_first_task_attribute_name is not None:
-                previous = self._accessor(self._previous_first_task_attribute_name)
-                dependencies += f"    if ( {fine}.get{previous}()>=0 ) inDependencies.insert( {fine}.get{previous}() );\n"
-            dependencies += f"    if ( {coarse}.get{first}()>=0 ) inDependencies.insert( {coarse}.get{first}() );\n"
+            previous = (
+                no_number
+                if self._previous_first_task_attribute_name is None
+                else f"{fine}.get{self._accessor(self._previous_first_task_attribute_name)}()"
+            )
             result += f"""
   if ({self.action_set.get_guard_of_operation(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)}) {{
     const int taskNumber = {fine}.getTaskEnumerator().getNumber();
     {fine}.set{first}( taskNumber );
-{dependencies}
+    const auto inDependencies = peano4::datamanagement::getInDependenciesOfFirstTask( {previous}, {coarse}.get{first}() );
 {self._spawn(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, "taskNumber", "inDependencies")}
   }}
   else {{
-    {fine}.set{first}( tarch::multicore::TaskEnumerator::NoNumber );
+    {fine}.set{first}( {no_number} );
   }}
 """
         else:
-            result += (
-                f"  {fine}.set{first}( tarch::multicore::TaskEnumerator::NoNumber );\n"
-            )
+            result += f"  {fine}.set{first}( {no_number} );\n"
         return result
 
     def _touch_cell_last_time(self) -> str:
@@ -241,30 +233,20 @@ class SpawnCellTaskActionSet(ActionSet):
         first = self._accessor(self._first_task_attribute_name)
         last = self._accessor(self._last_task_attribute_name)
         children = self._accessor(self._children_tasks_attribute_name)
-        dependencies = f"""
-  std::set<tarch::multicore::TaskNumber> inDependencies;
-  if ( {fine}.get{first}()>=0 ) inDependencies.insert( {fine}.get{first}() );
-  for (int i=0; i<ThreePowerD; i++) {{
-    if ( {fine}.get{children}(i)>=0 ) inDependencies.insert( {fine}.get{children}(i) );
-  }}
-"""
-        if self._previous_last_task_attribute_name is not None:
-            previous = self._accessor(self._previous_last_task_attribute_name)
-            dependencies += f"  if ( {fine}.get{previous}()>=0 ) inDependencies.insert( {fine}.get{previous}() );\n"
-        return f"""{dependencies}
+        previous = (
+            "tarch::multicore::TaskEnumerator::NoNumber"
+            if self._previous_last_task_attribute_name is None
+            else f"{fine}.get{self._accessor(self._previous_last_task_attribute_name)}()"
+        )
+        return f"""
+  const auto inDependencies = peano4::datamanagement::getInDependenciesOfLastTask(
+    {fine}.get{first}(), {previous}, [&](int i) {{ return {fine}.get{children}( i ); }}
+  );
   if ({self.action_set.get_guard_of_operation(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME)}) {{
 {self._spawn(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME, f"{fine}.get{last}()", "inDependencies")}
   }}
   else {{
-    tarch::multicore::spawnTask(
-      new tarch::multicore::TaskWithCopyOfFunctor(
-        tarch::multicore::Task::DontFuse,
-        tarch::multicore::Task::DefaultPriority,
-        []() mutable {{}}
-      ),
-      inDependencies,
-      {fine}.get{last}()
-    );
+    peano4::datamanagement::spawnEmptyTask( inDependencies, {fine}.get{last}() );
   }}
 """
 
@@ -306,7 +288,7 @@ class SpawnCellTaskActionSet(ActionSet):
             self.action_set.get_includes()
             + """
 #include <set>
-#include "peano4/utils/Loop.h"
+#include "peano4/datamanagement/CellTaskDependencies.h"
 #include "tarch/multicore/multicore.h"
 #include "tarch/multicore/Task.h"
 #include "tarch/multicore/TaskEnumerator.h"

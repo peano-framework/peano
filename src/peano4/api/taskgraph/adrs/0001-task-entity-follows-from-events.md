@@ -50,6 +50,7 @@ Compilers use the entity as follows:
   parent's array, as the parent's `touchCellLastTime()` runs after all children have been visited.
   The first task of a cell depends on the first task of the parent. A last task whose guard does not hold is spawned
   as empty task, as the parent waits for it.
+  The dependencies are computed by `peano4/datamanagement/CellTaskDependencies.h`, i.e. the generated code only calls it.
 
 ![Dependencies between the first and last tasks of a parent cell and its children](multiscale-task-dependencies.png)
 

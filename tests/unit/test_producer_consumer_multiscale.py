@@ -116,9 +116,9 @@ def test_last_task_depends_on_first_task_and_children():
     last = producer.action_sets[0].get_implementation_of_operation(
         ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
     )
-    assert "ActionSet0FirstTaskNumber" in last
-    assert "ActionSet0ChildrenTaskNumbers" in last
-    assert "ThreePowerD" in last
+    assert "getInDependenciesOfLastTask" in last
+    assert "getProbeActionSet0FirstTaskNumber()" in last
+    assert "getProbeActionSet0ChildrenTaskNumbers( i )" in last
 
 
 def test_child_registers_at_parent_and_depends_on_parents_first_task():
@@ -127,9 +127,11 @@ def test_child_registers_at_parent_and_depends_on_parents_first_task():
         ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
     )
     assert "coarseGridCellLabels.setProbeActionSet0ChildrenTaskNumbers" in first
-    assert "coarseGridCellLabels.getProbeActionSet0FirstTaskNumber()>=0" in first
+    assert "getIndexWithinParent" in first
+    assert "getInDependenciesOfFirstTask" in first
+    assert "coarseGridCellLabels.getProbeActionSet0FirstTaskNumber()" in first
     assert (
-        "fineGridCellLabels.setProbeActionSet0ChildrenTaskNumbers( i, tarch::multicore::TaskEnumerator::NoNumber )"
+        "clearChildrenTasks( [&](int i, int value) { fineGridCellLabels.setProbeActionSet0ChildrenTaskNumbers( i, value ); } )"
         in first
     )
 
@@ -139,7 +141,7 @@ def test_false_guard_of_last_task_still_spawns_empty_task():
     last = producer.action_sets[0].get_implementation_of_operation(
         ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
     )
-    assert "else" in last and "[]() mutable {}" in last
+    assert "else" in last and "spawnEmptyTask( inDependencies" in last
 
 
 def test_action_set_without_last_time_spawns_no_last_task():
@@ -199,8 +201,11 @@ def test_second_action_set_chains_on_first_and_last_of_first():
     last = producer.action_sets[1].get_implementation_of_operation(
         ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
     )
-    assert "getProbeActionSet0FirstTaskNumber()>=0" in first
-    assert "getProbeActionSet0LastTaskNumber()>=0" in last
+    assert (
+        "getInDependenciesOfFirstTask( fineGridCellLabels.getProbeActionSet0FirstTaskNumber()"
+        in first
+    )
+    assert "fineGridCellLabels.getProbeActionSet0LastTaskNumber(), [&]" in last
 
 
 def test_cell_task_with_late_cell_event_is_split_now():
