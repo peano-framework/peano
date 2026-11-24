@@ -18,8 +18,8 @@ This is not visible in the data the tasks declare.
 
 ## Decision
 
-`Compute time step size` depends on the roll over of the last stage
-(`previous_stage_task`) and, with adaptive time stepping, additionally on the
+`Compute time step size` depends on the task of the last stage which rolls over the faces
+(`previous_stage_task`, the projection onto the faces, which hosts the roll over since 2026-11-24) and, with adaptive time stepping, additionally on the
 reduction of the maximum eigenvalue. It never runs before the final roll over.
 
 ## Consequences

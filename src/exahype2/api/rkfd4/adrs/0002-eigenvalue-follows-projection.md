@@ -32,3 +32,9 @@ stay in one traversal as they do for the intermediate stages.
 - Whoever adds a task that consumes a producer's outcome has to check that no
   `TEMPORARY` face data spans the traversals the producer-consumer split creates. The
   task graph compiler does not detect this.
+
+## Update 2026-11-24
+
+The roll over of the faces is an action set of the projection (like in the Finite Volume schemes, ADR 0003 there).
+The layer argument above is superseded: There is no roll over task which could be pushed into the next traversal.
+The dependency of the eigenvalue task on the projection remains.
