@@ -102,7 +102,14 @@ def study(scheme):
                 stdout=subprocess.DEVNULL,
             )
             with open(os.path.join(run, "run.log"), "w") as log:
-                subprocess.run([executable], cwd=run, check=True, stdout=log, stderr=log)
+                # Wall-clock time [s] and peak memory [kB] of the run, see time.txt
+                subprocess.run(
+                    ["/usr/bin/time", "-f", "%e %M", "-o", os.path.join(run, "time.txt"), executable],
+                    cwd=run,
+                    check=True,
+                    stdout=log,
+                    stderr=log,
+                )
     return subprocess.run(
         [
             sys.executable,
