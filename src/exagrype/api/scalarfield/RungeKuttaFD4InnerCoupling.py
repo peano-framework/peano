@@ -52,7 +52,7 @@ class _RungeKuttaFD4(InnerCouplingGenerator):
     def _end_of_stage(self, solver, graph, stage):
         if stage == self.rk_order - 1:
             return [task for task in graph.sink_tasks() if not task.entity.is_global]
-        name = f"{solver.name}_Roll over stage {stage + 1} faces"
+        name = f"{solver.name}_Project stage {stage + 1} onto faces"
         return [task for task in graph.tasks if task.name == name]
 
 

@@ -405,7 +405,7 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
         ## Declared to make the compiler start a new mesh traversal here (it
         ## does not fuse tasks with conflicting face data). The projection, the
         ## restriction and the roll over share the temporary update patch,
-        ## i.e. they have to run in one traversal.
+        ## i.e. they are action sets of this task and run in one traversal.
         project.use_face(derivatives.patch_overlap_current_time_step, Access.WRITE)
         project.add_action_set(
             actionsets.ProjectPatchOntoFaces(
@@ -416,15 +416,12 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
             )
         )
         project.add_dependency(apply_stencil)
-        last_task = project
 
         ## Restrict from the hanging faces onto the coarse faces, but only
         ## if the derivatives are allowed to change, i.e. in the
         ## sense of the auxiliary variables' mode CHANGING_ON_FACES.
         if derivatives.mode == exahype2.api.AuxiliaryVariables.Mode.CHANGING_ON_FACES:
-            restrict = create_task("Restrict derivative variables on hanging faces")
-            restrict.use_face(derivatives.patch_overlap_update, Access.TEMPORARY)
-            restrict.add_action_set(
+            project.add_action_set(
                 toolbox.blockstructured.api.RestrictHangingFaces(
                     derivatives.patch_overlap_update,
                     scheme=scheme.restriction,
@@ -432,16 +429,9 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                     additional_includes=includes,
                 )
             )
-            restrict.add_dependency(last_task)
-            last_task = restrict
 
         ## Roll over
-        roll_over = create_task("Roll over derivative variable faces")
-        roll_over.use_face(derivatives.patch_overlap_update, Access.TEMPORARY)
-        roll_over.use_face(
-            derivatives.patch_overlap_current_time_step, Access.TEMPORARY
-        )
-        roll_over.add_action_set(
+        project.add_action_set(
             actionsets.RollOverUpdatedFace(
                 derivatives.patch_overlap_current_time_step,
                 derivatives.patch_overlap_update,
@@ -449,7 +439,6 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                 includes=includes,
             )
         )
-        roll_over.add_dependency(last_task)
 
         reconstruct_derivatives.add_dependency(interpolate_derivatives)
         reconstruct_primary.add_dependency(interpolate_primary)
