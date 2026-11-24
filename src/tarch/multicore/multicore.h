@@ -864,6 +864,30 @@ namespace tarch {
        * 
        * In OpenMP 5, a thread that waits yields while it polls. This is safe, as
        * no OpenMP task waits for another one (see tarch::multicore::omp::internal).
+       *
+       * ### The wait cannot run the tasks itself
+       *
+       * It looks tempting to let the waiting thread work its way backwards
+       * through the dependencies of the awaited task and run the tasks that
+       * nobody has started yet, instead of polling. This does not pay off. A
+       * task becomes an OpenMP task as soon as it has no unfinished
+       * predecessors, i.e. the walk backwards always ends at a task that has
+       * been spawned into OpenMP already. A task that still waits for
+       * predecessors cannot run before these have terminated anyway. All that the
+       * waiting thread can do is to take over a task from the OpenMP queue
+       * before an OpenMP thread picks it up. A yield does this
+       * already. We implemented the walk (claiming tasks with a flag so no task
+       * ran twice) and tested it with a team where the second thread never runs
+       * tasks: The waiting thread ran all four tasks of a diamond. In
+       * the Euler runs and in a test with chains of tasks on many threads, the
+       * waiting threads never ran a single task (the awaited tasks had been
+       * started or terminated long before), while the lock for the
+       * predecessor scan and the claim flags were additional overhead (the
+       * gauge-wave runs with chains on the finest mesh took 30-95 percent
+       * longer, though the machine was not idle). We therefore removed
+       * the walk again. The history of the
+       * repository holds it (commit "Let waiting threads run the tasks they
+       * wait for").
        */
       void waitForTasks(const std::set<TaskNumber>& inDependencies);
 

@@ -22,7 +22,6 @@ tarch::multicore::tests::TaskTest::TaskTest():
 void tarch::multicore::tests::TaskTest::run() {
   testMethod( testChainsOfDependentTasks );
   testMethod( testTaskNumberReusedAsInoutDependency );
-  testMethod( testWaitRunsTasksThatHaveNotStarted );
 }
 
 
@@ -150,71 +149,3 @@ void tarch::multicore::tests::TaskTest::testTaskNumberReusedAsInoutDependency() 
   #endif
 }
 
-
-void tarch::multicore::tests::TaskTest::testWaitRunsTasksThatHaveNotStarted() {
-  #if defined(SharedOMP)
-  constexpr int A = 1;
-  constexpr int B = 2;
-  constexpr int C = 3;
-  constexpr int D = 4;
-
-  std::atomic<int>                clock(0);
-  std::vector< std::atomic<int> > started(5);
-  std::vector< std::atomic<int> > finished(5);
-  std::vector< std::atomic<int> > threadOfTask(5);
-  for (int i=0; i<5; i++) {
-    started[i]  = -1;
-    finished[i] = -1;
-    threadOfTask[i] = -1;
-  }
-
-  auto spawn = [&](int number, std::set<tarch::multicore::TaskNumber> inDependencies) {
-    tarch::multicore::native::spawnTask(
-      new tarch::multicore::TaskWithCopyOfFunctor(
-        tarch::multicore::Task::DontFuse,
-        tarch::multicore::Task::DefaultPriority,
-        [&started,&finished,&threadOfTask,&clock,number]() {
-          started[number]      = clock++;
-          threadOfTask[number] = omp_get_thread_num();
-          finished[number]     = clock++;
-        }
-      ),
-      inDependencies,
-      number
-    );
-  };
-
-  // The second thread spins. It never reaches a task scheduling point, i.e.
-  // it does not run any of the tasks. Only the thread that waits can.
-  std::atomic<bool> waitIsOver(false);
-  bool              hadTwoThreads = false;
-
-  #pragma omp parallel num_threads(2)
-  {
-    if (omp_get_thread_num()==0) {
-      hadTwoThreads = omp_get_num_threads()==2;
-
-      spawn( A, {} );
-      spawn( B, {} );
-      spawn( C, {A,B} );
-      spawn( D, {C} );
-
-      tarch::multicore::native::waitForTasks( {D} );
-      waitIsOver = true;
-    }
-    else {
-      while ( not waitIsOver.load() ) {}
-    }
-  }
-
-  if (not hadTwoThreads) return;
-
-  for (int number=A; number<=D; number++) {
-    validateWithParams2( started[number]>=0, number, started[number] );
-    validateWithParams2( threadOfTask[number]==0, number, threadOfTask[number] );
-  }
-  validateWithParams2( started[C]>finished[A], started[C], finished[A] );
-  validateWithParams2( started[C]>finished[B], started[C], finished[B] );
-  validateWithParams2( started[D]>finished[C], started[D], finished[C] );
-  #endif
-}
