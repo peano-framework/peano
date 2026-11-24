@@ -66,11 +66,15 @@ class Solver(abc.ABC):
 
         """
 
-        ## Name of the last task of each time step without the solver's name
-        ## as prefix, i.e. the task is called {SolverName}_ followed by this
-        ## string. It evaluates the adaptivity criterion and re-enables and
-        ## informs the load balancing.
-        DYNAMIC_MESH_REFINEMENT_TASK_NAME = "Dynamic mesh refinement and load balancing"
+        ## Names of the tasks which embed a time step into the load balancing
+        ## and AMR, without the solver's name as prefix, i.e. the tasks are
+        ## called {SolverName}_ followed by the string.
+        ## The refinement task is a cell task: It evaluates the adaptivity
+        ## criterion. The tasks that enable and disable the load balancing are
+        ## global tasks, as they act in the begin and end of the step.
+        DYNAMIC_MESH_REFINEMENT_TASK_NAME = "Dynamic mesh refinement"
+        DISABLE_LOAD_BALANCING_TASK_NAME = "Disable load balancing"
+        ENABLE_LOAD_BALANCING_TASK_NAME = "Enable load balancing"
 
         def __init__(self, solver: "Solver"):
             """!
@@ -112,17 +116,21 @@ class Solver(abc.ABC):
 
             The routine adds two tasks to time_step:
 
-            - {SolverName}_Disable load balancing: switches the load
-              balancing off throughout the time step. All tasks of the graph
-              that do not depend on anything else wait for it.
-            - {SolverName}_Dynamic mesh refinement and load balancing
-              (DYNAMIC_MESH_REFINEMENT_TASK_NAME): evaluates the adaptivity
-              criterion if the solver has one, i.e. it collects the refine and
-              erase requests for the mesh adaptation phase, and then
-              switches the load balancing on again and informs it that the
-              time step has finished. It waits for all tasks of the graph that
+            - {SolverName}_Disable load balancing
+              (DISABLE_LOAD_BALANCING_TASK_NAME), a GLOBAL_START_OF_STEP task:
+              switches the load balancing off throughout the time step. All
+              tasks of the graph that do not depend on anything else wait for it.
+            - {SolverName}_Dynamic mesh refinement
+              (DYNAMIC_MESH_REFINEMENT_TASK_NAME), a cell task: evaluates the
+              adaptivity criterion if the solver has one, i.e. it collects the
+              refine and erase requests for the mesh adaptation phase.
+              It waits for all tasks of the graph that
               nothing else waits for. Global tasks do not count: The
               task runs last in the step, so no other task may wait for it.
+            - {SolverName}_Enable load balancing
+              (ENABLE_LOAD_BALANCING_TASK_NAME), a GLOBAL_END_OF_STEP task which
+              depends on the refinement: switches the load balancing on again
+              and informs it that the time step has finished.
 
             The tasks pick up whatever is in time_step when the routine is
             called. Consequently, construct_output() calls it last if its flag
@@ -167,7 +175,9 @@ class Solver(abc.ABC):
             ]
 
             disable_task = peano4.api.taskgraph.Task(
-                name=f"{solver.name}_Disable load balancing", entity=Entity.CELL
+                name=f"{solver.name}_{self.DISABLE_LOAD_BALANCING_TASK_NAME}",
+                entity=Entity.GLOBAL_START_OF_STEP,
+                may_spawn_background_tasks=False,
             )
             disable_task.add_action_set(
                 toolbox.loadbalancing.api.actionsets.ToggleLoadBalancing(
@@ -193,14 +203,22 @@ class Solver(abc.ABC):
             )
             if dynamic_mesh_refinement is not None:
                 refinement_task.add_action_set(dynamic_mesh_refinement)
-            refinement_task.add_action_set(
+            for sink in sinks:
+                refinement_task.add_dependency(sink)
+            time_step.add_task(refinement_task)
+
+            enable_task = peano4.api.taskgraph.Task(
+                name=f"{solver.name}_{self.ENABLE_LOAD_BALANCING_TASK_NAME}",
+                entity=Entity.GLOBAL_END_OF_STEP,
+                may_spawn_background_tasks=False,
+            )
+            enable_task.add_action_set(
                 toolbox.loadbalancing.api.actionsets.LoadBalancing(
                     enable_load_balancing=True
                 )
             )
-            for sink in sinks:
-                refinement_task.add_dependency(sink)
-            time_step.add_task(refinement_task)
+            enable_task.add_dependency(refinement_task)
+            time_step.add_task(enable_task)
 
         def create_default_mesh_adaptation(self) -> "Solver.MeshAdaptation":
             """!

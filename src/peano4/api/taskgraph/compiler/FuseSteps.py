@@ -9,6 +9,7 @@ import peano4.api.solversteps
 from ..Graph import Graph
 from ..Task import Task
 from .ReportCompiledStepSequence import report_compiled_step_sequence
+from .ValidateTaskGraph import validate
 
 
 def translate(
@@ -256,6 +257,7 @@ this option is hidden from the task compiler.
         )
 
     Entity = Task.GridEntity
+    validate(graph)
     all_tasks = graph.ordered_tasks()
     start_tasks = [task for task in all_tasks if task.entity == Entity.GLOBAL_START_OF_STEP]
     anchored_end_tasks = graph.anchored_end_of_step_tasks()

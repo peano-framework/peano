@@ -2,7 +2,7 @@
 # use, please see the copyright notice at www.peano-framework.org
 import copy
 import re
-from typing import List
+from typing import List, Tuple
 
 import dastgen2
 
@@ -15,6 +15,7 @@ from ..Task import Task
 from . import FuseSteps
 from . import Sequential
 from .SpawnCellTaskActionSet import SpawnCellTaskActionSet
+from .ValidateTaskGraph import validate
 from .WaitForCellTaskActionSet import WaitForCellTaskActionSet
 
 
@@ -173,18 +174,26 @@ def _translate(
     ## Spawning tasks
 
     If a peano_project is given, the producer spawns the touchCellFirstTime()
-    events of its action sets as tasks, and the consumer waits for these
+    and touchCellLastTime() events of its action sets as tasks, and the consumer waits for these
     tasks (@ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._spawn_tasks()):
 
-    - Every action set of the producer whose touchCellFirstTime() has a
-      non-empty body is wrapped into a
+    - Every action set of the producer whose touchCellFirstTime() or
+      touchCellLastTime() has a non-empty body is wrapped into a
       @ref peano4.api.taskgraph.compiler.SpawnCellTaskActionSet.SpawnCellTaskActionSet.
-      The wrapper evaluates the guard. If it holds, the wrapper takes a new
+      The wrapper evaluates the guards. If the guard of touchCellFirstTime()
+      holds, the wrapper takes a new
       task number from the tarch, stores it in the cell's task label (see
       below), and spawns the body as a task with this number. The task
       depends on the task spawned by the previous wrapped action set of the
       same producer, so the bodies are executed in their original order.
-    - Action sets whose touchCellFirstTime() has an empty body, such as
+      It also depends on the first task of the parent cell, if there is one.
+    - The touchCellLastTime() body becomes a task, too. Its number is taken
+      in touchCellFirstTime() and written into the parent's array of
+      children tasks (3^d entries, reset in touchCellFirstTime()).
+      The last task depends on the first task of the same cell and on the
+      last tasks of all (up to 3^d) children, i.e. it runs after the cell's
+      whole subtree.
+    - Action sets whose touchCellFirstTime() and touchCellLastTime() have empty bodies, such as
       @ref exahype2.api.fv.actionsets.ApplyDirichletBoundaryConditions.ApplyDirichletBoundaryConditions, are not
       part of the producer-consumer pattern. They remain plain action sets
       of the producer, i.e. all their events are invoked by the producer.
@@ -197,9 +206,9 @@ def _translate(
       producer still run. They hence must not depend on these tasks.
     - The consumer is given a cousin
       @ref peano4.api.taskgraph.compiler.WaitForCellTaskActionSet.WaitForCellTaskActionSet
-      per wrapped action set. If the cell's task label holds a valid task
-      number, it waits for this task, returns the number to the task
-      enumerator and resets the label to NoNumber=-1.
+      per wrapped action set. If the cell's task labels hold valid task
+      numbers, it waits for the tasks, returns the numbers to the task
+      enumerator and resets the labels to NoNumber=-1.
     - All other events of the wrapped action sets remain within the
       producer.
 
@@ -238,12 +247,14 @@ def _translate(
     ## Task labels
 
     The compiler adds a new cell data type <identifier>_TaskLabels to the
-    project's data model. It is modelled via DaStGen2 and holds one integer
-    per producer action set with a non-empty touchCellFirstTime(). The
-    integer's name is the CamelCase version of the original task's name
+    project's data model. It is modelled via DaStGen2 and holds, per producer
+    action set, two integers (the number of the first and of the last task)
+    and an array of 3^d integers (the last task numbers of the children).
+    The names derive from the CamelCase version of the original task's name
     followed by ActionSet, the action set's index within the task and
-    TaskNumber, e.g. EulerFVSmoothInitialConditionActionSet0TaskNumber
-    (@ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._task_number_attribute_name()).
+    FirstTaskNumber, LastTaskNumber or ChildrenTaskNumbers,
+    e.g. EulerFVSmoothInitialConditionActionSet0FirstTaskNumber
+    (@ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._task_attribute_names()).
     The labels furthermore hold a static tarch::multicore::TaskEnumerator
     (getTaskEnumerator()), from which the producers take their task numbers
     and to which the consumers return them. The producer declares the task
@@ -278,6 +289,7 @@ def _translate(
       @ref peano4.api.taskgraph.compiler.FuseSteps.translate()
 
     """
+    validate(graph)
     if chain_tasks:
         graph = _merge_chains(graph)
     producer_consumer_graph, split_tasks = _split_cell_tasks(graph)
@@ -317,6 +329,19 @@ def _task_number_attribute_name(task: Task, action_set_index: int) -> str:
     """
     words = re.split(r"[^A-Za-z0-9]+", task.name)
     return "".join(word[:1].upper() + word[1:] for word in words if word) + f"ActionSet{action_set_index}TaskNumber"
+
+
+def _task_attribute_names(task: Task, action_set_index: int) -> Tuple[str, str, str]:
+    """!
+
+    Names of the task label attributes of one action set: the number of the
+    task spawned by touchCellFirstTime(), the number of the task spawned by
+    touchCellLastTime(), and the array of the children's last task numbers.
+    They derive from _task_number_attribute_name().
+
+    """
+    stem = _task_number_attribute_name(task, action_set_index)[: -len("TaskNumber")]
+    return f"{stem}FirstTaskNumber", f"{stem}LastTaskNumber", f"{stem}ChildrenTaskNumbers"
 
 
 def _copy_task(task: Task) -> Task:
@@ -362,7 +387,8 @@ def _has_events_after_touch_cell_first_time(task: Task) -> List[str]:
     List the events which the task's action sets realise and which a
     producer would invoke before its spawned tasks have necessarily
     terminated: unprepareTraversal(), endTraversal() and the
-    touch...LastTime() events. An event counts if the action set yields
+    touchVertexLastTime() and touchFaceLastTime() events. The producer
+    spawns touchCellLastTime() as a task. An event counts if the action set yields
     code for it.
 
     @return [str]
@@ -374,7 +400,6 @@ def _has_events_after_touch_cell_first_time(task: Task) -> List[str]:
         peano4.api.solversteps.ActionSet.OPERATION_END_TRAVERSAL,
         peano4.api.solversteps.ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME,
         peano4.api.solversteps.ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
-        peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_LAST_TIME,
     )
     result = []
     for action_set in task.action_sets:
@@ -415,10 +440,22 @@ def _is_spawned_completely(task: Task) -> bool:
     set of the producer.
 
     """
-    operation = peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
-    return all(
-        action_set.get_body_of_operation(operation).strip() != "" and action_set.may_run_in_background_task()
-        for action_set in task.action_sets
+    return all(_is_spawnable(action_set) for action_set in task.action_sets)
+
+
+def _is_spawnable(action_set: "peano4.api.solversteps.ActionSet") -> bool:
+    """!
+
+    True if the action set has a non-empty touchCellFirstTime() or
+    touchCellLastTime() body and wants to run in a task.
+
+    """
+    return action_set.may_run_in_background_task() and any(
+        action_set.get_body_of_operation(operation).strip() != ""
+        for operation in (
+            peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+            peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_LAST_TIME,
+        )
     )
 
 
@@ -762,38 +799,52 @@ def _spawn_tasks(split_tasks, task_labels: "peano4.api.datamodel.DaStGen2"):
 
         producer_action_sets = []
         consumer_action_sets = []
-        previous_task_number_attribute_name = None
+        previous_first_task_attribute_name = None
+        previous_last_task_attribute_name = None
         for action_set_index, action_set in enumerate(task.action_sets):
-            task_body = action_set.get_body_of_operation(peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
-            if task_body.strip() == "" or not action_set.may_run_in_background_task():
+            if not _is_spawnable(action_set):
                 # Nothing to spawn, or not worth spawning: The action set
                 # remains a plain action set of the producer and is not part
                 # of the producer-consumer pattern
                 producer_action_sets.append(action_set)
                 continue
 
+            task_body = "\n".join(
+                action_set.get_body_of_operation(operation)
+                for operation in (
+                    peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+                    peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_LAST_TIME,
+                )
+            )
             _warn_about_unsafe_task(task, action_set_index, action_set, task_body)
-            task_number_attribute_name = _task_number_attribute_name(task, action_set_index)
-            task_labels.data.add_attribute(dastgen2.attributes.Integer(name=task_number_attribute_name))
+            first_name, last_name, children_name = _task_attribute_names(task, action_set_index)
+            task_labels.data.add_attribute(dastgen2.attributes.Integer(name=first_name, initval="-1"))
+            task_labels.data.add_attribute(dastgen2.attributes.Integer(name=last_name, initval="-1"))
+            task_labels.data.add_attribute(dastgen2.attributes.IntegerArray(name=children_name, cardinality="ThreePowerD"))
             number_of_task_numbers += 1
 
             face_enumerators, vertex_enumerators = _enumerators_used_by(task, task_body)
             producer_action_set = SpawnCellTaskActionSet(
                 action_set,
                 task_labels.name,
-                task_number_attribute_name,
-                previous_task_number_attribute_name,
+                first_name,
+                last_name,
+                children_name,
+                previous_first_task_attribute_name,
+                previous_last_task_attribute_name,
                 face_enumerators,
                 vertex_enumerators,
             )
             producer_action_sets.append(producer_action_set)
             consumer_action_sets.append(WaitForCellTaskActionSet(producer_action_set))
-            previous_task_number_attribute_name = task_number_attribute_name
+            previous_first_task_attribute_name = first_name
+            if producer_action_set.has_body_of(peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_LAST_TIME):
+                previous_last_task_attribute_name = last_name
 
         producer.action_sets = producer_action_sets
         consumer.action_sets = consumer_action_sets
 
-        if previous_task_number_attribute_name is not None:
+        if previous_first_task_attribute_name is not None:
             producer.use_cell(task_labels, Task.DataAccess.WRITE)
             # The consumer only reads the label. Its reset to NoNumber is not
             # needed downstream, as every producer sets the label in each

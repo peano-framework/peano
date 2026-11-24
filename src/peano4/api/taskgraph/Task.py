@@ -311,10 +311,8 @@ class Task:
         the overarching task graph will be mapped onto a sequence of steps
         (observers) and those steps then grab those action sets from the tasks and execute them. 
         
-        It is important to note that the action set passed in can define 
-        actions for multiple grid entities, while the task is specified over 
-        a particular mesh entity. This seems to be contradiction but is
-        actually explained in @ref peano4.api.taskgraph.
+        The task's entity restricts the events the action set may use
+        (@ref peano4.api.taskgraph.compiler.ValidateTaskGraph.validate()).
         
         """
         self.action_sets.append(action_set)

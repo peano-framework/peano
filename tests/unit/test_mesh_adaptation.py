@@ -62,7 +62,7 @@ def test_finite_volumes_adapt_mesh_and_balance_load_by_default(scheme, tmp_path)
     solver = _solver(scheme)
     graph = _mesh_adaptation_graph(solver, tmp_path)
     assert isinstance(solver.mesh_adaptation, exahype2.api.fv.AdaptMeshAndBalanceLoad)
-    adapt, project = graph.ordered_tasks()
+    adapt, project = [task for task in graph.ordered_tasks() if not task.entity.is_global]
     assert adapt.name == "Probe_Adapt mesh and balance load"
     assert adapt.has_to_repeat is not None
     assert project.name == "Probe_Project on faces"
@@ -70,7 +70,9 @@ def test_finite_volumes_adapt_mesh_and_balance_load_by_default(scheme, tmp_path)
     kinds = [type(action_set) for action_set in adapt.action_sets]
     assert exahype2.api.blockstructured.ConsumeRefinementRequests in kinds
     assert Cells in kinds
-    assert toolbox.loadbalancing.api.actionsets.LoadBalancing in kinds
+    [balance] = [task for task in graph.tasks if task.entity.is_global]
+    assert balance.dependencies == [adapt]
+    assert [type(a) for a in balance.action_sets] == [toolbox.loadbalancing.api.actionsets.LoadBalancing]
     discards = exahype2.api.fv.actionsets.DiscardPatchInterior in kinds
     assert discards == (scheme == "fv-optimistic")
 
@@ -81,7 +83,7 @@ def test_finite_differences_adapt_mesh_and_balance_load_by_default(tmp_path):
     assert isinstance(
         solver.mesh_adaptation, exahype2.api.rkfd4.AdaptMeshAndBalanceLoad
     )
-    adapt, project = graph.ordered_tasks()
+    adapt, project = [task for task in graph.ordered_tasks() if not task.entity.is_global]
     kinds = [type(action_set) for action_set in adapt.action_sets]
     assert Cells in kinds
     assert exahype2.api.fv.actionsets.DiscardPatchInterior not in kinds

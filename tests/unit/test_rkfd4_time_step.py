@@ -68,6 +68,7 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         "Probe_Reduce max eigenvalue",
         "Probe_Compute time step size",
         f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
+        f"Probe_{exahype2.api.Solver.NumericalScheme.ENABLE_LOAD_BALANCING_TASK_NAME}",
     }
     # The maximum eigenvalue of the new solution is determined right after the
     # projection, i.e. in parallel to the roll over. If it ran in parallel to the
