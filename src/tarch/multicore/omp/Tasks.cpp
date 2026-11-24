@@ -19,6 +19,10 @@
 
 #if defined(SharedOMP)
 
+#include <atomic>
+#include <omp.h>
+#include <sstream>
+
 
 
 namespace {
@@ -26,6 +30,15 @@ namespace {
 
   #ifndef DefaultSizeOfMemoryRegionUsedForDependencyTracking
   constexpr int DefaultSizeOfMemoryRegionUsedForDependencyTracking = 16000;
+  #endif
+
+  #ifndef NumberOfPollsBeforeTaskIsReportedAsStuck
+  /**
+   * See tarch::multicore::omp::internal::reportStuckTask(). Overwrite it via
+   * -DNumberOfPollsBeforeTaskIsReportedAsStuck=... A poll is one yield, i.e.
+   * the default means a few seconds on a modern machine.
+   */
+  constexpr int NumberOfPollsBeforeTaskIsReportedAsStuck = 1000000;
   #endif
 
   /**
@@ -116,6 +129,85 @@ bool tarch::multicore::omp::internal::hasTaskFinishedInOpenMP5( const std::vecto
 }
 
 
+void tarch::multicore::omp::internal::pollUntilTasksHaveFinishedInOpenMP5(
+  const std::vector<tarch::multicore::TaskNumber>&  inDependencies,
+  tarch::multicore::TaskNumber                      waiter,
+  const char*                                       location
+) {
+  int polls = 0;
+  while ( not hasTaskFinishedInOpenMP5(inDependencies) ) {
+    // without this taskyield, the thread will spin and block other threads from executing tasks
+    #pragma omp taskyield
+
+    polls++;
+    if (polls==NumberOfPollsBeforeTaskIsReportedAsStuck) {
+      reportStuckTask(inDependencies, waiter, location);
+    }
+  }
+}
+
+
+void tarch::multicore::omp::internal::reportStuckTask(
+  [[maybe_unused]] const std::vector<tarch::multicore::TaskNumber>&  inDependencies,
+  [[maybe_unused]] tarch::multicore::TaskNumber                      waiter,
+  [[maybe_unused]] const char*                                       location
+) {
+  #ifdef TrackStatistics
+  std::ostringstream msg;
+  msg << location << " (OpenMP thread " << omp_get_thread_num() << ")";
+  if (waiter!=tarch::multicore::NoOutDependencies) {
+    msg << ": task " << waiter;
+  }
+  msg << " waits for in-dependencies {";
+  bool first = true;
+  for (auto i: inDependencies) {
+    msg << (first ? "" : ", ") << i << ":";
+    first = false;
+    if (i<dependencyTrackingMemorySize) {
+      DependencyTrackingDataType status;
+      #pragma omp atomic read
+      status = dependencyTrackingMemory[i];
+      msg << OpenMP5TaskStatus(status);
+    }
+    else {
+      msg << "no-status-memory";
+    }
+  }
+  int pending;
+  #pragma omp atomic read
+  pending = numberOfPendingTasks;
+  msg << "} after " << NumberOfPollsBeforeTaskIsReportedAsStuck << " polls. Pending tasks: " << pending;
+
+  logWarning( "reportStuckTask(...)", msg.str() );
+  tarch::logging::Statistics::getInstance().log( "tarch::multicore::omp::stuck-task", msg.str() );
+
+  static std::atomic<bool> statisticsHaveBeenDumped(false);
+  if ( not statisticsHaveBeenDumped.exchange(true) ) {
+    tarch::logging::Statistics::getInstance().writeToCSV( "statistics-stuck-task" );
+  }
+  #endif
+}
+
+
+void tarch::multicore::omp::internal::trackTaskEvent(
+  [[maybe_unused]] const char*                                       event,
+  [[maybe_unused]] tarch::multicore::TaskNumber                      taskNumber,
+  [[maybe_unused]] const std::vector<tarch::multicore::TaskNumber>&  inDependencies
+) {
+  #if defined(TrackStatistics) and defined(TrackTaskDependencies)
+  std::ostringstream msg;
+  msg << event << " " << taskNumber << " in={";
+  bool first = true;
+  for (auto i: inDependencies) {
+    msg << (first ? "" : ",") << i;
+    first = false;
+  }
+  msg << "}";
+  tarch::logging::Statistics::getInstance().log( "tarch::multicore::omp::task-event", msg.str() );
+  #endif
+}
+
+
 void tarch::multicore::omp::internal::spawnTaskWithOpenMP6(
   tarch::multicore::Task*                           job,
   const std::vector<tarch::multicore::TaskNumber>&  inDependencies,
@@ -126,10 +218,12 @@ void tarch::multicore::omp::internal::spawnTaskWithOpenMP6(
   #if _OPENMP>=202411
     #pragma omp task priority(job->getPriority()) depend(iterator(j=0:inDependencies.size()), in: dependencyTrackingMemory[inDependencies[j]]) depend(iterator(j=0:outDependency.size()), inout: dependencyTrackingMemory[outDependency[j]]) shared(numberOfPendingTasks) untied transparent
     {
+      trackTaskEvent( "start", outDependency.empty() ? tarch::multicore::NoOutDependencies : outDependency[0], inDependencies );
       OTTER_TASK_START(task);
       job->run();
       delete job;
       OTTER_TASK_END();
+      trackTaskEvent( "end", outDependency.empty() ? tarch::multicore::NoOutDependencies : outDependency[0], inDependencies );
       #pragma omp atomic
       numberOfPendingTasks--;
     }
@@ -156,14 +250,7 @@ void tarch::multicore::omp::internal::spawnTaskWithOpenMP5(
         std::vector<tarch::multicore::TaskNumber> selfDependency(1);
         selfDependency[0] = outDependency[0];
 
-        // Polling thread
-        volatile bool isReady;
-        do {
-          isReady = hasTaskFinishedInOpenMP5(selfDependency);
-          if (not isReady){
-            #pragma omp taskyield
-          }
-        } while (not isReady);
+        pollUntilTasksHaveFinishedInOpenMP5( selfDependency, outDependency[0], "spawnTaskWithOpenMP5(...) waits for the previous task with the same number" );
 
         p = inDependencies.erase(p);
       }
@@ -181,15 +268,11 @@ void tarch::multicore::omp::internal::spawnTaskWithOpenMP5(
 
   #pragma omp task priority(job->getPriority()) shared(numberOfPendingTasks) untied
   {
-    // Polling thread
-    bool isReady;
-    do {
-      isReady = hasTaskFinishedInOpenMP5(inDependencies);
-	  // without this taskyield, the thread will spin and block other threads from executing tasks
-	  if (not isReady){
-	    #pragma omp taskyield
-	  }
-    } while (not isReady);
+    pollUntilTasksHaveFinishedInOpenMP5(
+      inDependencies,
+      outDependency.empty() ? tarch::multicore::NoOutDependencies : outDependency[0],
+      "task waits for its in-dependencies"
+    );
 
     auto& dest = dependencyTrackingMemory[ outDependency[0] ];
 
@@ -200,10 +283,14 @@ void tarch::multicore::omp::internal::spawnTaskWithOpenMP5(
       dest = TaskNumberRunning;
     }
 
+    trackTaskEvent( "start", outDependency.empty() ? tarch::multicore::NoOutDependencies : outDependency[0], inDependencies );
+
     OTTER_TASK_START(task);
     job->run();
     delete job;
     OTTER_TASK_END();
+
+    trackTaskEvent( "end", outDependency.empty() ? tarch::multicore::NoOutDependencies : outDependency[0], inDependencies );
 
     logDebug( "spawnTaskWithOpenMP5(...)", "mark task " << outDependency[0] << " as complete" );
     if (not outDependency.empty()) {
@@ -314,6 +401,8 @@ void tarch::multicore::native::spawnTask(
     " out of which " << iterableExistingInDepencencies.size() << " can be served"
   );
 
+  tarch::multicore::omp::internal::trackTaskEvent( "spawn", taskNumber, iterableExistingInDepencencies );
+
   OTTER_DEFINE_TASK(task, otterGetActiveTask(), otter_no_add_to_pool, __func__);
 
   if (tarch::multicore::omp::majorOpenMPVersion()>=6) {
@@ -360,13 +449,8 @@ void tarch::multicore::native::waitForTasks(const std::set<TaskNumber>& inDepend
 
   if (tarch::multicore::omp::majorOpenMPVersion()<6 and not iterableExistingInDepencencies.empty()) {
     logDebug( "waitForTasks(...)", "tasks " << toString(inDependencies) << " might have been spawned by non-sibling. Better check manually if they have terminated" );
-    volatile bool isReady;
-    do {
-      isReady = tarch::multicore::omp::internal::hasTaskFinishedInOpenMP5(iterableExistingInDepencencies);
-      if (not isReady){
-        #pragma omp taskyield
-      }
-    } while (not isReady);
+    tarch::multicore::omp::internal::trackTaskEvent( "wait", tarch::multicore::NoOutDependencies, iterableExistingInDepencencies );
+    tarch::multicore::omp::internal::pollUntilTasksHaveFinishedInOpenMP5( iterableExistingInDepencencies, tarch::multicore::NoOutDependencies, "waitForTasks(...)" );
   }
 }
 

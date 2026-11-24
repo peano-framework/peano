@@ -337,6 +337,89 @@ namespace tarch {
          * TaskNumberTerminated.
          */
         bool hasTaskFinishedInOpenMP5( const std::vector<tarch::multicore::TaskNumber>&  inDependencies );
+
+        /**
+         * Poll until all in-dependencies have terminated
+         *
+         * All OpenMP 5 waits (a task waiting for its predecessors, a spawn
+         * waiting for the previous use of its own number, a consumer in
+         * waitForTasks()) go through this routine, i.e. we have one place
+         * which yields while we wait and which detects tasks that wait
+         * suspiciously long. See reportStuckTask().
+         *
+         * @param inDependencies Numbers to wait for.
+         * @param waiter Number of the task which waits, or
+         *   tarch::multicore::NoOutDependencies if a caller waits which is not
+         *   a task with a number.
+         * @param location Short description who waits. Only used for the
+         *   report.
+         */
+        void pollUntilTasksHaveFinishedInOpenMP5(
+          const std::vector<tarch::multicore::TaskNumber>&  inDependencies,
+          tarch::multicore::TaskNumber                      waiter,
+          const char*                                       location
+        );
+
+        /**
+         * Report a task that waits suspiciously long
+         *
+         * Only has an effect if you compile with -DTrackStatistics. Called
+         * by pollUntilTasksHaveFinishedInOpenMP5() once per wait after
+         * NumberOfPollsBeforeTaskIsReportedAsStuck unsuccessful polls. It
+         * does not abort and does not change the wait. The report holds
+         *
+         * - which wait is stuck (location) and the OpenMP thread;
+         * - the number of the waiting task, if it has one;
+         * - for each in-dependency its number and status, e.g.
+         *   "{36:task-spawned, 37:task-running}"; and
+         * - the number of pending tasks.
+         *
+         * If all in-dependencies are in state task-spawned and the number of
+         * pending tasks is small, no task is left that could ever terminate
+         * them, i.e. we have a cyclic or lost dependency rather than a
+         * scheduling problem.
+         *
+         * The report is written as warning and logged through
+         * tarch::logging::Statistics under the identifier
+         * "tarch::multicore::omp::stuck-task". As the code might never
+         * terminate, the first report in a run also dumps all statistics,
+         * including the task events of trackTaskEvent(), into the file
+         * statistics-stuck-task(-rank-<n>).csv. This dump empties the
+         * statistics, i.e. later statistics only hold what happens after the
+         * report.
+         */
+        void reportStuckTask(
+          const std::vector<tarch::multicore::TaskNumber>&  inDependencies,
+          tarch::multicore::TaskNumber                      waiter,
+          const char*                                       location
+        );
+
+        /**
+         * Track the life cycle of one task
+         *
+         * Only has an effect if you compile with both -DTrackStatistics and
+         * -DTrackTaskDependencies. The flag TrackTaskDependencies is separate
+         * from TrackStatistics, as we create several entries per task, all
+         * written under one lock. It slows down the code and eats memory.
+         * Use it to find out what a hanging run did before it hung.
+         *
+         * The events are written through
+         * tarch::logging::Statistics under the identifier
+         * "tarch::multicore::omp::task-event". Each entry is a string of the
+         * form "<event> <task number> in={<numbers>}":
+         *
+         * - spawn: spawnTask() has been called (the in-set holds the
+         *   dependencies that we can serve);
+         * - start: the task has passed its in-dependencies and starts to run;
+         * - end: the task has terminated and the status is set to terminated;
+         * - wait: waitForTasks() starts to wait for the numbers in the set.
+         *   The task number is the one of no task (NoOutDependencies).
+         */
+        void trackTaskEvent(
+          const char*                                       event,
+          tarch::multicore::TaskNumber                      taskNumber,
+          const std::vector<tarch::multicore::TaskNumber>&  inDependencies
+        );
       }
     }
   }

@@ -190,6 +190,8 @@ void tarch::logging::Statistics::inc( const std::string& identifier, double valu
 
 void tarch::logging::Statistics::writeToCSV( [[maybe_unused]] std::string filename ) {
 #ifdef TrackStatistics
+  tarch::multicore::Lock lock(_semaphore);
+
   logDebug( "writeToCSV(string)", "start to dump statistics into file " << filename );
 
   if (tarch::mpi::Rank::getInstance().getNumberOfRanks()>0 ) {
