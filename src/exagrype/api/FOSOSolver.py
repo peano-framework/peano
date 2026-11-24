@@ -225,17 +225,16 @@ class FOSOSolver:
 
         Let each stage of the CCZ4 solver use the freshly reconstructed derivatives
 
-        In each stage, the CCZ4 solver interpolates the unknowns and the
-        derivatives onto the hanging faces, reconstructs their halos, and
-        evaluates the right-hand side. The reconstruction solver recomputes
-        the derivatives from the unknowns in between, i.e.
+        In each stage, the CCZ4 solver reconstructs the halo of its unknowns
+        and the halo of the derivatives (both tasks interpolate the hanging
+        faces themselves, see
+        src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md),
+        and then evaluates the right-hand side. The reconstruction solver
+        recomputes the derivatives from the unknowns in between, i.e.
 
         - the first reconstruction tasks of the stage wait for whatever the
-          CCZ4 solver's interpolation of the derivatives waits for,
-        - the interpolation of the primary variables also waits for the
-          CCZ4 solver's interpolation of the unknowns, as both write the same
-          faces, and
-        - the CCZ4 solver's interpolation of the derivatives and its
+          CCZ4 solver's reconstruction of the derivatives waits for, and
+        - the CCZ4 solver's reconstruction of the derivatives and its
           reconstruction of the unknowns wait for the last reconstruction task.
 
         The chain is hence a block within the stage: The maximum concurrency of
@@ -268,15 +267,13 @@ class FOSOSolver:
             first_tasks = graph.source_tasks()
             (last_task,) = graph.sink_tasks()
             (
-                unknowns_name,
-                derivatives_name,
-                reconstruction_name,
+                unknowns_reconstruction_name,
+                derivatives_reconstruction_name,
             ) = self.reconstruction.partner_task_names(stage)
-            unknowns_interpolation = find(unknowns_name, stage)
-            derivatives_interpolation = find(derivatives_name, stage)
-            for dependency in derivatives_interpolation.dependencies:
+            unknowns_reconstruction = find(unknowns_reconstruction_name, stage)
+            derivatives_reconstruction = find(derivatives_reconstruction_name, stage)
+            for dependency in derivatives_reconstruction.dependencies:
                 for first_task in first_tasks:
                     first_task.add_dependency(dependency)
-            first_tasks[0].add_dependency(unknowns_interpolation)
-            derivatives_interpolation.add_dependency(last_task)
-            find(reconstruction_name, stage).add_dependency(last_task)
+            derivatives_reconstruction.add_dependency(last_task)
+            unknowns_reconstruction.add_dependency(last_task)
