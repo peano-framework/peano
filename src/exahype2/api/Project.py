@@ -1,6 +1,7 @@
 # This file is part of the ExaHyPE2 project. For conditions of distribution and
 # use, please see the copyright notice at www.peano-framework.org
 import peano4.api
+import toolbox.blockstructured.api
 import peano4.api.output.Jinja2TemplatedHeaderImplementationFilePair
 from peano4.api.taskgraph.compiler.PropagateUseStatements import propagate_use_statements
 from peano4.api.taskgraph.compiler.DeriveLoadStoreComputeFlag import derive_load_store_compute_flag
@@ -507,6 +508,9 @@ thus appreciate any citation of the original release paper
         # observers (aka Peano grid traversals) which the code should
         # run through for a given phase.
         #
+        for graph in (setup_simulation, time_step, plot, mesh_adaptation):
+            toolbox.blockstructured.api.ClearFaceProjections.add_clearing_tasks(graph)
+
         setup_simulation_steps = self.compiler(setup_simulation, "SetupSimulation", peano_project)
         time_step_steps        = self.compiler(time_step, "TimeStep", peano_project)
         plot_steps             = self.compiler(plot, "Plot", peano_project)
