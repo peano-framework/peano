@@ -205,6 +205,41 @@ class Graph:
                 pending += dependency.dependencies
         return False
 
+    def remove_redundant_edges(self) -> int:
+        """!
+
+        Remove dependencies which the remaining dependencies imply anyway
+
+        The routine searches for an edge A->C, i.e. C depends on A, while
+        there is already a chain of dependencies A->B1->B2->...->Bn->C with
+        n>=1. If this pattern arises, the routine removes A->C: Whoever runs
+        C after Bn, which runs after ... B1, which runs after A, runs C after A
+        anyway. The ordering of the tasks does not change, but the graph (and
+        its visualisation) gets simpler. The result is the transitive
+        reduction of the graph.
+
+        Only tasks of this graph are analysed, but chains may run through
+        tasks that are not part of the graph.
+
+        @return int
+          Number of edges removed
+        """
+        removed = 0
+        for task in self.tasks:
+            ## An edge A->C is redundant if another direct dependency B of C
+            ## depends on A, directly or indirectly
+            kept = [
+                dependency
+                for dependency in task.dependencies
+                if not any(
+                    other is not dependency and Graph._depends_on(other, dependency)
+                    for other in task.dependencies
+                )
+            ]
+            removed += len(task.dependencies) - len(kept)
+            task.dependencies = kept
+        return removed
+
     def ordered_tasks(self) -> List[Task]:
         """!
 

@@ -59,6 +59,11 @@ parser.add_argument(
     default=0,
     help="Parallel make jobs per build; 0 or less uses all cores (default: all cores)",
 )
+parser.add_argument(
+    "--compiler",
+    default=None,
+    help="Task graph compiler, see smooth-convergence-test.py (default: the script's default)",
+)
 args = parser.parse_args()
 
 work = os.path.abspath(args.work_directory)
@@ -91,7 +96,8 @@ def study(scheme):
                     str(args.build_jobs),
                     "--verbosity",
                     "text",
-                ],
+                ]
+                + (["--compiler", args.compiler] if args.compiler else []),
                 check=True,
                 stdout=subprocess.DEVNULL,
             )

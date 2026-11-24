@@ -44,7 +44,13 @@ parser.add_argument(
 )
 parser.add_argument(
     "--compiler",
-    choices=["sequential", "fusion", "producer-consumer", "producer-consumer-fusion"],
+    choices=[
+        "sequential",
+        "fusion",
+        "producer-consumer",
+        "producer-consumer-fusion",
+        "producer-consumer-chains",
+    ],
     default="fusion",
     help="Task graph compiler (default: fusion)",
 )
@@ -146,6 +152,7 @@ task_graph_compiler = {
     "fusion": compilers.FuseSteps.translate,
     "producer-consumer": compilers.CellTaskProducerConsumer.translate_with_sequential,
     "producer-consumer-fusion": compilers.CellTaskProducerConsumer.translate_with_fusion,
+    "producer-consumer-chains": compilers.CellTaskProducerConsumer.translate_with_chains_and_fusion,
 }[args.compiler]
 
 

@@ -67,11 +67,52 @@ def translate_with_fusion(
     return _translate(graph, identifier, peano_project, use_fusion=True)
 
 
+def translate_with_chains_and_fusion(
+    graph: Graph,
+    identifier: str,
+    peano_project: "peano4.api.Project",
+) -> List["peano4.api.solversteps.Step"]:
+    """!
+
+    Merge chains of cell tasks, then split them into producer and consumer, and fuse tasks into as few mesh traversals as possible
+
+    You can use this task graph compiler in your ExaHyPE 2 project through
+
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    project.compiler = peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_chains_and_fusion
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    It behaves like @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_fusion(),
+    but merges chains of tasks first. See
+    @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._merge_chains().
+
+    """
+    return _translate(graph, identifier, peano_project, use_fusion=True, chain_tasks=True)
+
+
+def translate_with_chains_and_sequential(
+    graph: Graph,
+    identifier: str,
+    peano_project: "peano4.api.Project",
+) -> List["peano4.api.solversteps.Step"]:
+    """!
+
+    Merge chains of cell tasks, then split them into producer and consumer, and map each task onto its own mesh traversal
+
+    It behaves like @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_sequential(),
+    but merges chains of tasks first. See
+    @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._merge_chains().
+
+    """
+    return _translate(graph, identifier, peano_project, use_fusion=False, chain_tasks=True)
+
+
 def _translate(
     graph: Graph,
     identifier: str,
     peano_project: "peano4.api.Project",
     use_fusion: bool,
+    chain_tasks: bool = False,
 ) -> List["peano4.api.solversteps.Step"]:
     """!
 
@@ -229,10 +270,16 @@ def _translate(
       If True, hand the rewritten graph over to FuseSteps, otherwise to
       Sequential.
 
+    @param chain_tasks: bool
+      If True, merge chains of tasks before the split
+      (@ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._merge_chains()).
+
     @return [peano4.api.solversteps.Step]
       @ref peano4.api.taskgraph.compiler.FuseSteps.translate()
 
     """
+    if chain_tasks:
+        graph = _merge_chains(graph)
     producer_consumer_graph, split_tasks = _split_cell_tasks(graph)
 
     if peano_project is not None and split_tasks:
@@ -336,6 +383,174 @@ def _has_events_after_touch_cell_first_time(task: Task) -> List[str]:
         for operation_name in late_operations:
             if action_set.get_implementation_of_operation(operation_name).strip() != "":
                 result.append(f"{action_set.get_action_set_name()}::{operation_name}")
+    return result
+
+
+CHAIN_NAME_SEPARATOR = " to "
+"""! Joins the names of the first and last task of a merged chain, see _merge_chains()"""
+
+
+def _can_be_split_and_merged(task: Task) -> bool:
+    """!
+
+    True if _split_cell_tasks() splits the task without a warning and if no
+    action set asks for the user to modify it. A task that repeats is
+    excluded, too.
+
+    """
+    if task.entity != Task.GridEntity.CELL or task.has_to_repeat is not None:
+        return False
+    if not _exclusively_writes_cell_data(task) or task.may_spawn_background_tasks is False:
+        return False
+    if any(action_set.user_should_modify_template() for action_set in task.action_sets):
+        return False
+    return task.may_spawn_background_tasks is True or not _has_events_after_touch_cell_first_time(task)
+
+
+def _is_spawned_completely(task: Task) -> bool:
+    """!
+
+    True if _spawn_tasks() wraps every action set of the task into a task
+    spawning wrapper, i.e. none of its action sets remains a plain action
+    set of the producer.
+
+    """
+    operation = peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
+    return all(
+        action_set.get_body_of_operation(operation).strip() != "" and action_set.may_run_in_background_task()
+        for action_set in task.action_sets
+    )
+
+
+def _merge_access(first: "Task.DataAccess", last: "Task.DataAccess") -> "Task.DataAccess":
+    """!
+
+    Access to a submodel by two tasks which run one after the other: The
+    merged task loads the submodel if the first task does and stores it if
+    the last task does.
+
+    """
+    Access = Task.DataAccess
+    loads = first in (Access.READ_AND_DISCARD, Access.READ_AND_WRITE)
+    stores = last in (Access.WRITE, Access.READ_AND_WRITE)
+    if loads and stores:
+        return Access.READ_AND_WRITE
+    if loads:
+        return Access.READ_AND_DISCARD
+    if stores:
+        return Access.WRITE
+    return Access.TEMPORARY
+
+
+def _merge_two_tasks(first: Task, last: Task) -> Task:
+    """!
+
+    Create the task which runs the action sets of first and then the ones of
+    last. @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._merge_chains()
+
+    The merged task depends on whatever first depends on. It does not
+    inherit the dependency of other tasks on last, i.e. the caller has to
+    redirect them.
+
+    """
+    merged = Task(
+        name=first.name + CHAIN_NAME_SEPARATOR + last.name,
+        entity=Task.GridEntity.CELL,
+        may_spawn_background_tasks=True if True in (first.may_spawn_background_tasks, last.may_spawn_background_tasks) else None,
+        tags=first.tags | last.tags,
+    )
+    merged.dependencies = list(first.dependencies)
+    merged.action_sets = first.action_sets + last.action_sets
+    for declare, first_data, first_access, last_data, last_access in (
+        (merged.use_cell, first.cell_data, first.cell_data_access, last.cell_data, last.cell_data_access),
+        (merged.use_face, first.face_data, first.face_data_access, last.face_data, last.face_data_access),
+        (merged.use_vertex, first.vertex_data, first.vertex_data_access, last.vertex_data, last.vertex_data_access),
+    ):
+        for submodel in first_data + [submodel for submodel in last_data if submodel not in first_data]:
+            if submodel in first_access and submodel in last_access:
+                declare(submodel, _merge_access(first_access[submodel], last_access[submodel]))
+            else:
+                declare(submodel, first_access[submodel] if submodel in first_access else last_access[submodel])
+    return merged
+
+
+def _merge_chains(graph: Graph) -> Graph:
+    """!
+
+    Merge chains of tasks A->B into one task, so the producer spawns the bodies of both
+
+    Let A and B be tasks which the producer-consumer pattern would split, and
+    let B depend on A. Without merging, we obtain
+    A Producer -> A Consumer -> B Producer -> B Consumer, i.e. the traversal
+    waits for A's task in each cell before it spawns B's task. This routine
+    merges A and B into one task which holds the action sets of A followed by
+    the action sets of B. The producer-consumer split then yields
+    AB Producer -> AB Consumer: The producer spawns the bodies of A and B,
+    and the body of B depends on the one of A, as
+    @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._spawn_tasks()
+    makes each spawned body depend on the one of the previous action set. The
+    consumer waits for both. The merged task is called like the first task,
+    CHAIN_NAME_SEPARATOR and the last task.
+
+    The routine first removes redundant edges
+    (@ref peano4.api.taskgraph.Graph.Graph.remove_redundant_edges()), as an
+    edge that skips a task would else prevent a merge. It then merges A and
+    B if
+
+    - A is the only task which B depends on, and B is the only task which
+      depends on A. Otherwise, other tasks would have to wait for the merged
+      task, though they only depend on A or B, or the merged task would have to
+      wait for more than A or B waited for;
+    - both tasks would be split into producer and consumer
+      (@ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._can_be_split_and_merged()),
+      and the merged task is still a task which exclusively writes cell
+      data;
+    - all action sets of B are wrapped into a task spawning wrapper. A plain
+      action set of a producer is invoked while the spawned tasks still run.
+      In the merged task it would hence run while the body of A runs, though
+      it used to run after A has terminated. Plain action sets of A are fine.
+
+    The merge repeats, i.e. a chain A->B->C becomes one task. Data is merged
+    such that the merged task loads what A loads and stores what B stores
+    (@ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._merge_access()).
+    Faces and vertices are only read, i.e. B reads them when A is spawned, which
+    is the same data, as A cannot write them.
+
+    The graph passed in remains untouched. The routine works on copies.
+
+    @param graph: peano4.api.taskgraph.Graph
+
+    @return peano4.api.taskgraph.Graph
+      A new graph. Tasks which are not merged are copies of the original tasks.
+
+    """
+    copies = {task: _copy_task(task) for task in graph.tasks}
+    for task, copy_of_task in copies.items():
+        copy_of_task.dependencies = [copies.get(dependency, dependency) for dependency in task.dependencies]
+    result = Graph()
+    result.tasks = list(copies.values())
+    result.remove_redundant_edges()
+
+    merged_something = True
+    while merged_something:
+        merged_something = False
+        for last in result.tasks:
+            if len(last.dependencies) != 1 or last.dependencies[0] not in result.tasks:
+                continue
+            first = last.dependencies[0]
+            if [task for task in result.tasks if any(dependency is first for dependency in task.dependencies)] != [last]:
+                continue
+            if not (_can_be_split_and_merged(first) and _can_be_split_and_merged(last) and _is_spawned_completely(last)):
+                continue
+            merged = _merge_two_tasks(first, last)
+            if not _exclusively_writes_cell_data(merged):
+                continue
+            for task in result.tasks:
+                task.dependencies = [merged if dependency is last else dependency for dependency in task.dependencies]
+            result.tasks[result.tasks.index(first)] = merged
+            result.tasks.remove(last)
+            merged_something = True
+            break
     return result
 
 
