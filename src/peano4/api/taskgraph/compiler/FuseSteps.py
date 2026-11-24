@@ -240,34 +240,53 @@ def translate(
         non_fusable.add((second_task, first_task))
 
     def can_be_combined(
-        tasks: List[Task], further_tasks: List[Task], include_cell_data: bool = False, respect_entity_order: bool = False
+        tasks: List[Task],
+        further_tasks: List[Task],
+        include_cell_data: bool = False,
+        respect_entity_order: bool = False,
     ) -> bool:
         """Constraints 2 and 4 between two lists of tasks, optionally taking cell data and the entity order into account"""
-        return not _have_conflicting_data(tasks, further_tasks, include_cell_data, respect_entity_order) and not any(
-            (task, further_task) in non_fusable for task in tasks for further_task in further_tasks
+        return not _have_conflicting_data(
+            tasks, further_tasks, include_cell_data, respect_entity_order
+        ) and not any(
+            (task, further_task) in non_fusable
+            for task in tasks
+            for further_task in further_tasks
         )
 
     Entity = Task.GridEntity
     validate(graph)
     all_tasks = graph.ordered_tasks()
-    start_tasks = [task for task in all_tasks if task.entity == Entity.GLOBAL_START_OF_STEP]
+    start_tasks = [
+        task for task in all_tasks if task.entity == Entity.GLOBAL_START_OF_STEP
+    ]
     anchored_end_tasks = graph.anchored_end_of_step_tasks()
     # Run at the very end of the step
     end_tasks = [
-        task for task in all_tasks if task.entity == Entity.GLOBAL_END_OF_STEP and task not in anchored_end_tasks
+        task
+        for task in all_tasks
+        if task.entity == Entity.GLOBAL_END_OF_STEP and task not in anchored_end_tasks
     ]
     # Run at the end of the traversal of their last dependency. Topological order.
     global_tasks = [
-        task for task in all_tasks if task.entity == Entity.GLOBAL or task in anchored_end_tasks
+        task
+        for task in all_tasks
+        if task.entity == Entity.GLOBAL or task in anchored_end_tasks
     ]
     order = [task for task in all_tasks if not task.entity.is_global]
     for task in start_tasks:
-        assert not task.dependencies, f"Task {task.name} is GLOBAL_START_OF_STEP and hence may not depend on any task"
+        assert (
+            not task.dependencies
+        ), f"Task {task.name} is GLOBAL_START_OF_STEP and hence may not depend on any task"
 
     def depends_on_traversal_of(global_task: Task, tasks: List[Task]) -> bool:
         """Does global_task end up in a traversal which holds one of the tasks, i.e. does it depend on one of them?"""
         return any(
-            dependency in tasks or (dependency in global_tasks and depends_on_traversal_of(dependency, tasks))
+            dependency in tasks
+            or (
+                dependency in global_tasks
+                and depends_on_traversal_of(dependency, tasks)
+            )
             for dependency in global_task.dependencies
         )
 
@@ -298,9 +317,17 @@ def translate(
 
     def depth(task: Task) -> int:
         # A start task has run before everything else, i.e. it does not delay anybody
-        dependencies = [dependency for dependency in task.dependencies if dependency not in start_tasks]
+        dependencies = [
+            dependency
+            for dependency in task.dependencies
+            if dependency not in start_tasks
+        ]
         if task not in depth_of_task:
-            depth_of_task[task] = 0 if not dependencies else 1 + max(depth(dependency) for dependency in dependencies)
+            depth_of_task[task] = (
+                0
+                if not dependencies
+                else 1 + max(depth(dependency) for dependency in dependencies)
+            )
         return depth_of_task[task]
 
     layers = {}
@@ -318,7 +345,9 @@ def translate(
         for task in tasks_in_layer:
             if task.has_to_repeat:
                 continue
-            if nodes_of_layer and can_be_combined(nodes_of_layer[-1], [task], include_cell_data=True):
+            if nodes_of_layer and can_be_combined(
+                nodes_of_layer[-1], [task], include_cell_data=True
+            ):
                 nodes_of_layer[-1].append(task)
             else:
                 nodes_of_layer.append([task])
@@ -333,7 +362,9 @@ def translate(
     current_group = None
     for node in nodes:
         is_repeating = len(node) == 1 and node[0].has_to_repeat
-        tasks_of_current_group = [task for group_node in current_group or [] for task in group_node]
+        tasks_of_current_group = [
+            task for group_node in current_group or [] for task in group_node
+        ]
         # A task which depends on a global task runs after the traversal that holds the global task
         waits_for_current_group = any(
             depends_on_traversal_of(dependency, tasks_of_current_group)
@@ -360,7 +391,11 @@ def translate(
         groups_with_dependency = [
             index
             for index, group in enumerate(groups)
-            if any(dependency in node for node in group for dependency in global_task.dependencies)
+            if any(
+                dependency in node
+                for node in group
+                for dependency in global_task.dependencies
+            )
         ]
         if groups_with_dependency:
             groups[max(groups_with_dependency)].append([global_task])
@@ -422,7 +457,11 @@ def _have_conflicting_data(
 
     """
     writing_accesses = (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
-    using_accesses = (Task.DataAccess.READ_AND_DISCARD, Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
+    using_accesses = (
+        Task.DataAccess.READ_AND_DISCARD,
+        Task.DataAccess.WRITE,
+        Task.DataAccess.READ_AND_WRITE,
+    )
     Event = Task.TraversalEvent
     events_of_kind = {
         "face": {Event.FACE_FIRST, Event.FACE_LAST},
@@ -434,21 +473,28 @@ def _have_conflicting_data(
             (kind, submodel)
             for kind, access_of_submodel in (
                 (("cell", task.cell_data_access),) if include_cell_data else ()
-            ) + (("face", task.face_data_access), ("vertex", task.vertex_data_access))
+            )
+            + (("face", task.face_data_access), ("vertex", task.vertex_data_access))
             for submodel, access in access_of_submodel.items()
             if access in accesses
         }
 
     for task in tasks:
         for further_task in further_tasks:
-            conflicts = (submodels(task, writing_accesses) & submodels(further_task, using_accesses)) | (
-                submodels(further_task, writing_accesses) & submodels(task, using_accesses)
+            conflicts = (
+                submodels(task, writing_accesses)
+                & submodels(further_task, using_accesses)
+            ) | (
+                submodels(further_task, writing_accesses)
+                & submodels(task, using_accesses)
             )
             if respect_entity_order:
                 conflicts = {
                     (kind, submodel)
                     for kind, submodel in conflicts
-                    if not (kind in events_of_kind and task.events <= events_of_kind[kind])
+                    if not (
+                        kind in events_of_kind and task.events <= events_of_kind[kind]
+                    )
                 }
             if conflicts:
                 return True
@@ -492,11 +538,19 @@ def _merge_data_access(accesses: List["Task.DataAccess"]) -> "Task.DataAccess":
     single access, the merged qualifier equals the access itself.
 
     """
-    relevant_accesses = [access for access in accesses if access != Task.DataAccess.TEMPORARY]
+    relevant_accesses = [
+        access for access in accesses if access != Task.DataAccess.TEMPORARY
+    ]
     if not relevant_accesses:
         return Task.DataAccess.TEMPORARY
-    load = relevant_accesses[0] in (Task.DataAccess.READ_AND_DISCARD, Task.DataAccess.READ_AND_WRITE)
-    store = relevant_accesses[-1] in (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
+    load = relevant_accesses[0] in (
+        Task.DataAccess.READ_AND_DISCARD,
+        Task.DataAccess.READ_AND_WRITE,
+    )
+    store = relevant_accesses[-1] in (
+        Task.DataAccess.WRITE,
+        Task.DataAccess.READ_AND_WRITE,
+    )
     if load and store:
         return Task.DataAccess.READ_AND_WRITE
     if load:
@@ -506,7 +560,9 @@ def _merge_data_access(accesses: List["Task.DataAccess"]) -> "Task.DataAccess":
     return Task.DataAccess.TEMPORARY
 
 
-def _create_step(nodes: List[List[Task]], identifier: str) -> "peano4.api.solversteps.Step":
+def _create_step(
+    nodes: List[List[Task]], identifier: str
+) -> "peano4.api.solversteps.Step":
     """!
 
     Create one step from a group of fused nodes. @ref peano4.api.taskgraph.compiler.FuseSteps.translate()
@@ -539,7 +595,9 @@ def _create_step(nodes: List[List[Task]], identifier: str) -> "peano4.api.solver
         accesses_of_submodel = {}
         for task in tasks:
             for submodel in getattr(task, data_attribute):
-                accesses_of_submodel.setdefault(submodel, []).append(getattr(task, access_attribute)[submodel])
+                accesses_of_submodel.setdefault(submodel, []).append(
+                    getattr(task, access_attribute)[submodel]
+                )
         for submodel, accesses in accesses_of_submodel.items():
             use(submodel)
             step_access[submodel] = _merge_data_access(accesses)
@@ -550,7 +608,10 @@ def _create_step(nodes: List[List[Task]], identifier: str) -> "peano4.api.solver
         if node_is_parallel and previous_node_is_parallel:
             step.action_sets.append(peano4.api.solversteps.SynchroniseActionSets())
         for task in node:
-            for action_set in sorted(task.action_sets, key=lambda action_set: action_set.descend_invocation_order):
+            for action_set in sorted(
+                task.action_sets,
+                key=lambda action_set: action_set.descend_invocation_order,
+            ):
                 step.action_sets.append(action_set)
         previous_node_is_parallel = node_is_parallel
 

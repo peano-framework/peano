@@ -130,11 +130,14 @@ def add_clearing_tasks(graph: "peano4.api.taskgraph.Graph") -> list:
             entity=peano4.api.taskgraph.Task.GridEntity.FACE,
         )
         for restriction in restrictions:
-            assert restriction.patch_overlap in task.face_data_access, (
-                f"Task {task.name} restricts {restriction.patch_overlap.name} but does not declare the face data"
-            )
+            assert (
+                restriction.patch_overlap in task.face_data_access
+            ), f"Task {task.name} restricts {restriction.patch_overlap.name} but does not declare the face data"
             if restriction.patch_overlap not in clearing.face_data_access:
-                clearing.use_face(restriction.patch_overlap, task.face_data_access[restriction.patch_overlap])
+                clearing.use_face(
+                    restriction.patch_overlap,
+                    task.face_data_access[restriction.patch_overlap],
+                )
             clearing.add_action_set(ClearFaceProjections(restriction))
         for dependency in task.dependencies:
             clearing.add_dependency(dependency)

@@ -14,7 +14,10 @@ entity (the highest mark), i.e. a task which acts in `touchFaceLastTime()` and i
 A mesh traversal invokes the events in the order `prepareTraversal`, `beginTraversal`,
 `touchVertexFirstTime`, `touchFaceFirstTime`, `touchCellFirstTime`, `touchCellLastTime`,
 `touchFaceLastTime`, `touchVertexLastTime`, `endTraversal`, `unprepareTraversal`
-(`Task.TraversalEvent`). Creating a vertex, face or cell counts as its first touch, destroying it
+(`Task.TraversalEvent`).
+
+![The order of the events within a mesh traversal](event-order.png)
+ Creating a vertex, face or cell counts as its first touch, destroying it
 as its last touch (`ValidateTaskGraph.EVENTS_OF_OPERATIONS`).
 
 `Task.events` holds the events in which the action sets of a task are not empty. `Task.first_event` and

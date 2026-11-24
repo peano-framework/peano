@@ -197,7 +197,9 @@ class Solver(abc.ABC):
             )
             refinement_task = peano4.api.taskgraph.Task(
                 name=f"{solver.name}_{self.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
-                entity=Entity.CELL if dynamic_mesh_refinement is not None else Entity.GLOBAL,
+                entity=Entity.CELL
+                if dynamic_mesh_refinement is not None
+                else Entity.GLOBAL,
                 may_spawn_background_tasks=False,
             )
             if dynamic_mesh_refinement is not None:
@@ -236,19 +238,22 @@ class Solver(abc.ABC):
         class NumericalSchemeGenerator(abc.ABC):
             """!
             Specify which versions of a numerical scheme should be generated here.
-            Each configuration specifies the target architecture and whether the variant 
+            Each configuration specifies the target architecture and whether the variant
             is stateless.
-            The multiple configurations can generate multiple verisons of a function for 
-            the purpose of microbenchmarking, but a kernel call is only generated for one 
+            The multiple configurations can generate multiple verisons of a function for
+            the purpose of microbenchmarking, but a kernel call is only generated for one
             at a time.
             """
-            def __init__(self, solver: Solver, configurations: list[tuple[Target, bool]]):
+
+            def __init__(
+                self, solver: Solver, configurations: list[tuple[Target, bool]]
+            ):
                 self._solver = solver
                 self._configurations = configurations
 
             def reset_configurations(self, target: Target, stateless: bool):
                 self._configurations.clear()
-            
+
             def add_configuration(self, target: Target, stateless: bool):
                 self._configurations.append((target, stateless))
 
@@ -770,12 +775,12 @@ class Solver(abc.ABC):
 
     @property
     def auxiliary_variables(self) -> List["AuxiliaryVariables"]:
-        """! All sets of auxiliary variables in the order they have been attached """
+        """! All sets of auxiliary variables in the order they have been attached"""
         return list(self._auxiliary_variables)
 
     @property
     def number_of_auxiliary_variables(self) -> int:
-        """! Total number of entries of all sets of auxiliary variables """
+        """! Total number of entries of all sets of auxiliary variables"""
         return sum(auxiliary.size for auxiliary in self._auxiliary_variables)
 
     def auxiliary_variable_offset(self, auxiliary: "AuxiliaryVariables") -> int:
@@ -821,13 +826,15 @@ class Solver(abc.ABC):
                 f"Solver {self._name} has other auxiliary variables of name {auxiliary.name} already"
             )
         if auxiliary.argument_name == auxiliary.name:
-            raise ValueError(f"Auxiliary variables {auxiliary.name} are not distinguishable from their argument")
+            raise ValueError(
+                f"Auxiliary variables {auxiliary.name} are not distinguishable from their argument"
+            )
         if auxiliary.owner is None:
             auxiliary._owner = self
         self._auxiliary_variables.append(auxiliary)
 
     def signature_of(self, term: PDETerm) -> str:
-        """! The signature of a PDE term including the pointers to the auxiliary variables """
+        """! The signature of a PDE term including the pointers to the auxiliary variables"""
         from .AuxiliaryVariables import extend_signature
 
         return extend_signature(term.SIGNATURE, self)

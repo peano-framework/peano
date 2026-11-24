@@ -190,8 +190,12 @@ def validate(graph: Graph):
     for task in graph.tasks:
         violations = violations_of_task(task)
         if violations:
-            messages.append(f"  Task '{task.name}' ({task.declared_entity.label}): " + ", ".join(violations))
+            messages.append(
+                f"  Task '{task.name}' ({task.declared_entity.label}): "
+                + ", ".join(violations)
+            )
     assert not messages, (
         "Task graph is invalid: Tasks of the start or the end of the step use mesh events. "
-        "Split the task into a global task and a task for the mesh.\n" + "\n".join(messages)
+        "Split the task into a global task and a task for the mesh.\n"
+        + "\n".join(messages)
     )

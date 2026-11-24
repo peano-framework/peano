@@ -14,7 +14,7 @@ class Task:
     or a cell - which has to be specified through entity when the task is
     constructed. GLOBAL tasks are the exception: they do not work on any
     mesh entity (@ref peano4.api.taskgraph.Task.Task.GridEntity).
-    
+
     ## Task dependencies
 
     Every task also holds dependencies, i.e. other Task instances that have
@@ -43,13 +43,13 @@ class Task:
     this task into.
 
     ## Task repetitions
-    
+
     Finally, a task can be marked as repeating via task_has_to_repeat. By
-    default (None), a task runs once. Passing a non-None string works if 
+    default (None), a task runs once. Passing a non-None string works if
     and only if it is a valid boolean C++ expression. Peano will evaluate
     it on the global runner after the task has finished and then decide if
     to rerun this step. An all time classic is the following expression
-    
+
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     not peano4::grid::isGridStationary( peano4::parallel::SpacetreeSet::getInstance().getGridStatistics() )
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -93,20 +93,20 @@ class Task:
 
     The tasks will later on be taken by the graph compiler which maps them
     onto a sequence of @ref peano4.api.solversteps.Step instances. How many
-    of these logical steps (grid traversals) are required depends on the 
-    structure of the task graph but also the type of compiler chosen. 
-    Contraray, each action set that is added to a task will remain to be a 
+    of these logical steps (grid traversals) are required depends on the
+    structure of the task graph but also the type of compiler chosen.
+    Contraray, each action set that is added to a task will remain to be a
     real @ref peano4.api.solversteps.ActionSet, and subsequently be translated
     into exactly one @ref peano4.api.output.ActionSet, i.e. one pair of header
     and implementation file called MyFancyObserverOfAGridTraversal2ThisActionSet.
-    
-    ## Things to read to get the full picture:    
 
-    - @ref peano4.api.taskgraph This is the overall description of the task 
+    ## Things to read to get the full picture:
+
+    - @ref peano4.api.taskgraph This is the overall description of the task
            graph API and should be the starting point for understanding how to use it.
            It notably describes some design decisions re dependencies, grid
            entities and action sets.
-    - @ref page_peano_action_sets    
+    - @ref page_peano_action_sets
     - @ref peano4.api.taskgraph
 
     """
@@ -183,25 +183,29 @@ class Task:
 
         @property
         def mesh_marks(self) -> "Task.GridEntity":
-            """! The VERTEX, FACE and CELL marks of the entity """
+            """! The VERTEX, FACE and CELL marks of the entity"""
             return self & (Task.GridEntity.FACE_VERTEX_CELL)
 
         @property
         def is_global(self) -> bool:
-            """! True for GLOBAL, GLOBAL_START_OF_STEP and GLOBAL_END_OF_STEP, i.e. if there is no mesh mark """
+            """! True for GLOBAL, GLOBAL_START_OF_STEP and GLOBAL_END_OF_STEP, i.e. if there is no mesh mark"""
             return bool(self & Task.GridEntity.GLOBAL) and not self.mesh_marks
 
         @property
         def primary(self) -> "Task.GridEntity":
-            """! The highest mesh mark, i.e. CELL, FACE or VERTEX. Undefined for global tasks """
-            for mark in (Task.GridEntity.CELL, Task.GridEntity.FACE, Task.GridEntity.VERTEX):
+            """! The highest mesh mark, i.e. CELL, FACE or VERTEX. Undefined for global tasks"""
+            for mark in (
+                Task.GridEntity.CELL,
+                Task.GridEntity.FACE,
+                Task.GridEntity.VERTEX,
+            ):
                 if self & mark:
                     return mark
             raise ValueError(f"{self} has no mesh mark")
 
         @property
         def label(self) -> str:
-            """! Name of the entity, e.g. FACE_CELL, also for combinations without a name of their own """
+            """! Name of the entity, e.g. FACE_CELL, also for combinations without a name of their own"""
             return self.name if self.name is not None else str(self)
 
     class TraversalEvent(enum.IntEnum):
@@ -319,12 +323,12 @@ class Task:
         self.vertex_data_access: dict = {}
         self.has_to_repeat = task_has_to_repeat
         self.may_spawn_background_tasks = may_spawn_background_tasks
-        assert not (entity.is_global and task_has_to_repeat is not None), (
-            f"Task {name} is global and hence may not repeat"
-        )
+        assert not (
+            entity.is_global and task_has_to_repeat is not None
+        ), f"Task {name} is global and hence may not repeat"
 
     def _derived(self):
-        """! Marks and events which the action sets imply, cached as long as the action sets do not change """
+        """! Marks and events which the action sets imply, cached as long as the action sets do not change"""
         key = tuple(id(action_set) for action_set in self.action_sets)
         if self._derived_cache is None or self._derived_cache[0] != key:
             from .compiler.ValidateTaskGraph import derive_marks_and_events
@@ -348,7 +352,10 @@ class Task:
         this is a statement on when the task runs, which the action sets cannot tell.
 
         """
-        if self.declared_entity in (Task.GridEntity.GLOBAL_START_OF_STEP, Task.GridEntity.GLOBAL_END_OF_STEP):
+        if self.declared_entity in (
+            Task.GridEntity.GLOBAL_START_OF_STEP,
+            Task.GridEntity.GLOBAL_END_OF_STEP,
+        ):
             return self.declared_entity
         return self.declared_entity | self._derived()[0]
 
@@ -375,12 +382,12 @@ class Task:
 
     @property
     def first_event(self) -> Optional["Task.TraversalEvent"]:
-        """! The earliest event of the task, or None if it has none """
+        """! The earliest event of the task, or None if it has none"""
         return min(self.events) if self.events else None
 
     @property
     def last_event(self) -> Optional["Task.TraversalEvent"]:
-        """! The latest event of the task, or None if it has none """
+        """! The latest event of the task, or None if it has none"""
         return max(self.events) if self.events else None
 
     @property
@@ -404,7 +411,9 @@ class Task:
     def add_dependency(self, task: "Task"):
         self.dependencies.append(task)
 
-    def use_cell(self, submodel: "peano4.api.datamodel.DoF", qualifier: "Task.DataAccess"):
+    def use_cell(
+        self, submodel: "peano4.api.datamodel.DoF", qualifier: "Task.DataAccess"
+    ):
         """!
 
         Declare that this task's action sets access a cell submodel (e.g. a
@@ -416,11 +425,15 @@ class Task:
         into every touch-cell/create-cell/... operation.
 
         """
-        assert not self.declared_entity.is_global, f"Task {self.name} is global and hence may not use cell data"
+        assert (
+            not self.declared_entity.is_global
+        ), f"Task {self.name} is global and hence may not use cell data"
         self.cell_data.append(submodel)
         self.cell_data_access[submodel] = qualifier
 
-    def use_face(self, submodel: "peano4.api.datamodel.DoF", qualifier: "Task.DataAccess"):
+    def use_face(
+        self, submodel: "peano4.api.datamodel.DoF", qualifier: "Task.DataAccess"
+    ):
         """!
 
         Declare that this task's action sets access a face submodel, and
@@ -428,11 +441,15 @@ class Task:
         for what qualifier to pass.
 
         """
-        assert not self.declared_entity.is_global, f"Task {self.name} is global and hence may not use face data"
+        assert (
+            not self.declared_entity.is_global
+        ), f"Task {self.name} is global and hence may not use face data"
         self.face_data.append(submodel)
         self.face_data_access[submodel] = qualifier
 
-    def use_vertex(self, submodel: "peano4.api.datamodel.DoF", qualifier: "Task.DataAccess"):
+    def use_vertex(
+        self, submodel: "peano4.api.datamodel.DoF", qualifier: "Task.DataAccess"
+    ):
         """!
 
         Declare that this task's action sets access a vertex submodel, and
@@ -440,19 +457,21 @@ class Task:
         for what qualifier to pass.
 
         """
-        assert not self.declared_entity.is_global, f"Task {self.name} is global and hence may not use vertex data"
+        assert (
+            not self.declared_entity.is_global
+        ), f"Task {self.name} is global and hence may not use vertex data"
         self.vertex_data.append(submodel)
         self.vertex_data_access[submodel] = qualifier
 
     def add_action_set(self, action_set: "peano4.api.solversteps.ActionSet"):
         """!
-        
+
         A task can hold an arbitrary number of Peano 4 action sets. Eventually
         the overarching task graph will be mapped onto a sequence of steps
-        (observers) and those steps then grab those action sets from the tasks and execute them. 
-        
+        (observers) and those steps then grab those action sets from the tasks and execute them.
+
         The events the action set uses determine the task's entity
         (@ref peano4.api.taskgraph.Task.Task.entity).
-        
+
         """
         self.action_sets.append(action_set)

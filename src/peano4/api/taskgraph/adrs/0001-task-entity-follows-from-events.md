@@ -51,6 +51,8 @@ Compilers use the entity as follows:
   The first task of a cell depends on the first task of the parent. A last task whose guard does not hold is spawned
   as empty task, as the parent waits for it.
 
+![Dependencies between the first and last tasks of a parent cell and its children](multiscale-task-dependencies.png)
+
 ## Consequences
 
 - Adding an event to an action set can change the entity of every task holding it,

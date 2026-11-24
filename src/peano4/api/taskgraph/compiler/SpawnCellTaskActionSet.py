@@ -110,7 +110,10 @@ class SpawnCellTaskActionSet(ActionSet):
           task captures as peano4::datamanagement::VertexHeapDataEnumerator.
 
         """
-        super().__init__(descend_invocation_order=action_set.descend_invocation_order, parallel=action_set.parallel)
+        super().__init__(
+            descend_invocation_order=action_set.descend_invocation_order,
+            parallel=action_set.parallel,
+        )
         self.action_set = action_set
         self._task_labels_name = task_labels_name
         self._first_task_attribute_name = first_task_attribute_name
@@ -134,10 +137,12 @@ class SpawnCellTaskActionSet(ActionSet):
         """
         captures = ["="]
         captures += [
-            f"{name} = peano4::datamanagement::FaceHeapDataEnumerator({name})" for name in self._face_enumerators
+            f"{name} = peano4::datamanagement::FaceHeapDataEnumerator({name})"
+            for name in self._face_enumerators
         ]
         captures += [
-            f"{name} = peano4::datamanagement::VertexHeapDataEnumerator({name})" for name in self._vertex_enumerators
+            f"{name} = peano4::datamanagement::VertexHeapDataEnumerator({name})"
+            for name in self._vertex_enumerators
         ]
         return ", ".join(captures)
 
@@ -154,7 +159,9 @@ class SpawnCellTaskActionSet(ActionSet):
         return self.action_set.get_static_initialisations(full_qualified_classname)
 
     def get_body_of_createGridControlEventsForNextTraversal(self):
-        return self.action_set.get_implementation_of_createGridControlEventsForNextTraversal()
+        return (
+            self.action_set.get_implementation_of_createGridControlEventsForNextTraversal()
+        )
 
     def get_body_of_prepareTraversal(self):
         return self.action_set.get_implementation_of_prepareTraversal()
@@ -203,7 +210,9 @@ class SpawnCellTaskActionSet(ActionSet):
   }}
 """
         else:
-            result += f"  {fine}.set{last}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+            result += (
+                f"  {fine}.set{last}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+            )
         if self.has_body_of(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME):
             dependencies = "  std::set<tarch::multicore::TaskNumber> inDependencies;\n"
             if self._previous_first_task_attribute_name is not None:
@@ -222,7 +231,9 @@ class SpawnCellTaskActionSet(ActionSet):
   }}
 """
         else:
-            result += f"  {fine}.set{first}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+            result += (
+                f"  {fine}.set{first}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+            )
         return result
 
     def _touch_cell_last_time(self) -> str:
@@ -273,7 +284,10 @@ class SpawnCellTaskActionSet(ActionSet):
             )
         elif operation_name == ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
             return self._touch_cell_first_time()
-        elif operation_name == ActionSet.OPERATION_TOUCH_CELL_LAST_TIME and self.has_body_of(operation_name):
+        elif (
+            operation_name == ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+            and self.has_body_of(operation_name)
+        ):
             return self._touch_cell_last_time()
         else:
             return self.action_set.get_implementation_of_operation(operation_name)

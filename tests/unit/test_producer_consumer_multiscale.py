@@ -28,7 +28,11 @@ class _ActionSet:
         return self.bodies.get(operation_name, "")
 
     def get_guard_of_operation(self, operation_name):
-        return self.guard_last if operation_name == ActionSet.OPERATION_TOUCH_CELL_LAST_TIME else "true"
+        return (
+            self.guard_last
+            if operation_name == ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+            else "true"
+        )
 
     def get_implementation_of_operation(self, operation_name):
         return self.get_body_of_operation(operation_name)
@@ -96,8 +100,12 @@ def _split(*action_sets):
 def test_first_and_last_time_are_wrapped_into_one_action_set():
     producer, consumer, _ = _split(_ActionSet("A", last="y = 2;"))
     [wrapper] = producer.action_sets
-    first = wrapper.get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
-    last = wrapper.get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME)
+    first = wrapper.get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
+    )
+    last = wrapper.get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+    )
     assert "x = 1;" in first and "y = 2;" not in first
     assert "y = 2;" in last and "x = 1;" not in last
     assert "spawnTask" in first and "spawnTask" in last
@@ -105,7 +113,9 @@ def test_first_and_last_time_are_wrapped_into_one_action_set():
 
 def test_last_task_depends_on_first_task_and_children():
     producer, _, _ = _split(_ActionSet("A", last="y = 2;"))
-    last = producer.action_sets[0].get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME)
+    last = producer.action_sets[0].get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+    )
     assert "ActionSet0FirstTaskNumber" in last
     assert "ActionSet0ChildrenTaskNumbers" in last
     assert "ThreePowerD" in last
@@ -113,51 +123,82 @@ def test_last_task_depends_on_first_task_and_children():
 
 def test_child_registers_at_parent_and_depends_on_parents_first_task():
     producer, _, _ = _split(_ActionSet("A", last="y = 2;"))
-    first = producer.action_sets[0].get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
+    first = producer.action_sets[0].get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
+    )
     assert "coarseGridCellLabels.setProbeActionSet0ChildrenTaskNumbers" in first
     assert "coarseGridCellLabels.getProbeActionSet0FirstTaskNumber()>=0" in first
-    assert "fineGridCellLabels.setProbeActionSet0ChildrenTaskNumbers( i, tarch::multicore::TaskEnumerator::NoNumber )" in first
+    assert (
+        "fineGridCellLabels.setProbeActionSet0ChildrenTaskNumbers( i, tarch::multicore::TaskEnumerator::NoNumber )"
+        in first
+    )
 
 
 def test_false_guard_of_last_task_still_spawns_empty_task():
     producer, _, _ = _split(_ActionSet("A", last="y = 2;", guard_last="false"))
-    last = producer.action_sets[0].get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME)
+    last = producer.action_sets[0].get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+    )
     assert "else" in last and "[]() mutable {}" in last
 
 
 def test_action_set_without_last_time_spawns_no_last_task():
     producer, _, _ = _split(_ActionSet("A"))
     wrapper = producer.action_sets[0]
-    assert wrapper.get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME) == ""
-    first = wrapper.get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
-    assert "setProbeActionSet0LastTaskNumber( tarch::multicore::TaskEnumerator::NoNumber )" in first
+    assert (
+        wrapper.get_implementation_of_operation(
+            ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+        )
+        == ""
+    )
+    first = wrapper.get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
+    )
+    assert (
+        "setProbeActionSet0LastTaskNumber( tarch::multicore::TaskEnumerator::NoNumber )"
+        in first
+    )
 
 
 def test_last_time_only_action_set_is_wrapped():
     producer, _, _ = _split(_ActionSet("A", first="", last="y = 2;"))
-    assert isinstance(producer.action_sets[0], CellTaskProducerConsumer.SpawnCellTaskActionSet)
+    assert isinstance(
+        producer.action_sets[0], CellTaskProducerConsumer.SpawnCellTaskActionSet
+    )
 
 
 def test_consumer_waits_for_first_and_last_task():
     producer, consumer, _ = _split(_ActionSet("A", last="y = 2;"))
     [waiter] = consumer.action_sets
-    first = waiter.get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
+    first = waiter.get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
+    )
     assert first.count("waitForTask") == 2
     assert "LastTaskNumber" in first and "FirstTaskNumber" in first
 
 
 def test_labels_hold_two_numbers_and_children_array_per_action_set():
     _, _, labels = _split(_ActionSet("A", last="y = 2;"), _ActionSet("B"))
-    names = [attribute.name for attribute in labels.data._attributes] if hasattr(labels.data, "_attributes") else []
+    names = (
+        [attribute.name for attribute in labels.data._attributes]
+        if hasattr(labels.data, "_attributes")
+        else []
+    )
     for stem in ("ProbeActionSet0", "ProbeActionSet1"):
         for suffix in ("FirstTaskNumber", "LastTaskNumber", "ChildrenTaskNumbers"):
             assert stem + suffix in names
 
 
 def test_second_action_set_chains_on_first_and_last_of_first():
-    producer, _, _ = _split(_ActionSet("A", last="y = 2;"), _ActionSet("B", last="z = 3;"))
-    first = producer.action_sets[1].get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
-    last = producer.action_sets[1].get_implementation_of_operation(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME)
+    producer, _, _ = _split(
+        _ActionSet("A", last="y = 2;"), _ActionSet("B", last="z = 3;")
+    )
+    first = producer.action_sets[1].get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME
+    )
+    last = producer.action_sets[1].get_implementation_of_operation(
+        ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+    )
     assert "getProbeActionSet0FirstTaskNumber()>=0" in first
     assert "getProbeActionSet0LastTaskNumber()>=0" in last
 
@@ -187,20 +228,51 @@ def _entity(declared, *events, prepare=False):
 
 
 def test_entity_is_derived_from_cell_events():
-    assert _entity(CELL, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_CELL_LAST_TIME) == CELL
-    assert _entity(CELL, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME) == Task.GridEntity.FACE_CELL
-    assert _entity(CELL, ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME) == Task.GridEntity.VERTEX_CELL
+    assert (
+        _entity(
+            CELL,
+            ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+            ActionSet.OPERATION_TOUCH_CELL_LAST_TIME,
+        )
+        == CELL
+    )
+    assert (
+        _entity(CELL, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME)
+        == Task.GridEntity.FACE_CELL
+    )
+    assert (
+        _entity(CELL, ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME)
+        == Task.GridEntity.VERTEX_CELL
+    )
 
 
 def test_cell_marks_interpolation_and_face_marks_restriction():
-    assert _entity(CELL, ActionSet.OPERATION_CREATE_HANGING_FACE, ActionSet.OPERATION_CREATE_HANGING_VERTEX, ActionSet.OPERATION_CREATE_CELL) == CELL
-    assert _entity(CELL, ActionSet.OPERATION_DESTROY_HANGING_FACE, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME) == Task.GridEntity.FACE_CELL
+    assert (
+        _entity(
+            CELL,
+            ActionSet.OPERATION_CREATE_HANGING_FACE,
+            ActionSet.OPERATION_CREATE_HANGING_VERTEX,
+            ActionSet.OPERATION_CREATE_CELL,
+        )
+        == CELL
+    )
+    assert (
+        _entity(
+            CELL,
+            ActionSet.OPERATION_DESTROY_HANGING_FACE,
+            ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+        )
+        == Task.GridEntity.FACE_CELL
+    )
     assert _entity(FACE, ActionSet.OPERATION_DESTROY_CELL) == FACE
 
 
 def test_declared_entity_is_a_lower_bound():
     assert _entity(FACE, ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME) == FACE
-    assert _entity(FACE, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME) == Task.GridEntity.FACE_CELL
+    assert (
+        _entity(FACE, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
+        == Task.GridEntity.FACE_CELL
+    )
     assert _entity(FACE) == FACE
 
 

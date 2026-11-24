@@ -75,7 +75,8 @@ class WaitForCellTaskActionSet(ActionSet):
         task_label, accessors = self._task_label_accessors()
         if operation_name == ActionSet.OPERATION_CREATE_CELL:
             return "\n" + "".join(
-                f"  {task_label}.set{accessor}( tarch::multicore::TaskEnumerator::NoNumber );\n" for accessor in accessors
+                f"  {task_label}.set{accessor}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+                for accessor in accessors
             )
         elif operation_name == ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
             return "\n" + "".join(

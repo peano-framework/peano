@@ -44,9 +44,22 @@ def _number_of_traversals(*tasks):
 
 
 def test_label_is_first_and_last_non_empty_event():
-    assert _task("t", ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME, ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME).event_label == "VERTEX_FIRST_VERTEX_LAST"
-    assert _task("t", ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME).event_label == "VERTEX_FIRST"
-    assert _task("t", ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME).event_label == "VERTEX_LAST"
+    assert (
+        _task(
+            "t",
+            ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME,
+            ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME,
+        ).event_label
+        == "VERTEX_FIRST_VERTEX_LAST"
+    )
+    assert (
+        _task("t", ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME).event_label
+        == "VERTEX_FIRST"
+    )
+    assert (
+        _task("t", ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME).event_label
+        == "VERTEX_LAST"
+    )
 
 
 def test_events_in_between_do_not_show_in_the_label():
@@ -61,9 +74,15 @@ def test_events_in_between_do_not_show_in_the_label():
 
 
 def test_creation_counts_as_first_and_destruction_as_last_touch():
-    task = _task("t", ActionSet.OPERATION_CREATE_HANGING_FACE, ActionSet.OPERATION_DESTROY_HANGING_FACE)
+    task = _task(
+        "t",
+        ActionSet.OPERATION_CREATE_HANGING_FACE,
+        ActionSet.OPERATION_DESTROY_HANGING_FACE,
+    )
     assert (task.first_event, task.last_event) == (Event.FACE_FIRST, Event.FACE_LAST)
-    task = _task("t", ActionSet.OPERATION_CREATE_CELL, ActionSet.OPERATION_DESTROY_HANGING_VERTEX)
+    task = _task(
+        "t", ActionSet.OPERATION_CREATE_CELL, ActionSet.OPERATION_DESTROY_HANGING_VERTEX
+    )
     assert (task.first_event, task.last_event) == (Event.CELL_FIRST, Event.VERTEX_LAST)
 
 
@@ -95,19 +114,31 @@ def test_tasks_fuse_if_last_event_of_first_is_not_after_first_event_of_second():
 
 
 def test_task_with_late_event_does_not_fuse_with_task_with_earlier_event():
-    a = _task("a", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME)
+    a = _task(
+        "a",
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+        ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
+    )
     b = _task("b", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[a])
     assert _number_of_traversals(a, b) == 2
 
 
 def test_face_task_which_acts_in_last_touch_does_not_fuse_with_subsequent_cell_task():
-    a = _task("a", ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME)
+    a = _task(
+        "a",
+        ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME,
+        ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
+    )
     b = _task("b", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[a])
     assert _number_of_traversals(a, b) == 2
 
 
 def test_face_last_touch_tasks_fuse_with_each_other():
-    a = _task("a", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME)
+    a = _task(
+        "a",
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+        ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
+    )
     b = _task("b", ActionSet.OPERATION_TOUCH_FACE_LAST_TIME, dependencies=[a])
     assert _number_of_traversals(a, b) == 1
 
@@ -115,17 +146,29 @@ def test_face_last_touch_tasks_fuse_with_each_other():
 def test_independent_tasks_fuse_whatever_their_events_are():
     start = _task("start", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
     late = _task(
-        "late", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME, dependencies=[start]
+        "late",
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+        ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
+        dependencies=[start],
     )
-    middle = _task("middle", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[start])
-    early = _task("early", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[middle])
+    middle = _task(
+        "middle", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[start]
+    )
+    early = _task(
+        "early", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[middle]
+    )
     assert _number_of_traversals(start, late, middle, early) == 1
 
 
 def test_dependent_task_still_waits_for_the_late_event_of_its_predecessor():
     start = _task("start", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)
     late = _task(
-        "late", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME, dependencies=[start]
+        "late",
+        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
+        ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
+        dependencies=[start],
     )
-    after_late = _task("after late", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[late])
+    after_late = _task(
+        "after late", ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, dependencies=[late]
+    )
     assert _number_of_traversals(start, late, after_late) == 2

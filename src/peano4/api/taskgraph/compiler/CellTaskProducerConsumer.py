@@ -88,7 +88,9 @@ def translate_with_chains_and_fusion(
     @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._merge_chains().
 
     """
-    return _translate(graph, identifier, peano_project, use_fusion=True, chain_tasks=True)
+    return _translate(
+        graph, identifier, peano_project, use_fusion=True, chain_tasks=True
+    )
 
 
 def translate_with_chains_and_sequential(
@@ -105,7 +107,9 @@ def translate_with_chains_and_sequential(
     @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer._merge_chains().
 
     """
-    return _translate(graph, identifier, peano_project, use_fusion=False, chain_tasks=True)
+    return _translate(
+        graph, identifier, peano_project, use_fusion=False, chain_tasks=True
+    )
 
 
 def _translate(
@@ -308,9 +312,13 @@ def _translate(
         if _spawn_tasks(split_tasks, task_labels) > 0:
             peano_project.datamodel.add_cell(task_labels)
 
-    non_fusable_task_pairs = [(producer, consumer) for _, producer, consumer in split_tasks]
+    non_fusable_task_pairs = [
+        (producer, consumer) for _, producer, consumer in split_tasks
+    ]
     if use_fusion:
-        return FuseSteps.translate(producer_consumer_graph, identifier, peano_project, non_fusable_task_pairs)
+        return FuseSteps.translate(
+            producer_consumer_graph, identifier, peano_project, non_fusable_task_pairs
+        )
     else:
         return Sequential.translate(producer_consumer_graph, identifier, peano_project)
 
@@ -328,7 +336,10 @@ def _task_number_attribute_name(task: Task, action_set_index: int) -> str:
 
     """
     words = re.split(r"[^A-Za-z0-9]+", task.name)
-    return "".join(word[:1].upper() + word[1:] for word in words if word) + f"ActionSet{action_set_index}TaskNumber"
+    return (
+        "".join(word[:1].upper() + word[1:] for word in words if word)
+        + f"ActionSet{action_set_index}TaskNumber"
+    )
 
 
 def _task_attribute_names(task: Task, action_set_index: int) -> Tuple[str, str, str]:
@@ -341,7 +352,11 @@ def _task_attribute_names(task: Task, action_set_index: int) -> Tuple[str, str, 
 
     """
     stem = _task_number_attribute_name(task, action_set_index)[: -len("TaskNumber")]
-    return f"{stem}FirstTaskNumber", f"{stem}LastTaskNumber", f"{stem}ChildrenTaskNumbers"
+    return (
+        f"{stem}FirstTaskNumber",
+        f"{stem}LastTaskNumber",
+        f"{stem}ChildrenTaskNumbers",
+    )
 
 
 def _copy_task(task: Task) -> Task:
@@ -373,10 +388,13 @@ def _exclusively_writes_cell_data(task: Task) -> bool:
 
     """
     writing_accesses = (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
-    writes_cell_data = any(access in writing_accesses for access in task.cell_data_access.values())
+    writes_cell_data = any(
+        access in writing_accesses for access in task.cell_data_access.values()
+    )
     writes_other_data = any(
         access in writing_accesses
-        for access in list(task.face_data_access.values()) + list(task.vertex_data_access.values())
+        for access in list(task.face_data_access.values())
+        + list(task.vertex_data_access.values())
     )
     return writes_cell_data and not writes_other_data
 
@@ -425,11 +443,17 @@ def _can_be_split_and_merged(task: Task) -> bool:
     """
     if task.entity != Task.GridEntity.CELL or task.has_to_repeat is not None:
         return False
-    if not _exclusively_writes_cell_data(task) or task.may_spawn_background_tasks is False:
+    if (
+        not _exclusively_writes_cell_data(task)
+        or task.may_spawn_background_tasks is False
+    ):
         return False
     if any(action_set.user_should_modify_template() for action_set in task.action_sets):
         return False
-    return task.may_spawn_background_tasks is True or not _has_events_after_touch_cell_first_time(task)
+    return (
+        task.may_spawn_background_tasks is True
+        or not _has_events_after_touch_cell_first_time(task)
+    )
 
 
 def _is_spawned_completely(task: Task) -> bool:
@@ -459,7 +483,9 @@ def _is_spawnable(action_set: "peano4.api.solversteps.ActionSet") -> bool:
     )
 
 
-def _merge_access(first: "Task.DataAccess", last: "Task.DataAccess") -> "Task.DataAccess":
+def _merge_access(
+    first: "Task.DataAccess", last: "Task.DataAccess"
+) -> "Task.DataAccess":
     """!
 
     Access to a submodel by two tasks which run one after the other: The
@@ -493,21 +519,51 @@ def _merge_two_tasks(first: Task, last: Task) -> Task:
     merged = Task(
         name=first.name + CHAIN_NAME_SEPARATOR + last.name,
         entity=Task.GridEntity.CELL,
-        may_spawn_background_tasks=True if True in (first.may_spawn_background_tasks, last.may_spawn_background_tasks) else None,
+        may_spawn_background_tasks=True
+        if True in (first.may_spawn_background_tasks, last.may_spawn_background_tasks)
+        else None,
         tags=first.tags | last.tags,
     )
     merged.dependencies = list(first.dependencies)
     merged.action_sets = first.action_sets + last.action_sets
     for declare, first_data, first_access, last_data, last_access in (
-        (merged.use_cell, first.cell_data, first.cell_data_access, last.cell_data, last.cell_data_access),
-        (merged.use_face, first.face_data, first.face_data_access, last.face_data, last.face_data_access),
-        (merged.use_vertex, first.vertex_data, first.vertex_data_access, last.vertex_data, last.vertex_data_access),
+        (
+            merged.use_cell,
+            first.cell_data,
+            first.cell_data_access,
+            last.cell_data,
+            last.cell_data_access,
+        ),
+        (
+            merged.use_face,
+            first.face_data,
+            first.face_data_access,
+            last.face_data,
+            last.face_data_access,
+        ),
+        (
+            merged.use_vertex,
+            first.vertex_data,
+            first.vertex_data_access,
+            last.vertex_data,
+            last.vertex_data_access,
+        ),
     ):
-        for submodel in first_data + [submodel for submodel in last_data if submodel not in first_data]:
+        for submodel in first_data + [
+            submodel for submodel in last_data if submodel not in first_data
+        ]:
             if submodel in first_access and submodel in last_access:
-                declare(submodel, _merge_access(first_access[submodel], last_access[submodel]))
+                declare(
+                    submodel,
+                    _merge_access(first_access[submodel], last_access[submodel]),
+                )
             else:
-                declare(submodel, first_access[submodel] if submodel in first_access else last_access[submodel])
+                declare(
+                    submodel,
+                    first_access[submodel]
+                    if submodel in first_access
+                    else last_access[submodel],
+                )
     return merged
 
 
@@ -563,7 +619,9 @@ def _merge_chains(graph: Graph) -> Graph:
     """
     copies = {task: _copy_task(task) for task in graph.tasks}
     for task, copy_of_task in copies.items():
-        copy_of_task.dependencies = [copies.get(dependency, dependency) for dependency in task.dependencies]
+        copy_of_task.dependencies = [
+            copies.get(dependency, dependency) for dependency in task.dependencies
+        ]
     result = Graph()
     result.tasks = list(copies.values())
     result.remove_redundant_edges()
@@ -575,15 +633,26 @@ def _merge_chains(graph: Graph) -> Graph:
             if len(last.dependencies) != 1 or last.dependencies[0] not in result.tasks:
                 continue
             first = last.dependencies[0]
-            if [task for task in result.tasks if any(dependency is first for dependency in task.dependencies)] != [last]:
+            if [
+                task
+                for task in result.tasks
+                if any(dependency is first for dependency in task.dependencies)
+            ] != [last]:
                 continue
-            if not (_can_be_split_and_merged(first) and _can_be_split_and_merged(last) and _is_spawned_completely(last)):
+            if not (
+                _can_be_split_and_merged(first)
+                and _can_be_split_and_merged(last)
+                and _is_spawned_completely(last)
+            ):
                 continue
             merged = _merge_two_tasks(first, last)
             if not _exclusively_writes_cell_data(merged):
                 continue
             for task in result.tasks:
-                task.dependencies = [merged if dependency is last else dependency for dependency in task.dependencies]
+                task.dependencies = [
+                    merged if dependency is last else dependency
+                    for dependency in task.dependencies
+                ]
             result.tasks[result.tasks.index(first)] = merged
             result.tasks.remove(last)
             merged_something = True
@@ -605,7 +674,10 @@ def _split_cell_tasks(graph: Graph):
     consumer_of_task = {}
     for task in graph.tasks:
         producer_of_task[task] = _copy_task(task)
-        if task.may_spawn_background_tasks is False or not _exclusively_writes_cell_data(task):
+        if (
+            task.may_spawn_background_tasks is False
+            or not _exclusively_writes_cell_data(task)
+        ):
             continue
         late_events = _has_events_after_touch_cell_first_time(task)
         if late_events and task.may_spawn_background_tasks is not True:
@@ -620,7 +692,10 @@ def _split_cell_tasks(graph: Graph):
         producer_of_task[task].name = f"{task.name} Producer"
         consumer = Task(name=f"{task.name} Consumer", entity=Task.GridEntity.CELL)
         for submodel in task.cell_data:
-            if task.cell_data_access[submodel] in (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE):
+            if task.cell_data_access[submodel] in (
+                Task.DataAccess.WRITE,
+                Task.DataAccess.READ_AND_WRITE,
+            ):
                 consumer.use_cell(submodel, Task.DataAccess.READ_AND_WRITE)
         consumer_of_task[task] = consumer
 
@@ -630,14 +705,20 @@ def _split_cell_tasks(graph: Graph):
         for dependency in task.dependencies:
             # Depend on whatever finishes the dependency: its consumer if
             # it has been split, otherwise the (copied) task itself
-            producer.add_dependency(consumer_of_task.get(dependency, producer_of_task[dependency]))
+            producer.add_dependency(
+                consumer_of_task.get(dependency, producer_of_task[dependency])
+            )
         result.add_task(producer)
         if task in consumer_of_task:
             consumer = consumer_of_task[task]
             consumer.add_dependency(producer)
             result.add_task(consumer)
 
-    split_tasks = [(task, producer_of_task[task], consumer_of_task[task]) for task in graph.tasks if task in consumer_of_task]
+    split_tasks = [
+        (task, producer_of_task[task], consumer_of_task[task])
+        for task in graph.tasks
+        if task in consumer_of_task
+    ]
     return result, split_tasks
 
 
@@ -658,7 +739,9 @@ def _non_static_attribute_names(attributes: str) -> List[str]:
         words = statement.split()
         if not words or "static" in words or "(" in statement:
             continue
-        match = re.search(r"([A-Za-z_]\w*)\s*(\[[^\]]*\]\s*)*(=.*)?$", statement.strip(), re.S)
+        match = re.search(
+            r"([A-Za-z_]\w*)\s*(\[[^\]]*\]\s*)*(=.*)?$", statement.strip(), re.S
+        )
         if match:
             result.append(match.group(1))
     return result
@@ -720,7 +803,12 @@ def _enumerators_used_by(task: Task, task_body: str):
     return face_enumerators, vertex_enumerators
 
 
-def _warn_about_unsafe_task(task: Task, action_set_index: int, action_set: "peano4.api.solversteps.ActionSet", task_body: str):
+def _warn_about_unsafe_task(
+    task: Task,
+    action_set_index: int,
+    action_set: "peano4.api.solversteps.ActionSet",
+    task_body: str,
+):
     """!
 
     Issue the warnings about task bodies which might not
@@ -736,7 +824,10 @@ def _warn_about_unsafe_task(task: Task, action_set_index: int, action_set: "pean
 
     for accessor in ("fineGridCell", "coarseGridCell"):
         for submodel in task.cell_data:
-            if f"{accessor}{submodel.name}" in task_body and not _is_held_via_smart_pointer(submodel):
+            if (
+                f"{accessor}{submodel.name}" in task_body
+                and not _is_held_via_smart_pointer(submodel)
+            ):
                 logger.warn_and_confirm(
                     f"The touchCellFirstTime() task of {description} might access cell data {submodel.name} ({accessor}{submodel.name}). "
                     f"{submodel.name} is realised via the generator {_generator_name(submodel)}, which does not hold its data via a smart "
@@ -746,11 +837,27 @@ def _warn_about_unsafe_task(task: Task, action_set_index: int, action_set: "pean
 
     face_enumerators, vertex_enumerators = _enumerators_used_by(task, task_body)
     for kind, submodels, enumerators, prefixes, enumerator_type in (
-        ("face", task.face_data, face_enumerators, ("fineGridFaces", "coarseGridFaces"), "peano4::datamanagement::FaceHeapDataEnumerator"),
-        ("vertex", task.vertex_data, vertex_enumerators, ("fineGridVertices", "coarseGridVertices"), "peano4::datamanagement::VertexHeapDataEnumerator"),
+        (
+            "face",
+            task.face_data,
+            face_enumerators,
+            ("fineGridFaces", "coarseGridFaces"),
+            "peano4::datamanagement::FaceHeapDataEnumerator",
+        ),
+        (
+            "vertex",
+            task.vertex_data,
+            vertex_enumerators,
+            ("fineGridVertices", "coarseGridVertices"),
+            "peano4::datamanagement::VertexHeapDataEnumerator",
+        ),
     ):
         for submodel in submodels:
-            for enumerator in [f"{prefix}{submodel.name}" for prefix in prefixes if f"{prefix}{submodel.name}" in enumerators]:
+            for enumerator in [
+                f"{prefix}{submodel.name}"
+                for prefix in prefixes
+                if f"{prefix}{submodel.name}" in enumerators
+            ]:
                 if not _is_held_via_smart_pointer(submodel):
                     logger.warn_and_confirm(
                         f"The touchCellFirstTime() task of {description} might access {kind} data {submodel.name} via {enumerator}. "
@@ -788,11 +895,17 @@ def _spawn_tasks(split_tasks, task_labels: "peano4.api.datamodel.DaStGen2"):
     logger = peano4.api.Logger()
     number_of_task_numbers = 0
     for task, producer, consumer in split_tasks:
-        user_action_sets = [action_set for action_set in task.action_sets if action_set.user_should_modify_template()]
+        user_action_sets = [
+            action_set
+            for action_set in task.action_sets
+            if action_set.user_should_modify_template()
+        ]
         if user_action_sets:
             logger.warn_and_confirm(
                 f"Task {task.name} holds action sets which the user has to modify ("
-                + ", ".join(action_set.get_action_set_name() for action_set in user_action_sets)
+                + ", ".join(
+                    action_set.get_action_set_name() for action_set in user_action_sets
+                )
                 + "). The task is split into producer and consumer, but spawns no tasks."
             )
             continue
@@ -817,10 +930,20 @@ def _spawn_tasks(split_tasks, task_labels: "peano4.api.datamodel.DaStGen2"):
                 )
             )
             _warn_about_unsafe_task(task, action_set_index, action_set, task_body)
-            first_name, last_name, children_name = _task_attribute_names(task, action_set_index)
-            task_labels.data.add_attribute(dastgen2.attributes.Integer(name=first_name, initval="-1"))
-            task_labels.data.add_attribute(dastgen2.attributes.Integer(name=last_name, initval="-1"))
-            task_labels.data.add_attribute(dastgen2.attributes.IntegerArray(name=children_name, cardinality="ThreePowerD"))
+            first_name, last_name, children_name = _task_attribute_names(
+                task, action_set_index
+            )
+            task_labels.data.add_attribute(
+                dastgen2.attributes.Integer(name=first_name, initval="-1")
+            )
+            task_labels.data.add_attribute(
+                dastgen2.attributes.Integer(name=last_name, initval="-1")
+            )
+            task_labels.data.add_attribute(
+                dastgen2.attributes.IntegerArray(
+                    name=children_name, cardinality="ThreePowerD"
+                )
+            )
             number_of_task_numbers += 1
 
             face_enumerators, vertex_enumerators = _enumerators_used_by(task, task_body)
@@ -838,7 +961,9 @@ def _spawn_tasks(split_tasks, task_labels: "peano4.api.datamodel.DaStGen2"):
             producer_action_sets.append(producer_action_set)
             consumer_action_sets.append(WaitForCellTaskActionSet(producer_action_set))
             previous_first_task_attribute_name = first_name
-            if producer_action_set.has_body_of(peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_LAST_TIME):
+            if producer_action_set.has_body_of(
+                peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+            ):
                 previous_last_task_attribute_name = last_name
 
         producer.action_sets = producer_action_sets
