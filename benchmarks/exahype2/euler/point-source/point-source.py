@@ -104,6 +104,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 
 
@@ -124,6 +125,12 @@ parser.add_argument(
     "l>0, it starts from the same regular grid, but the gradient-based "
     "refinement criterion is on and coarsens the mesh by up to l levels (a "
     "factor of 3 each)",
+)
+parser.add_argument(
+    "--compiler",
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
+    default="fusion",
+    help="Task graph compiler (default: fusion)",
 )
 parser.add_argument(
     "--volume-size",
@@ -406,10 +413,10 @@ project.set_load_balancing(
     "toolbox::loadbalancing::strategies::SpreadOutOnceGridStagnates",
     "new ::exahype2::LoadBalancingConfiguration()",
 )
-# No spawned background tasks: On meshes that fill the main memory, the
-# producer-consumer compiler deadlocks in tarch::multicore::waitForTasks(),
+# The default compiler spawns no background tasks: On meshes that fill the main
+# memory, the producer-consumer compiler deadlocks in tarch::multicore::waitForTasks(),
 # which waits for tasks while holding the read lock of the dependency tracking.
-project.compiler = peano4.api.taskgraph.compiler.FuseSteps.translate
+project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 project.set_Peano4_installation(
     args.peano_root,

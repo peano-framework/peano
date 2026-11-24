@@ -1,0 +1,81 @@
+# ADR 0001: The task graph assembly spawns the six touch events as tasks and builds the DAG while it traverses
+
+Status: proposed (implementation in progress: sequential and fusion done, concatenation open)
+Date: 2026-11-24
+
+## Context
+
+`CellTaskProducerConsumer` turns `touchCellFirstTime()` and `touchCellLastTime()` of tasks that only write
+cell data into background tasks. Vertices and faces are not covered, a task that writes face or vertex data
+cannot be split, and every consumer waits for its tasks in a mesh traversal of its own, i.e. the
+traversal waits for a running task to quit and spawns the next one immediately. We want
+to move the decision "what runs when" from the compiler into the traversal: Each mesh traversal inserts tasks and their dependencies
+into a task graph, and nobody waits (outside of barriers).
+
+## Decision
+
+`TaskGraphAssembly` (`peano4.api.taskgraph.compiler.TaskGraphAssembly`) splits every task that acts on the mesh
+into a producer and a consumer.
+
+- **Six event tasks.** The producer wraps each action set into
+  `SpawnTaskActionSet`. Its non-empty `touchVertexFirstTime/LastTime`, `touchFaceFirstTime/LastTime`
+  and `touchCellFirstTime/LastTime` are spawned as tasks, one per entity and event. A vertex, a face and a cell hold
+  two task numbers per wrapped action set, one for the first and one for the last event. They are independent:
+  an action set that only has a last event only has a last task.
+- **Numbers are reserved early.** The number of the last task is reserved in the first touch, as
+  the coarse entity and the entities around have to know it before the entity's last touch spawns the task.
+- **Dependencies** (`peano4/datamanagement/TaskAssemblyDependencies.h`, all follow from the event order):
+  - Within an entity: the tasks of the action sets follow each other; the last task depends on the first task.
+  - Parent to child: the first task depends on the first tasks of the coarse entities (all coarse
+    vertices, all coarse faces, the parent cell).
+  - Child to parent: a fine cell, face (not interior of its patch) or vertex (coinciding with a coarse
+    vertex) writes the number of its last task into an array of its coarse entity in its first touch
+    (3^d entries per cell, 3^(d-1) per face, one per vertex). The coarse entity's last task depends on them.
+    The array is reset in the first touch.
+  - Across entities: the first task of a cell depends on the first tasks of its vertices and faces, the one of a face on
+    the first tasks of its vertices. The cells announce their number on the vertices and faces around them
+    (`2^d` and 2 slots), and the last tasks of the vertex and the face wait for them. The slots exist only if an
+    action set of the same task has a last event on the entity.
+  - Between tasks: the first task depends on the latest numbers of all wrapped action sets of tasks it depends on.
+- **Hanging entities** are not persistent and see no touch events, i.e. they never hold a number.
+  The create and destroy events of hanging faces and vertices run on the main thread and interpolate from or restrict into coarse data.
+  They wait for the first tasks of the coarse entities. Persistent destroy events (`destroyCell`, `destroyPersistentFace`,
+  `destroyPersistentVertex`) wait for the entity's own tasks and release their numbers.
+- **Barriers.** `endTraversal()` and `unprepareTraversal()` of a wrapped action set start with
+  `waitForAllTasks()`. The last event of the task is then global, and the global tasks follow the consumer anyway.
+- **Domain decomposition.** Peano exchanges face and vertex data between the trees when a traversal ends, i.e.
+  before the consumer sweep. The producer therefore records the numbers of all vertex tasks, of the face tasks next to a
+  parallel boundary (`marker.isAdjacentToParallelBoundary()`), and of the cell tasks of a task that writes face or vertex
+  data. Its `endTraversal()` waits for them (per tree, no global barrier). Cell tasks which write cell data only
+  may outlive the traversal.
+- **Consumer.** The consumer visits every persistent entity in its first touch and waits for the entity's tasks, releases
+  the numbers and resets them. As the last task of a cell waits for the whole subtree, and the last task of a vertex or face
+  for the cells around it, nothing is left once the traversal has terminated.
+- **Data of the consumer.** The consumer declares the face and vertex data of its producer as READ_AND_WRITE.
+  It waits for the tasks of a cell only when it enters the cell. A producer of the next task fused into the same traversal
+  has spawned its tasks on the faces and vertices of the cell by then, and FuseSteps would not see that these two tasks
+  conflict on face data. (Found the hard way: without the declaration, the Runge-Kutta time step reached dt=inf on
+  meshes decomposed into several trees.)
+- **Labels.** The compiler adds `<identifier>_VertexTaskLabels`, `_FaceTaskLabels` and `_CellTaskLabels`. They are added
+  to the *steps* after the fusion (producers WRITE, consumers READ_AND_DISCARD, a fused step with both READ_AND_WRITE),
+  and not to the tasks. Otherwise two producers which both write the face labels would conflict on face data and
+  never share a traversal.
+- **Events of the producer.** The producer task reports the events of the original action sets (`_ProducerTask`). The
+  wrappers act in more events (they reset the arrays), and FuseSteps would otherwise place the producers too late.
+- **A task is not split** if it does not act on the mesh, repeats, opts out (`may_spawn_background_tasks=False`), has
+  nothing to spawn, or has an action set which has to run on the main thread (`may_run_in_background_task()`) but acts in a touch event.
+- **Concatenation** (turning the consumer's wait into a task dependency of the next producer and removing consumer sweeps)
+  is not part of this version.
+
+## Consequences
+
+- The task graph of a traversal is a DAG over all entities, not only cells. Tasks of different levels run concurrently
+  as far as the data allow.
+- The mesh traversal still processes entities sequentially. A task writing data of a neighbour (shared face) relies
+  on the dependencies above. A write-after-read hazard between a cell task and the face task of a later action set
+  only holds if both belong to the same task (the arrays of the other task are not read).
+- Face and vertex tasks read their data after the entity has been stored. Data that is not held via a smart pointer is
+  copied. `TaskGraphAssembly` warns like `CellTaskProducerConsumer` does.
+- The vertex last task does not wait for the faces around the vertex, only for the cells around it.
+- The assembly uses data which `TaskGraphAssembly` adds to every entity, i.e. the memory per cell, face and vertex grows with the number of wrapped action sets.
+- Only the sequential and the fusion variant are validated by the integration tests so far.

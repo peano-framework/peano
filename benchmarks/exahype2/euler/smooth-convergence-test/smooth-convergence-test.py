@@ -15,6 +15,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 
 
@@ -44,13 +45,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--compiler",
-    choices=[
-        "sequential",
-        "fusion",
-        "producer-consumer",
-        "producer-consumer-fusion",
-        "producer-consumer-chains",
-    ],
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
     help="Task graph compiler (default: fusion)",
 )
@@ -146,14 +141,7 @@ if args.verbosity is None:
     args.verbosity = "text" if args.build_mode == "release" else "visualisation"
 plot_interval = args.plot_interval if args.plot_interval is not None else args.end_time
 
-compilers = peano4.api.taskgraph.compiler
-task_graph_compiler = {
-    "sequential": compilers.Sequential.translate,
-    "fusion": compilers.FuseSteps.translate,
-    "producer-consumer": compilers.CellTaskProducerConsumer.translate_with_sequential,
-    "producer-consumer-fusion": compilers.CellTaskProducerConsumer.translate_with_fusion,
-    "producer-consumer-chains": compilers.CellTaskProducerConsumer.translate_with_chains_and_fusion,
-}[args.compiler]
+task_graph_compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 
 project = exahype2.api.Project(

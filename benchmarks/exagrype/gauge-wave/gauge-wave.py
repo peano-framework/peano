@@ -131,6 +131,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 import exagrype.api
 
@@ -193,28 +194,15 @@ parser.add_argument(
 )
 parser.add_argument(
     "--compiler",
-    choices=[
-        "sequential",
-        "fusion",
-        "producer-consumer",
-        "producer-consumer-fusion",
-        "producer-consumer-chains",
-    ],
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
     help="Task graph compiler: one traversal per task (sequential), tasks fused "
-    "into as few traversals as possible (fusion, default), or the same two "
-    "variants with cell tasks spawned as producer-consumer tasks.",
+    "into as few traversals as possible (fusion, default), the same two "
+    "variants with cell tasks spawned as producer-consumer tasks, or the task graph assembly (assembly).",
 )
 args = parser.parse_args()
 
-compilers = peano4.api.taskgraph.compiler
-task_graph_compiler = {
-    "sequential": compilers.Sequential.translate,
-    "fusion": compilers.FuseSteps.translate,
-    "producer-consumer": compilers.CellTaskProducerConsumer.translate_with_sequential,
-    "producer-consumer-fusion": compilers.CellTaskProducerConsumer.translate_with_fusion,
-    "producer-consumer-chains": compilers.CellTaskProducerConsumer.translate_with_chains_and_fusion,
-}[args.compiler]
+task_graph_compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 ## The grid construction refines every cell whose edge length is greater than
 ## or equal to volume_size times the patch size, i.e. the grid cells end up

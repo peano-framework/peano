@@ -189,6 +189,7 @@ import time
 import numpy as np
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 import exagrype.api
 
@@ -227,9 +228,9 @@ parser.add_argument(
 )
 parser.add_argument(
     "--compiler",
-    choices=["sequential", "fusion"],
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
-    help="Task graph compiler: one mesh traversal per task (sequential) or fused traversals (fusion)",
+    help="Task graph compiler: one mesh traversal per task (sequential), fused traversals (fusion), or the other compilers of peano4.api.taskgraph.compiler.Compilers",
 )
 parser.add_argument("--end-time", type=float, default=0.1, help="Simulation end time")
 parser.add_argument(
@@ -342,11 +343,7 @@ def build(scheme, formulation, cells):
     else:
         project.add_solver(pair)
 
-    project.compiler = (
-        peano4.api.taskgraph.compiler.Sequential.translate
-        if arguments.compiler == "sequential"
-        else peano4.api.taskgraph.compiler.FuseSteps.translate
-    )
+    project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[arguments.compiler]
     project.set_global_simulation_parameters(
         dimensions=3,
         offset=[0.0, 0.0, 0.0],

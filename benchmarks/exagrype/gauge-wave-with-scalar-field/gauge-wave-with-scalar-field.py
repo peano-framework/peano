@@ -56,6 +56,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 import exagrype.api
 
@@ -112,6 +113,12 @@ parser.add_argument(
     type=int,
     default=None,
     help="Number of threads of the generated executable (default: all cores)",
+)
+parser.add_argument(
+    "--compiler",
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
+    default="fusion",
+    help="Task graph compiler (default: fusion)",
 )
 parser.add_argument(
     "--plot-along-x-axis",
@@ -221,7 +228,7 @@ for solver in coupled.solvers:
 
 project.add_solver(coupled)
 
-project.compiler = peano4.api.taskgraph.compiler.FuseSteps.translate
+project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 project.set_global_simulation_parameters(
     dimensions=3,
