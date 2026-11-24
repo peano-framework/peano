@@ -42,6 +42,34 @@ destroys its hanging vertices, besides the touch events.
 
 """
 
+EVENTS_OF_OPERATIONS: Dict[str, "Task.TraversalEvent"] = {
+    OPERATION_PREPARE_TRAVERSAL: Task.TraversalEvent.PREPARE_TRAVERSAL,
+    ActionSet.OPERATION_BEGIN_TRAVERSAL: Task.TraversalEvent.BEGIN_TRAVERSAL,
+    ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME: Task.TraversalEvent.VERTEX_FIRST,
+    ActionSet.OPERATION_CREATE_PERSISTENT_VERTEX: Task.TraversalEvent.VERTEX_FIRST,
+    ActionSet.OPERATION_CREATE_HANGING_VERTEX: Task.TraversalEvent.VERTEX_FIRST,
+    ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME: Task.TraversalEvent.FACE_FIRST,
+    ActionSet.OPERATION_CREATE_PERSISTENT_FACE: Task.TraversalEvent.FACE_FIRST,
+    ActionSet.OPERATION_CREATE_HANGING_FACE: Task.TraversalEvent.FACE_FIRST,
+    ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME: Task.TraversalEvent.CELL_FIRST,
+    ActionSet.OPERATION_CREATE_CELL: Task.TraversalEvent.CELL_FIRST,
+    ActionSet.OPERATION_TOUCH_CELL_LAST_TIME: Task.TraversalEvent.CELL_LAST,
+    ActionSet.OPERATION_DESTROY_CELL: Task.TraversalEvent.CELL_LAST,
+    ActionSet.OPERATION_TOUCH_FACE_LAST_TIME: Task.TraversalEvent.FACE_LAST,
+    ActionSet.OPERATION_DESTROY_PERSISTENT_FACE: Task.TraversalEvent.FACE_LAST,
+    ActionSet.OPERATION_DESTROY_HANGING_FACE: Task.TraversalEvent.FACE_LAST,
+    ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME: Task.TraversalEvent.VERTEX_LAST,
+    ActionSet.OPERATION_DESTROY_PERSISTENT_VERTEX: Task.TraversalEvent.VERTEX_LAST,
+    ActionSet.OPERATION_DESTROY_HANGING_VERTEX: Task.TraversalEvent.VERTEX_LAST,
+    ActionSet.OPERATION_END_TRAVERSAL: Task.TraversalEvent.END_TRAVERSAL,
+    OPERATION_UNPREPARE_TRAVERSAL: Task.TraversalEvent.UNPREPARE_TRAVERSAL,
+}
+"""!
+
+Where an operation occurs within a mesh traversal. Creating something belongs to its first touch, destroying it to its last touch.
+
+"""
+
 ALL_EVENT_OPERATIONS: List[str] = [
     value for name, value in vars(ActionSet).items() if name.startswith("OPERATION_")
 ]
@@ -89,22 +117,25 @@ def events_of_action_set(action_set: ActionSet) -> List[str]:
     return result
 
 
-def derive_marks(action_sets) -> "Task.GridEntity":
+def derive_marks_and_events(action_sets):
     """!
 
-    The marks (VERTEX, FACE, CELL, GLOBAL) of all events the action sets use
+    The marks (VERTEX, FACE, CELL, GLOBAL) and the traversal events of all operations the action sets use
 
     @param action_sets: [peano4.api.solversteps.ActionSet]
 
-    @return peano4.api.taskgraph.Task.Task.GridEntity
-      The union of the marks. Might be empty (a Flag with value 0).
+    @return (peano4.api.taskgraph.Task.Task.GridEntity, frozenset)
+      The union of the marks (might be empty, a Flag with value 0), and the
+      set of Task.TraversalEvent.
 
     """
-    result = Task.GridEntity(0)
+    marks = Task.GridEntity(0)
+    events = set()
     for action_set in action_sets:
-        for event in events_of_action_set(action_set):
-            result |= MARKS_OF_EVENTS[event]
-    return result
+        for operation in events_of_action_set(action_set):
+            marks |= MARKS_OF_EVENTS[operation]
+            events.add(EVENTS_OF_OPERATIONS[operation])
+    return marks, frozenset(events)
 
 
 def violations_of_task(task: Task) -> List[str]:

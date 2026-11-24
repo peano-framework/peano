@@ -37,15 +37,18 @@ def translate(
     Two tasks end up in the same traversal if and only if all of the
     following constraints hold:
 
-    1. **Entity order.** Each grid sweep first does something with the
-       vertices, then with the faces, then with the cells (@ref
-       peano4.api.taskgraph.Task.Task.GridEntity, whose values follow exactly this order). A task that
-       works on a face can therefore be followed by a task working on a face
-       or a cell within the same traversal, but a task working on a vertex
-       has to go into the next traversal. In general, a node can be appended
-       to the traversal built up so far if and only if the lowest grid
-       entity it works on is not lower than the highest grid entity the
-       traversal works on so far. Tasks of one dependency layer (see
+    1. **Event order.** A mesh traversal invokes the events in a fixed order:
+       prepareTraversal(), beginTraversal(), touchVertexFirstTime(),
+       touchFaceFirstTime(), touchCellFirstTime(), touchCellLastTime(),
+       touchFaceLastTime(), touchVertexLastTime(), endTraversal(),
+       unprepareTraversal() (@ref peano4.api.taskgraph.Task.Task.TraversalEvent). Creating something counts as
+       its first touch, destroying it as its last touch. A task's first
+       and last event follow from the events its action sets use (@ref peano4.api.taskgraph.Task.Task.event_label,
+       e.g. VERTEX_FIRST_CELL_LAST). A node can be appended to the traversal
+       built up so far if and only if its first event is not before the last event of the
+       traversal. A task which acts in touchFaceLastTime() therefore never
+       shares a traversal with a subsequent task which acts in touchCellFirstTime().
+       Tasks of one dependency layer (see
        below) are independent of each other, so this constraint does not
        apply among them.
     2. **No conflicting face or vertex data.** A face or a vertex is shared
@@ -56,14 +59,14 @@ def translate(
        altered it, depending on the traversal order. Such tasks are never
        fused (@ref peano4.api.taskgraph.compiler.FuseSteps._have_conflicting_data()). Cell data are not shared
        between cells and hence do not constrain the fusion. TEMPORARY uses
-       are ignored. There is one exception which follows from the entity
+       are ignored. There is one exception which follows from the event
        order: Peano touches every vertex and face of a cell for the first
        time before it enters the cell, and every vertex of a face before the
-       face. A FACE task which reads or writes face data therefore has
+       face. A task which only acts in the face events has
        finished with a face before any subsequent face or cell task of the
-       same traversal sees this face. The same holds for a VERTEX task and
-       vertex data. A conflict on face (vertex) data hence is ignored if the
-       earlier of the two tasks is a FACE (VERTEX) task. Two FACE tasks with
+       same traversal sees this face. The same holds for a task which only
+       acts in the vertex events and vertex data. A conflict on face (vertex) data hence is ignored if the
+       earlier of the two tasks acts in face (vertex) events only. Two FACE tasks with
        conflicting face data thus can share one traversal, but they never
        run in parallel (constraint 2 of the algorithm below). Apart from
        this exception, the constraint is conservative: it relies only on
@@ -104,18 +107,6 @@ def translate(
        the compiler places the tasks into a traversal of their own in front
        of (behind) it, as they would otherwise run in every repetition.
 
-<br /><br />
-<div style="background-color: #fcc ; padding: 10px; border: 1px solid green;"> 
-A task does not tell the compiler if its action sets plug into touch-first or touch-last
-events. The compiler therefore assumes that a VERTEX (FACE) task works on its vertex
-(face) data within touchVertexFirstTime() (touchFaceFirstTime()), i.e. before any
-adjacent face or cell is entered. A VERTEX or FACE task which writes its data in
-touchVertexLastTime() or touchFaceLastTime() violates this assumption, and the
-compiler might fuse it with a subsequent task that then reads stale data. Conversely,
-a CELL task A might only write face data in touchFaceLastTime(), while its successor
-CELL task B reads this face data in touchCellFirstTime(). We could fuse A and B, but
-this option is hidden from the task compiler.
-</div>
 
 
     ## Algorithm
@@ -317,10 +308,10 @@ this option is hidden from the task compiler.
     # Step 3: greedy fusion along the sequence of nodes
     groups = []
     current_group = None
-    highest_entity_of_current_group = None
+    highest_event_of_current_group = None
     for node in nodes:
-        lowest_entity = min(task.entity.primary.value for task in node)
-        highest_entity = max(task.entity.primary.value for task in node)
+        lowest_event = min(task.first_event for task in node)
+        highest_event = max(task.last_event for task in node)
         is_repeating = len(node) == 1 and node[0].has_to_repeat
         tasks_of_current_group = [task for group_node in current_group or [] for task in group_node]
         # A task which depends on a global task runs after the traversal that holds the global task
@@ -334,14 +325,14 @@ this option is hidden from the task compiler.
             not is_repeating
             and current_group is not None
             and not waits_for_current_group
-            and lowest_entity >= highest_entity_of_current_group
+            and lowest_event >= highest_event_of_current_group
             and can_be_combined(tasks_of_current_group, node, respect_entity_order=True)
         ):
             current_group.append(node)
-            highest_entity_of_current_group = max(highest_entity_of_current_group, highest_entity)
+            highest_event_of_current_group = max(highest_event_of_current_group, highest_event)
         else:
             current_group = [node]
-            highest_entity_of_current_group = highest_entity
+            highest_event_of_current_group = highest_event
             groups.append(current_group)
         if is_repeating:
             current_group = None
@@ -414,7 +405,11 @@ def _have_conflicting_data(
     """
     writing_accesses = (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
     using_accesses = (Task.DataAccess.READ_AND_DISCARD, Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
-    entity_of_kind = {"face": Task.GridEntity.FACE, "vertex": Task.GridEntity.VERTEX}
+    Event = Task.TraversalEvent
+    events_of_kind = {
+        "face": {Event.FACE_FIRST, Event.FACE_LAST},
+        "vertex": {Event.VERTEX_FIRST, Event.VERTEX_LAST},
+    }
 
     def submodels(task, accesses):
         return {
@@ -432,7 +427,11 @@ def _have_conflicting_data(
                 submodels(further_task, writing_accesses) & submodels(task, using_accesses)
             )
             if respect_entity_order:
-                conflicts = {(kind, submodel) for kind, submodel in conflicts if entity_of_kind.get(kind) != task.entity}
+                conflicts = {
+                    (kind, submodel)
+                    for kind, submodel in conflicts
+                    if not (kind in events_of_kind and task.events <= events_of_kind[kind])
+                }
             if conflicts:
                 return True
     return False

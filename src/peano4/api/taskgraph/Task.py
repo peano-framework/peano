@@ -2,7 +2,7 @@
 # use, please see the copyright notice at www.peano-framework.org
 
 import enum
-from typing import Iterable, List, Optional, Set
+from typing import FrozenSet, Iterable, List, Optional, Set
 
 
 class Task:
@@ -204,6 +204,31 @@ class Task:
             """! Name of the entity, e.g. FACE_CELL, also for combinations without a name of their own """
             return self.name if self.name is not None else str(self)
 
+    class TraversalEvent(enum.IntEnum):
+        """!
+
+        The events of a mesh traversal in the order in which they occur
+
+        A traversal begins with the first touch of the vertices, then of the
+        faces, then of the cells, and it ends with the last touch in the
+        opposite order. The creation of vertices, faces and cells belongs to the
+        first touch, the destruction to the last touch. A task's first
+        and last event (@ref peano4.api.taskgraph.Task.Task.first_event)
+        decide which tasks can share a traversal.
+
+        """
+
+        PREPARE_TRAVERSAL = 0
+        BEGIN_TRAVERSAL = 1
+        VERTEX_FIRST = 2
+        FACE_FIRST = 3
+        CELL_FIRST = 4
+        CELL_LAST = 5
+        FACE_LAST = 6
+        VERTEX_LAST = 7
+        END_TRAVERSAL = 8
+        UNPREPARE_TRAVERSAL = 9
+
     class DataAccess(enum.Enum):
         """!
 
@@ -283,7 +308,7 @@ class Task:
         self.name = name
         self.tags: Set[str] = set(tags) if tags is not None else set()
         self.declared_entity = entity
-        self._derived_entity_cache = None
+        self._derived_cache = None
         self.dependencies: List["Task"] = []
         self.action_sets: List["peano4.api.solversteps.ActionSet"] = []
         self.cell_data: List["peano4.api.datamodel.DoF"] = []
@@ -297,6 +322,15 @@ class Task:
         assert not (entity.is_global and task_has_to_repeat is not None), (
             f"Task {name} is global and hence may not repeat"
         )
+
+    def _derived(self):
+        """! Marks and events which the action sets imply, cached as long as the action sets do not change """
+        key = tuple(id(action_set) for action_set in self.action_sets)
+        if self._derived_cache is None or self._derived_cache[0] != key:
+            from .compiler.ValidateTaskGraph import derive_marks_and_events
+
+            self._derived_cache = (key, *derive_marks_and_events(self.action_sets))
+        return self._derived_cache[1], self._derived_cache[2]
 
     @property
     def entity(self) -> "Task.GridEntity":
@@ -316,12 +350,56 @@ class Task:
         """
         if self.declared_entity in (Task.GridEntity.GLOBAL_START_OF_STEP, Task.GridEntity.GLOBAL_END_OF_STEP):
             return self.declared_entity
-        key = tuple(id(action_set) for action_set in self.action_sets)
-        if self._derived_entity_cache is None or self._derived_entity_cache[0] != key:
-            from .compiler.ValidateTaskGraph import derive_marks
+        return self.declared_entity | self._derived()[0]
 
-            self._derived_entity_cache = (key, derive_marks(self.action_sets))
-        return self.declared_entity | self._derived_entity_cache[1]
+    @property
+    def events(self) -> FrozenSet["Task.TraversalEvent"]:
+        """!
+
+        The traversal events in which the task's action sets are not empty
+
+        If the action sets use no event at all (they might not exist yet), the
+        task acts in the first event of its primary declared entity, i.e. a CELL task in
+        CELL_FIRST. Global tasks without events act in none.
+
+        """
+        events = self._derived()[1]
+        if not events and not self.declared_entity.is_global:
+            first_event_of_mark = {
+                Task.GridEntity.VERTEX: Task.TraversalEvent.VERTEX_FIRST,
+                Task.GridEntity.FACE: Task.TraversalEvent.FACE_FIRST,
+                Task.GridEntity.CELL: Task.TraversalEvent.CELL_FIRST,
+            }
+            return frozenset({first_event_of_mark[self.declared_entity.primary]})
+        return events
+
+    @property
+    def first_event(self) -> Optional["Task.TraversalEvent"]:
+        """! The earliest event of the task, or None if it has none """
+        return min(self.events) if self.events else None
+
+    @property
+    def last_event(self) -> Optional["Task.TraversalEvent"]:
+        """! The latest event of the task, or None if it has none """
+        return max(self.events) if self.events else None
+
+    @property
+    def event_label(self) -> str:
+        """!
+
+        The first and the last event of the task as label
+
+        VERTEX_FIRST_CELL_LAST says that the first non-empty event is
+        touchVertexFirstTime() and the last one touchCellLastTime(). The label has one
+        part only if first and last event coincide, e.g. CELL_FIRST. Events in between
+        might or might not be used. The label is NONE for tasks without events.
+
+        """
+        if not self.events:
+            return "NONE"
+        if self.first_event == self.last_event:
+            return self.first_event.name
+        return f"{self.first_event.name}_{self.last_event.name}"
 
     def add_dependency(self, task: "Task"):
         self.dependencies.append(task)

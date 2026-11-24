@@ -38,8 +38,8 @@ rejects such a task if its action sets use mesh events.
 
 Compilers use the entity as follows:
 
-- FuseSteps orders tasks by their primary entity, i.e. their highest mesh mark.
-  A FACE_CELL task is a cell task. A task which only has the GLOBAL mark is appended to the
+- FuseSteps orders tasks by the first and last event of their action sets (ADR 0002).
+  A task which only has the GLOBAL mark is appended to the
   traversal of its last dependency. A mesh task with the GLOBAL mark (e.g. CELL|GLOBAL)
   acts in the prepare/unprepare events of its own traversal.
 - The producer-consumer compiler splits tasks which are CELL only. It spawns the
@@ -58,5 +58,3 @@ Compilers use the entity as follows:
 - The entity is not available as a plain attribute: it is recomputed whenever the action sets change.
 - The split of the load balancing into global tasks of its own (as in the schemes and setups) is not
   required anymore, but keeps the global events out of the producer-consumer pairs.
-- Within the FuseSteps entity order, FACE_CELL counts as CELL, i.e. the face events of a task are not
-  ordered against the cell events of the tasks it is fused with.
