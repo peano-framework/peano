@@ -707,10 +707,11 @@ namespace tarch {
        * We also use iterators to administer the out dependencies. This "set"
        * is either empty or has exactly one entry.
        *
-       * Finally, we distinguish OpenMP 5 and OpenMP 6 realisations. Please
-       * consult the documentations of
-       * tarch::multicore::omp::internal::spawnTaskWithOpenMP6() and
-       * tarch::multicore::omp::internal::spawnTaskWithOpenMP5() for details.
+       * Finally, we distinguish OpenMP 5 and OpenMP 6 realisations. They
+       * sit in different source files, TasksWithOpenMP6.cpp (see also
+       * tarch::multicore::omp::internal::spawnTaskWithOpenMP6()) and
+       * TasksWithOpenMP5.cpp. The latter does not use the dependency memory
+       * at all. See the documentation of tarch::multicore::omp::internal.
        *
        *
        * ### Realisation pitfalls
@@ -835,8 +836,9 @@ namespace tarch {
        * That is, task dependencies in OpenMP work only between siblings. We
        * however have task dependencies between tasks that are not spawned by
        * the same parent task. Therefore, we have to manually ensure that all
-       * tasks have terminated. We do so by polling hasTaskFinishedInOpenMP5().
-       * This routine's documentation provides further information on the
+       * tasks have terminated. We do so by polling the status of the tasks
+       * (TasksWithOpenMP5.cpp). The documentation of
+       * tarch::multicore::omp::internal provides further information on the
        * underlying mechanisms.
        *
        *
@@ -860,9 +862,8 @@ namespace tarch {
        * if statement that evaluates to false. However, the in-dependencies
        * will be resolved nevertheless.
        * 
-       * There is an issue that can arise if every thread is waiting on a different task,
-       * similar to in spawnTaskWithOpenMP5(...). See this function for more 
-       * details.
+       * In OpenMP 5, a thread that waits yields while it polls. This is safe, as
+       * no OpenMP task waits for another one (see tarch::multicore::omp::internal).
        */
       void waitForTasks(const std::set<TaskNumber>& inDependencies);
 

@@ -77,31 +77,71 @@ namespace tarch {
        * for example.
        *
        *
-       * ## Tasks in OpenMP before version 5
+       * ## Tasks in OpenMP before version 6: release on completion
        *
        * If we have OpenMP 5 or earlier, we don't have transparent tasks, so
-       * have to provide a workaround. What we do it that we do not only
-       * allocate some memory for dependency tracking, we also set each entry
-       * to one of the following values:
+       * we have to provide a workaround. The two implementations are so
+       * different that they live in different files: TasksWithOpenMP6.cpp is
+       * only translated if the compiler claims OpenMP 6, TasksWithOpenMP5.cpp
+       * otherwise. Tasks.cpp holds what both have in common.
        *
-       * - TaskNumberNotUsedYet
-       * - TaskNumberSpawned
-       * - TaskNumberRunning
-       * - TaskNumberTerminated
+       * The workaround does not use OpenMP dependencies at all. Every task
+       * that is spawned with a number is entered into a map from task
+       * number to a task node. A node holds the job, the number of
+       * predecessors that have not terminated yet, and the list of
+       * successors that wait for this task. Only a task whose predecessors
+       * have all terminated is turned into an OpenMP task. This is done by
+       * the task that terminates last among the predecessors (or by the
+       * spawn itself if all predecessors have terminated already). A
+       * terminating task removes itself from the map. A number that is not in
+       * the map is either not used or has terminated, i.e. nobody has to
+       * wait for it.
        *
-       * Task waits are then realised through atomics and polling over these
-       * variables.
+       * @dot
+       * digraph ReleaseOnCompletion {
+       *   rankdir=LR; node [shape=box, fontsize=10];
+       *   spawn    [label="spawnTask()"];
+       *   map      [label="map: number -> node\n(unfinished predecessors,\nsuccessors)"];
+       *   omp      [label="OpenMP task\n(runs job)"];
+       *   terminate[label="terminate:\nremove from map,\ncount down successors"];
+       *   spawn -> map [label="register at\nunfinished\npredecessors"];
+       *   spawn -> omp [label="no unfinished\npredecessor"];
+       *   map -> omp [label="last predecessor\nterminated"];
+       *   omp -> terminate;
+       *   terminate -> omp [label="releases ready\nsuccessors", style=dashed];
+       * }
+       * @enddot
+       *
+       * If a task is spawned with a number that is still alive, it replaces
+       * the old task in the map. If the number is also one of its
+       * in-dependencies, it has registered at the old task, i.e. it is an
+       * inout dependency and runs after it. Tasks spawned later find the new
+       * task. A terminating task only removes itself from the map if it has
+       * not been replaced.
+       *
+       * Waits (tarch::multicore::native::waitForTasks()) poll the status of
+       * the nodes and yield between two polls. As nothing but runnable tasks
+       * becomes an OpenMP task, the awaited tasks never wait for the polling
+       * thread. A thread which does not yield would spin and block other
+       * threads from executing tasks.
+       *
+       * ### Lesson learned: Do not poll in tasks
+       *
+       * We used to spawn all tasks immediately as OpenMP tasks, and each of
+       * them polled the status of its predecessors in a loop with a
+       * taskyield. A yielding thread runs further tasks on top of its stack.
+       * If it picks up a successor of a task that it has suspended earlier,
+       * this successor waits for a predecessor which cannot continue before
+       * the successor returns, i.e. we deadlock. We observed this with
+       * chains of dependent tasks on more than two threads: threads idle,
+       * tasks whose predecessors had all terminated never started, and each
+       * stuck thread held two nested polling tasks (see reportStuckTask()).
+       * As nothing but runnable tasks becomes an OpenMP task now, no OpenMP
+       * task ever waits for another task.
        *
        */
       namespace internal {
         using DependencyTrackingDataType = unsigned short int;
-
-        /**
-         * Translate task marker into string
-         *
-         * Used only for debugging reasons.
-         */
-        std::string OpenMP5TaskStatus(DependencyTrackingDataType);
 
         /**
          * Grow the memory region used for the dependency tracking
@@ -200,104 +240,6 @@ namespace tarch {
         );
 
         /**
-         * Variant of spawn for all OpenMP versions under 6
-         *
-         * The name is slightly misleading, as we support any OpenMP version
-         * between 3.x and 5 here. The routine is very similar to the version
-         * 6, but this time we keep track of the tasks manually.
-         *
-         * We manually keep track in a map what the status of a task is. This
-         * has a couple of serious implications:
-         *
-         * 1. A task might start even though it is not ready yet. That means,
-         *    we have to manually check once we are fired up if we are really
-         *    ready. The reason why a task is starting "prematurely" is that
-         *    we cannot use transparent tasks, i.e. a neighbour non-sibling
-         *    task might have spawned the task and we might fire up even though
-         *    we are not ready yet.
-         * 2. We cannot handle self-dependencies, i.e. in-out ones. If we spot
-         *    an in-out dependency, we remove it from inDependencies (therefore
-         *    it is not const), wait manually for our predecessor task to
-         *    terminate by polling the status, and then we carry on. The manual
-         *    wait is important, as we will overwrite the status with pending
-         *    immediately after.
-         *
-         * As we do all of our dependency management manually, we don't have to
-         * rely on any OpenMP dependencies at all. But it might actually make
-         * sense to employ them too (see remarks below).
-         *
-         *
-         * ## Assumptions
-         *
-         * This routine makes a couple of assumptions:
-         *
-         * - The caller has already incremented numberOfPendingTasks by one;
-         * - The dependencyTrackingBaseAddress array hosts all indices specified
-         *   within inDependencies and outDependency;
-         * - The semaphore dependencyTrackingSemaphore is locked with a read lock.
-         * 
-         *
-         * ## Issues we found
-         *
-         * It is possible that many threads spawn tasks at the same time that have
-         * to wait for other tasks that are currently stored in the ready queue.
-         * As we poll the ready queue state, this can lead to starvation.
-         *
-         * To avoid this we add a taskyield if an
-         * in-dependency isn't ready. This moves the thread onto a different task,
-         * so it will eventually end up with one that is ready to process. This
-         * can also occur in waitForTasks(...), and the problem is dealt with in the
-         * same way. 
-         *
-         *
-         * ## Implementation decision
-         *
-         * Modelling the out dependencies as vector is not particularly elegant.
-         * As each task as at most one out dependency (its "number"), we could
-         * have worked with an integer making one particular value, e.g. -1,
-         * mean "no dependency". As I work with a vector however, I can use
-         * OpenMP's iterators.
-         *
-         *
-         * ## Flaws and known issues
-         *
-         * Logically, there is no need for the spawned task to have any
-         * dependencies, as all dependency management is done manually through
-         * polling. This is not very elegant. Indeed, I'm afraid that it can
-         * lead to starvation. Therefore, I would like to use dependencies.
-         * If the lack of transparent dependencies leads to antidependencies,
-         * i.e. tasks start prematurely, I don't care, as we still have the
-         * manual handling.
-         *
-         * If the dependency management works however, the task runtime ensures
-         * that we do not stress the system through polling too much.
-         * Therefore, I originally had this splendid idea to use
-         *
-         * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-         * #pragma omp task priority(job->getPriority()) depend(iterator(j=0:inDependencies.size()), in: dependencyTrackingMemory[inDependencies[j]]) depend(iterator(j=0:outDependency.size()), out: dependencyTrackingMemory[outDependency[j]]) shared(numberOfPendingTasks) untied
-         * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-         *
-         * for the tasks. However, this made the code crash in the OpenMP
-         * runtime non-deterministically.
-         *
-         * @see tarch::multicore::omp::internal::hasTaskFinishedInOpenMP5() as counterpart how to
-         *   manually wait for tasks.
-         *
-         * @param job Pointer to the actual task. Is never a nullptr.
-         * @param inDependencies Number of in-dependencies. All of these
-         *   indices can be served by the underlying memory region. Set might
-         *   be empty.
-         * @param outDependency Out-dependency which is either an empty set
-         *   meaning that there is no out-dependency and noone will ever wait
-         *   for this specific task, or it holds exactly one number.
-         */
-        void spawnTaskWithOpenMP5(
-          tarch::multicore::Task*                           job,
-          std::vector<tarch::multicore::TaskNumber>         inDependencies,
-          const std::vector<tarch::multicore::TaskNumber>&  outDependency
-        );
-
-        /**
          * Reserve memory for dependency tracking
          *
          * OpenMP manages dependencies through memory addresses. However, to be able
@@ -326,60 +268,21 @@ namespace tarch {
         bool canServeDependencyEntry(int taskNumber);
 
         /**
-         * This is the counterpart to hasTaskFinishedInOpenMP6
+         * Report a task or a wait that does not make progress
          *
-         * The same assumption as for hasTaskFinishedInOpenMP6() holds, but
-         * this one takes into account that we manually keep track of which
-         * tasks are still running and which not.
-         *
-         * Therefore, we loop over all tasks identified by inDependencies and
-         * check if all entries are either TaskNumberNotUsedYet or
-         * TaskNumberTerminated.
-         */
-        bool hasTaskFinishedInOpenMP5( const std::vector<tarch::multicore::TaskNumber>&  inDependencies );
-
-        /**
-         * Poll until all in-dependencies have terminated
-         *
-         * All OpenMP 5 waits (a task waiting for its predecessors, a spawn
-         * waiting for the previous use of its own number, a consumer in
-         * waitForTasks()) go through this routine, i.e. we have one place
-         * which yields while we wait and which detects tasks that wait
-         * suspiciously long. See reportStuckTask().
-         *
-         * @param inDependencies Numbers to wait for.
-         * @param waiter Number of the task which waits, or
-         *   tarch::multicore::NoOutDependencies if a caller waits which is not
-         *   a task with a number.
-         * @param location Short description who waits. Only used for the
-         *   report.
-         */
-        void pollUntilTasksHaveFinishedInOpenMP5(
-          const std::vector<tarch::multicore::TaskNumber>&  inDependencies,
-          tarch::multicore::TaskNumber                      waiter,
-          const char*                                       location
-        );
-
-        /**
-         * Report a task that waits suspiciously long
-         *
-         * Only has an effect if you compile with -DTrackStatistics. Called
-         * by pollUntilTasksHaveFinishedInOpenMP5() once per wait after
+         * Only has an effect if you compile with -DTrackStatistics. The
+         * OpenMP backends call it once per wait after
          * NumberOfPollsBeforeTaskIsReportedAsStuck unsuccessful polls. It
-         * does not abort and does not change the wait. The report holds
+         * does not abort and does not change the wait. The backend builds
+         * the message, as only the backend knows what a task is waiting for
+         * and in which state the predecessors are. In the OpenMP 5 backend,
+         * it lists for each task which is awaited its number, its status and
+         * the number of predecessors that have not terminated yet. A task
+         * which waits for a task that is released (and neither runs nor has
+         * unfinished predecessors) points to a scheduling problem of the
+         * OpenMP runtime.
          *
-         * - which wait is stuck (location) and the OpenMP thread;
-         * - the number of the waiting task, if it has one;
-         * - for each in-dependency its number and status, e.g.
-         *   "{36:task-spawned, 37:task-running}"; and
-         * - the number of pending tasks.
-         *
-         * If all in-dependencies are in state task-spawned and the number of
-         * pending tasks is small, no task is left that could ever terminate
-         * them, i.e. we have a cyclic or lost dependency rather than a
-         * scheduling problem.
-         *
-         * The report is written as warning and logged through
+         * The message is written as warning and logged through
          * tarch::logging::Statistics under the identifier
          * "tarch::multicore::omp::stuck-task". As the code might never
          * terminate, the first report in a run also dumps all statistics,
@@ -388,11 +291,7 @@ namespace tarch {
          * statistics, i.e. later statistics only hold what happens after the
          * report.
          */
-        void reportStuckTask(
-          const std::vector<tarch::multicore::TaskNumber>&  inDependencies,
-          tarch::multicore::TaskNumber                      waiter,
-          const char*                                       location
-        );
+        void reportStuckTask( const std::string& message );
 
         /**
          * Track the life cycle of one task
