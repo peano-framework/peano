@@ -27,15 +27,6 @@
 namespace {
   static tarch::logging::Log _log( "tarch::multicore::native(omp5)" );
 
-  #ifndef NumberOfPollsBeforeTaskIsReportedAsStuck
-  /**
-   * See tarch::multicore::omp::internal::reportStuckTask(). Overwrite it via
-   * -DNumberOfPollsBeforeTaskIsReportedAsStuck=... A poll is one yield, i.e.
-   * the default means a few seconds on a modern machine.
-   */
-  constexpr int NumberOfPollsBeforeTaskIsReportedAsStuck = 1000000;
-  #endif
-
   /**
    * Life cycle of a task. Consult tarch::multicore::omp::internal for details.
    */
@@ -103,12 +94,6 @@ namespace {
    * nobody has to wait for it.
    */
   std::unordered_map< tarch::multicore::TaskNumber, TaskNodePointer >  liveTasks;
-
-  std::string describe( const TaskNodePointer& node ) {
-    std::ostringstream msg;
-    msg << node->number << ":" << toString(node->status.load()) << "(" << node->unfinishedPredecessors.load() << " unfinished predecessors)";
-    return msg.str();
-  }
 
   void release( TaskNodePointer node );
 
@@ -209,11 +194,6 @@ namespace {
       #pragma omp taskyield
 
       polls++;
-      if (polls==NumberOfPollsBeforeTaskIsReportedAsStuck) {
-        tarch::multicore::omp::internal::reportStuckTask(
-          "waitForTasks(...) (OpenMP thread " + std::to_string(omp_get_thread_num()) + ") waits for task " + describe(node) + " after " + std::to_string(polls) + " polls"
-        );
-      }
     }
     if (polls>0) {
       tarch::logging::Statistics::getInstance().inc( "tarch::multicore::omp::yields-while-waiting", polls );

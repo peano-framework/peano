@@ -73,10 +73,8 @@ namespace tarch {
  *
  * The routine log() with a string value stores a time-stamped event under an
  * identifier. All events of one identifier end up in one csv column. The task
- * runtime uses this for the identifiers "tarch::multicore::omp::stuck-task"
- * and (with the additional flag -DTrackTaskDependencies)
- * "tarch::multicore::omp::task-event", see
- * tarch::multicore::omp::internal::reportStuckTask() and
+ * runtime uses this (with the additional flag -DTrackTaskDependencies)
+ * for the identifier "tarch::multicore::omp::task-event", see
  * tarch::multicore::omp::internal::trackTaskEvent(). The events are held in
  * memory until writeToCSV() is called, i.e. they are lost if the code hangs
  * or crashes before.

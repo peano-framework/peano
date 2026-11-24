@@ -20,20 +20,6 @@
 #include <sstream>
 
 
-void tarch::multicore::omp::internal::reportStuckTask( const std::string& message ) {
-  #ifdef TrackStatistics
-  static tarch::logging::Log _log( "tarch::multicore::omp::internal" );
-  logWarning( "reportStuckTask(string)", message );
-  tarch::logging::Statistics::getInstance().log( "tarch::multicore::omp::stuck-task", message );
-
-  static std::atomic<bool> statisticsHaveBeenDumped(false);
-  if ( not statisticsHaveBeenDumped.exchange(true) ) {
-    tarch::logging::Statistics::getInstance().writeToCSV( "statistics-stuck-task" );
-  }
-  #endif
-}
-
-
 void tarch::multicore::omp::internal::trackTaskEvent(
   [[maybe_unused]] const char*                                       event,
   [[maybe_unused]] tarch::multicore::TaskNumber                      taskNumber,

@@ -148,7 +148,7 @@ namespace tarch {
        * the successor returns, i.e. we deadlock. We observed this with
        * chains of dependent tasks on more than two threads: threads idle,
        * tasks whose predecessors had all terminated never started, and each
-       * stuck thread held two nested polling tasks (see reportStuckTask()).
+       * stuck thread held two nested polling tasks.
        * As nothing but runnable tasks becomes an OpenMP task now, no OpenMP
        * task ever waits for another task.
        *
@@ -279,32 +279,6 @@ namespace tarch {
          * monotonously growing, we can work with a simple read atomic.
          */
         bool canServeDependencyEntry(int taskNumber);
-
-        /**
-         * Report a task or a wait that does not make progress
-         *
-         * Only has an effect if you compile with -DTrackStatistics. The
-         * OpenMP backends call it once per wait after
-         * NumberOfPollsBeforeTaskIsReportedAsStuck unsuccessful polls. It
-         * does not abort and does not change the wait. The backend builds
-         * the message, as only the backend knows what a task is waiting for
-         * and in which state the predecessors are. In the OpenMP 5 backend,
-         * it lists for each task which is awaited its number, its status and
-         * the number of predecessors that have not terminated yet. A task
-         * which waits for a task that is released (and neither runs nor has
-         * unfinished predecessors) points to a scheduling problem of the
-         * OpenMP runtime.
-         *
-         * The message is written as warning and logged through
-         * tarch::logging::Statistics under the identifier
-         * "tarch::multicore::omp::stuck-task". As the code might never
-         * terminate, the first report in a run also dumps all statistics,
-         * including the task events of trackTaskEvent(), into the file
-         * statistics-stuck-task(-rank-<n>).csv. This dump empties the
-         * statistics, i.e. later statistics only hold what happens after the
-         * report.
-         */
-        void reportStuckTask( const std::string& message );
 
         /**
          * Track the life cycle of one task
