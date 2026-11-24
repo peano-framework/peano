@@ -61,9 +61,6 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         "Probe_Project stage 1 onto faces",
         "Probe_Project stage 2 onto faces",
         "Probe_Project solution onto faces",
-        "Probe_Roll over stage 1 faces",
-        "Probe_Roll over stage 2 faces",
-        "Probe_Roll over solution faces",
         "Probe_Compute max eigenvalue",
         "Probe_Reduce max eigenvalue",
         "Probe_Compute time step size",
@@ -71,9 +68,7 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         f"Probe_{exahype2.api.Solver.NumericalScheme.ENABLE_LOAD_BALANCING_TASK_NAME}",
     }
     # The maximum eigenvalue of the new solution is determined right after the
-    # projection, i.e. in parallel to the roll over. If it ran in parallel to the
-    # projection, its producer-consumer split would push the roll over into the
-    # next mesh sweep, away from the temporary face data of the projection
+    # projection, which also hosts the roll over
     # (adrs/0002-eigenvalue-follows-projection.md)
     assert (
         tasks["Probe_Complete time step"]
@@ -82,10 +77,6 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
     assert (
         tasks["Probe_Project solution onto faces"]
         in tasks["Probe_Compute max eigenvalue"].dependencies
-    )
-    assert (
-        tasks["Probe_Compute max eigenvalue"]
-        not in tasks["Probe_Roll over solution faces"].dependencies
     )
     # The eigenvalue is stored per cell, a task of its own reduces it, and the
     # time step size is computed from the outcome
@@ -102,19 +93,15 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
             tasks[f"Probe_Prepare stage {stage}"]
             in tasks[f"Probe_Project stage {stage} onto faces"].dependencies
         )
-        # The projection hosts the restriction, the roll over follows
+        # The reconstruction interpolates the faces itself, i.e. it waits for the
+        # projection, which hosts the restriction and the roll over
         assert (
             tasks[f"Probe_Project stage {stage} onto faces"]
-            in tasks[f"Probe_Roll over stage {stage} faces"].dependencies
-        )
-        # The reconstruction interpolates the faces itself, i.e. it waits for the roll over
-        assert (
-            tasks[f"Probe_Roll over stage {stage} faces"]
             in tasks[f"Probe_Reconstruct stage {stage}"].dependencies
         )
     # The boundary values have to be set after the previous stage's roll-over
     assert (
-        tasks["Probe_Roll over stage 1 faces"]
+        tasks["Probe_Project stage 1 onto faces"]
         in tasks["Probe_Apply Dirichlet BCs stage 1"].dependencies
     )
     assert (
@@ -122,7 +109,7 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
         in tasks["Probe_Reconstruct stage 1"].dependencies
     )
     assert (
-        tasks["Probe_Roll over solution faces"]
+        tasks["Probe_Project solution onto faces"]
         in tasks["Probe_Compute time step size"].dependencies
     )
     # The load balancing is switched off before the first stage only
@@ -139,12 +126,11 @@ def test_one_reconstruction_per_stage_and_chain_of_stages(tmp_path):
     ]
     assert [
         type(a).__name__ for a in tasks["Probe_Project stage 1 onto faces"].action_sets
-    ] == ["ProjectPatchOntoFaces", "RestrictHangingFaces"]
+    ] == ["ProjectPatchOntoFaces", "RestrictHangingFaces", "RollOverUpdatedFace"]
     # All other tasks of the scheme hold exactly one action set, so that the task
     # graph compiler can run the tasks of several solvers in parallel
     for name in [
         "Probe_Evaluate Runge-Kutta right hand side stage 1",
-        "Probe_Roll over stage 1 faces",
     ]:
         assert len(tasks[name].action_sets) == 1, name
 
@@ -217,16 +203,16 @@ def test_sommerfeld_replaces_roll_over_and_omits_boundary_tasks(tmp_path):
     assert not any("Dirichlet" in name for name in tasks)
     roll_overs = _roll_overs(tasks)
     assert set(roll_overs) == {
-        "Probe_Roll over stage 1 faces",
-        "Probe_Roll over stage 2 faces",
-        "Probe_Roll over solution faces",
+        "Probe_Project stage 1 onto faces",
+        "Probe_Project stage 2 onto faces",
+        "Probe_Project solution onto faces",
     }
     # Kutta's third-order scheme has c = 0, 1/2, 1, i.e. the roll overs
     # advance the ghost grid cells by 1/2, 1/2 and 0 times the time step size
     for name, increment in [
-        ("Probe_Roll over stage 1 faces", "0.5"),
-        ("Probe_Roll over stage 2 faces", "0.5"),
-        ("Probe_Roll over solution faces", "0.0"),
+        ("Probe_Project stage 1 onto faces", "0.5"),
+        ("Probe_Project stage 2 onto faces", "0.5"),
+        ("Probe_Project solution onto faces", "0.0"),
     ]:
         action_set = roll_overs[name]
         assert isinstance(

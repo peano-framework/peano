@@ -121,17 +121,17 @@ def test_finite_differences_handle_hanging_faces_in_every_stage(tmp_path):
             toolbox.blockstructured.api.InterpolateHangingFaces,
             toolbox.blockstructured.api.ReconstructPatchWithHalo,
         ]
-    # The projection hosts the restriction, and the roll over has to copy the
-    # restricted data, i.e. it follows
+    # The projection hosts the restriction, and the roll over copies the
+    # restricted data, i.e. it follows within the same task
     for suffix in ["stage 1", "solution"]:
         projection = tasks[f"Probe_Project {suffix} onto faces"]
-        roll_over = tasks[f"Probe_Roll over {suffix} faces"]
         assert f"Probe_Restrict {suffix} on hanging faces" not in tasks
+        assert f"Probe_Roll over {suffix} faces" not in tasks
         assert [type(a) for a in projection.action_sets] == [
             exahype2.api.rkfd4.actionsets.ProjectPatchOntoFaces,
             toolbox.blockstructured.api.RestrictHangingFaces,
+            exahype2.api.rkfd4.actionsets.RollOverUpdatedFace,
         ]
-        assert roll_over.dependencies == [projection]
 
 
 def test_user_defined_mesh_adaptation_is_kept(tmp_path):

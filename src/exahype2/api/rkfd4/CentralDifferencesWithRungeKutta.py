@@ -1038,20 +1038,13 @@ Patch overlap data
         - {SolverName}_Project stage k+1 onto faces, or {SolverName}_Project
           solution onto faces after the last stage: projects the outcome of
           the linear combination onto the faces and restricts the hanging
-          faces onto the coarse faces.
-        - {SolverName}_Roll over stage k+1 faces, or {SolverName}_Roll over
-          solution faces. The projection (with the restriction) and the roll over
-          share the update patch, which is temporary, i.e. they rely on the
-          task graph compiler to fuse them into one mesh traversal. Only
-          the roll over writes the face data of the current time step, but
-          the projection declares it, and the roll over declares it as
-          temporary. If the roll over declared it, the projection would not conflict with the reconstruction, which reads
-          the faces. The compiler would then fuse them into the traversal of
-          the previous stage, and only the roll over would start a new
-          traversal. The update patch does not survive such a split, and the
-          roll over reads uninitialised data (observed as NaNs in the next
-          stage's input). The fused traversal merges the qualifiers back into
-          the one of the projection.
+          faces onto the coarse faces. The task also rolls over the faces,
+          i.e. copies the projected data into the face data of the
+          current time step. Projection, restriction and roll over share the
+          update patch, which is temporary and hence lives within one mesh
+          traversal only: They are action sets of one task, as a task of its
+          own for the roll over would run in a later traversal and copy
+          uninitialised data (observed as `dt=inf` right after the first step).
 
         After the last stage, {SolverName}_Compute time step size determines
         the time step size of the next time step and advances the solver's
@@ -1391,22 +1384,19 @@ Patch overlap data
             if eigenvalue_task is not None:
                 eigenvalue_task.add_dependency(projection_task)
 
-            # Sommerfeld boundary conditions advance the ghost grid cells
-            # within the roll over, from the time stamp of this stage to the
-            # one of the next stage (@ref exahype2.api.blockstructured.BoundaryConditions)
+            ## The roll over is part of the projection. The face data of the
+            ## projection (the update) is TEMPORARY, i.e. it lives within one
+            ## mesh traversal only, and the roll over copies it: a task of its
+            ## own would run in a later traversal as soon as the compiler
+            ## respects its events (touchFaceLastTime) and copies uninitialised memory
+            ## (see src/exahype2/api/fv/adrs/0003-roll-over-is-part-of-the-projection.md).
+            ## Sommerfeld boundary conditions advance the ghost grid cells
+            ## within the roll over, from the time stamp of this stage to the
+            ## one of the next stage (@ref exahype2.api.blockstructured.BoundaryConditions)
             next_relative_time_step_size = (
                 1.0 if is_last_stage else relative_time_step_sizes[stage + 1]
             )
-            roll_over_task = peano4.api.taskgraph.Task(
-                name=f"{name}_Roll over {suffix} faces", entity=Entity.CELL
-            )
-            roll_over_task.use_face(
-                self._solver._patch_overlap_update, Access.TEMPORARY
-            )
-            roll_over_task.use_face(
-                self._solver._patch_overlap_current_time_step, Access.TEMPORARY
-            )
-            roll_over_task.add_action_set(
+            projection_task.add_action_set(
                 RollOverUpdatedFaceWithSommerfeldBoundaryConditions.create_roll_over(
                     self._solver,
                     exahype2_project,
@@ -1418,9 +1408,7 @@ Patch overlap data
                     ),
                 )
             )
-            roll_over_task.add_dependency(projection_task)
-            time_step.add_task(roll_over_task)
-            previous_stage_task = roll_over_task
+            previous_stage_task = projection_task
 
         ## Determine the next time step size and advance the time stamp. The task
         ## acts at the end of the time step only, i.e. it needs no traversal
