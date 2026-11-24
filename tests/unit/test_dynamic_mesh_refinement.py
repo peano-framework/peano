@@ -60,7 +60,7 @@ def _criterion_body(action_set):
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_last_task_evaluates_criterion_and_switches_on_load_balancing(scheme, tmp_path):
     last, time_step = _last_task(_solver(scheme), tmp_path)
-    assert last.entity == Task.GridEntity.CELL
+    assert last.entity & Task.GridEntity.CELL
     [dynamic_mesh_refinement] = last.action_sets
     assert isinstance(
         dynamic_mesh_refinement, exahype2.api.blockstructured.DynamicMeshRefinement

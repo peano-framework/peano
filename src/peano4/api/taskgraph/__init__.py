@@ -144,14 +144,10 @@ multiple ready tasks and can have multiple terminal tasks.
 ### Tasks and action sets
 
 Each task can hold an arbitrary number of Peano 4 action sets (@ref peano4.api.solversteps.ActionSet).
-The task is tied to a particular mesh entity. The task association defines dependencies,
-the action set what is done. The entity restricts the events an action set may use:
-A cell task only uses touchCellFirstTime() and touchCellLastTime() (plus the
-creation and destruction of hanging faces and vertices and of cells, i.e. interpolation and restriction),
-a face task only the touchFace...() events and a vertex task only the touchVertex...() events.
-The traversal events (beginTraversal(), endTraversal(), prepareTraversal(),
-unprepareTraversal()) require a global task. Every compiler validates this
-(@ref peano4.api.taskgraph.compiler.ValidateTaskGraph.validate()).
+The task is tied to mesh entities. The task association defines dependencies,
+the action set what is done. The entity of a task is not chosen by the user: It is a
+combination of the marks vertex, face, cell and global, and the compiler synthesises it from the
+events which the task's action sets use (@ref peano4.api.taskgraph.Task.Task.entity).
 If task A depends on B and B is tied to vertices, any operation over a cell in 
 A will be executed after all operations over the cell's adjacent vertices in B 
 have completed.

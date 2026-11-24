@@ -177,36 +177,64 @@ class _Validated(_ActionSet):
         return "x;" if operation_name in self.events else ""
 
 
-def _violations(entity, *events, prepare=False):
+def _entity(declared, *events, prepare=False):
     action_set = _Validated("A", events)
     if prepare:
         action_set.get_implementation_of_prepareTraversal = lambda: "x;"
-    task = Task(name="T", entity=entity)
+    task = Task(name="T", entity=declared)
     task.add_action_set(action_set)
-    return ValidateTaskGraph.violations_of_task(task)
+    return task.entity
 
 
-def test_cell_task_may_only_touch_cells():
-    assert _violations(CELL, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_CELL_LAST_TIME) == []
-    assert _violations(CELL, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME) == ["A::touchFaceLastTime"]
-    assert _violations(CELL, ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME) == ["A::touchVertexFirstTime"]
+def test_entity_is_derived_from_cell_events():
+    assert _entity(CELL, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, ActionSet.OPERATION_TOUCH_CELL_LAST_TIME) == CELL
+    assert _entity(CELL, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME) == Task.GridEntity.FACE_CELL
+    assert _entity(CELL, ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME) == Task.GridEntity.VERTEX_CELL
 
 
-def test_cell_task_may_interpolate_and_restrict_but_face_task_may_not():
-    assert _violations(CELL, ActionSet.OPERATION_CREATE_HANGING_FACE, ActionSet.OPERATION_DESTROY_HANGING_FACE) == []
-    assert _violations(FACE, ActionSet.OPERATION_CREATE_HANGING_FACE) == ["A::createHangingFace"]
+def test_cell_marks_interpolation_and_face_marks_restriction():
+    assert _entity(CELL, ActionSet.OPERATION_CREATE_HANGING_FACE, ActionSet.OPERATION_CREATE_HANGING_VERTEX, ActionSet.OPERATION_CREATE_CELL) == CELL
+    assert _entity(CELL, ActionSet.OPERATION_DESTROY_HANGING_FACE, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME) == Task.GridEntity.FACE_CELL
+    assert _entity(FACE, ActionSet.OPERATION_DESTROY_CELL) == FACE
 
 
-def test_face_task_may_only_touch_faces():
-    assert _violations(FACE, ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME, ActionSet.OPERATION_TOUCH_FACE_LAST_TIME) == []
-    assert _violations(FACE, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME) == ["A::touchCellFirstTime"]
+def test_declared_entity_is_a_lower_bound():
+    assert _entity(FACE, ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME) == FACE
+    assert _entity(FACE, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME) == Task.GridEntity.FACE_CELL
+    assert _entity(FACE) == FACE
 
 
-def test_traversal_events_require_a_global_task():
-    assert _violations(CELL, prepare=True) == ["A::prepareTraversal"]
-    assert _violations(CELL, ActionSet.OPERATION_BEGIN_TRAVERSAL) == ["A::beginTraversal"]
-    assert _violations(GLOBAL, ActionSet.OPERATION_BEGIN_TRAVERSAL, ActionSet.OPERATION_END_TRAVERSAL, prepare=True) == []
-    assert _violations(Task.GridEntity.GLOBAL_END_OF_STEP, ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME) == ["A::touchCellFirstTime"]
+def test_all_three_mesh_marks_combine():
+    entity = _entity(
+        CELL,
+        ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME,
+        ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
+        ActionSet.OPERATION_TOUCH_CELL_LAST_TIME,
+    )
+    assert entity == Task.GridEntity.FACE_VERTEX_CELL
+    assert entity.primary == CELL
+
+
+def test_traversal_events_add_the_global_mark():
+    entity = _entity(CELL, prepare=True)
+    assert entity == CELL | GLOBAL
+    assert not entity.is_global
+    assert _entity(GLOBAL, ActionSet.OPERATION_BEGIN_TRAVERSAL, prepare=True) == GLOBAL
+    assert _entity(GLOBAL, ActionSet.OPERATION_BEGIN_TRAVERSAL).is_global
+
+
+def test_end_of_step_task_with_mesh_events_is_invalid():
+    task = Task(name="T", entity=Task.GridEntity.GLOBAL_END_OF_STEP)
+    task.add_action_set(_Validated("A", (ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,)))
+    assert task.entity == Task.GridEntity.GLOBAL_END_OF_STEP
+    assert ValidateTaskGraph.violations_of_task(task) == ["A::touchCellFirstTime"]
+    graph = Graph()
+    graph.add_task(task)
+    try:
+        ValidateTaskGraph.validate(graph)
+        assert False
+    except AssertionError as error:
+        assert "touchCellFirstTime" in str(error)
 
 
 def test_comment_only_code_is_no_event():
@@ -216,4 +244,4 @@ def test_comment_only_code_is_no_event():
 
     task = Task(name="T", entity=CELL)
     task.add_action_set(Commented("A"))
-    assert ValidateTaskGraph.violations_of_task(task) == []
+    assert task.entity == CELL

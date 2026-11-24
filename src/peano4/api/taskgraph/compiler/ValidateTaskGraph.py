@@ -1,6 +1,5 @@
 # This file is part of the Peano project. For conditions of distribution and
 # use, please see the copyright notice at www.peano-framework.org
-import re
 from typing import Dict, List, Set
 
 from peano4.api.solversteps.ActionSet import ActionSet
@@ -11,35 +10,37 @@ from ..Task import Task
 OPERATION_PREPARE_TRAVERSAL = "prepareTraversal"
 OPERATION_UNPREPARE_TRAVERSAL = "unprepareTraversal"
 
-GLOBAL_OPERATIONS: Set[str] = {
-    ActionSet.OPERATION_BEGIN_TRAVERSAL,
-    ActionSet.OPERATION_END_TRAVERSAL,
-    OPERATION_PREPARE_TRAVERSAL,
-    OPERATION_UNPREPARE_TRAVERSAL,
+MARKS_OF_EVENTS: Dict[str, "Task.GridEntity"] = {
+    ActionSet.OPERATION_BEGIN_TRAVERSAL: Task.GridEntity.GLOBAL,
+    ActionSet.OPERATION_END_TRAVERSAL: Task.GridEntity.GLOBAL,
+    OPERATION_PREPARE_TRAVERSAL: Task.GridEntity.GLOBAL,
+    OPERATION_UNPREPARE_TRAVERSAL: Task.GridEntity.GLOBAL,
+    ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME: Task.GridEntity.VERTEX,
+    ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME: Task.GridEntity.VERTEX,
+    ActionSet.OPERATION_CREATE_PERSISTENT_VERTEX: Task.GridEntity.VERTEX,
+    ActionSet.OPERATION_DESTROY_PERSISTENT_VERTEX: Task.GridEntity.VERTEX,
+    ActionSet.OPERATION_DESTROY_HANGING_VERTEX: Task.GridEntity.VERTEX,
+    ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME: Task.GridEntity.FACE,
+    ActionSet.OPERATION_TOUCH_FACE_LAST_TIME: Task.GridEntity.FACE,
+    ActionSet.OPERATION_CREATE_PERSISTENT_FACE: Task.GridEntity.FACE,
+    ActionSet.OPERATION_DESTROY_PERSISTENT_FACE: Task.GridEntity.FACE,
+    ActionSet.OPERATION_DESTROY_HANGING_FACE: Task.GridEntity.FACE,
+    ActionSet.OPERATION_DESTROY_CELL: Task.GridEntity.FACE,
+    ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME: Task.GridEntity.CELL,
+    ActionSet.OPERATION_TOUCH_CELL_LAST_TIME: Task.GridEntity.CELL,
+    ActionSet.OPERATION_CREATE_CELL: Task.GridEntity.CELL,
+    ActionSet.OPERATION_CREATE_HANGING_FACE: Task.GridEntity.CELL,
+    ActionSet.OPERATION_CREATE_HANGING_VERTEX: Task.GridEntity.CELL,
 }
-"""! Events which only tasks labelled with one of the GLOBAL entities may use"""
+"""!
 
-ALLOWED_OPERATIONS: Dict["Task.GridEntity", Set[str]] = {
-    Task.GridEntity.VERTEX: {
-        ActionSet.OPERATION_TOUCH_VERTEX_FIRST_TIME,
-        ActionSet.OPERATION_TOUCH_VERTEX_LAST_TIME,
-    },
-    Task.GridEntity.FACE: {
-        ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME,
-        ActionSet.OPERATION_TOUCH_FACE_LAST_TIME,
-    },
-    Task.GridEntity.CELL: {
-        ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME,
-        ActionSet.OPERATION_TOUCH_CELL_LAST_TIME,
-        ActionSet.OPERATION_CREATE_HANGING_FACE,
-        ActionSet.OPERATION_DESTROY_HANGING_FACE,
-        ActionSet.OPERATION_CREATE_HANGING_VERTEX,
-        ActionSet.OPERATION_DESTROY_HANGING_VERTEX,
-        ActionSet.OPERATION_CREATE_CELL,
-        ActionSet.OPERATION_DESTROY_CELL,
-    },
-}
-"""! Events a task labelled with the respective entity may use. GLOBAL tasks: GLOBAL_OPERATIONS"""
+The mark an event contributes to the entity of the task which holds the action set
+
+Cells interpolate (create the newly created cells, hanging faces and hanging
+vertices), faces restrict (destroy cells and hanging faces), and a vertex
+destroys its hanging vertices, besides the touch events.
+
+"""
 
 ALL_EVENT_OPERATIONS: List[str] = [
     value for name, value in vars(ActionSet).items() if name.startswith("OPERATION_")
@@ -53,6 +54,8 @@ def _is_not_empty(code) -> bool:
     default implementation of an action set's events is a to-do comment.
 
     """
+    import re
+
     if not isinstance(code, str):
         return False
     code = re.sub(r"/\*.*?\*/", "", code, flags=re.S)
@@ -86,10 +89,32 @@ def events_of_action_set(action_set: ActionSet) -> List[str]:
     return result
 
 
+def derive_marks(action_sets) -> "Task.GridEntity":
+    """!
+
+    The marks (VERTEX, FACE, CELL, GLOBAL) of all events the action sets use
+
+    @param action_sets: [peano4.api.solversteps.ActionSet]
+
+    @return peano4.api.taskgraph.Task.Task.GridEntity
+      The union of the marks. Might be empty (a Flag with value 0).
+
+    """
+    result = Task.GridEntity(0)
+    for action_set in action_sets:
+        for event in events_of_action_set(action_set):
+            result |= MARKS_OF_EVENTS[event]
+    return result
+
+
 def violations_of_task(task: Task) -> List[str]:
     """!
 
-    Describe all events of the task's action sets which the task's entity does not permit
+    Describe all events of a start-of-step or end-of-step task which are mesh events
+
+    These tasks are global and do not work on the mesh. The other tasks
+    derive their entity from their action sets
+    (@ref peano4.api.taskgraph.Task.Task.entity).
 
     @param task: peano4.api.taskgraph.Task.Task
 
@@ -98,14 +123,15 @@ def violations_of_task(task: Task) -> List[str]:
       task is valid.
 
     """
+    if task.declared_entity not in (
+        Task.GridEntity.GLOBAL_START_OF_STEP,
+        Task.GridEntity.GLOBAL_END_OF_STEP,
+    ):
+        return []
     result = []
     for action_set in task.action_sets:
         for event in events_of_action_set(action_set):
-            if task.entity.is_global:
-                allowed = event in GLOBAL_OPERATIONS
-            else:
-                allowed = event in ALLOWED_OPERATIONS[task.entity]
-            if not allowed:
+            if MARKS_OF_EVENTS[event] != Task.GridEntity.GLOBAL:
                 result.append(f"{action_set.get_action_set_name()}::{event}")
     return result
 
@@ -113,28 +139,19 @@ def violations_of_task(task: Task) -> List[str]:
 def validate(graph: Graph):
     """!
 
-    Validate that every task's action sets only plug into events which match the task's entity
+    Validate the task graph
 
-    All task graph compilers call this routine first. The rules are:
-
-    - A task labelled CELL may only use touchCellFirstTime() and
-      touchCellLastTime(). In addition, it may create and destroy cells and
-      the hanging faces and vertices, i.e. interpolate and restrict
-      (@ref exahype2.api.adrs).
-    - A task labelled FACE may only use touchFaceFirstTime() and
-      touchFaceLastTime(), a VERTEX task only touchVertexFirstTime() and
-      touchVertexLastTime().
-    - beginTraversal(), endTraversal(), prepareTraversal() and
-      unprepareTraversal() require a GLOBAL, GLOBAL_START_OF_STEP or
-      GLOBAL_END_OF_STEP task, and global tasks may use nothing else.
-
-    A scheme which violates these rules has to split its task into
-    several ones.
+    All task graph compilers call this routine first. The entity of a task is
+    derived from the events its action sets use
+    (@ref peano4.api.taskgraph.Task.Task.entity). The only thing which can go
+    wrong is a task declared as GLOBAL_START_OF_STEP or GLOBAL_END_OF_STEP:
+    These tasks may only use the traversal events, as they do not work on the
+    mesh and have no traversal of their own.
 
     @param graph: peano4.api.taskgraph.Graph
 
     @exception AssertionError
-      If at least one task violates the rules. The message lists all
+      If at least one task violates the rule. The message lists all
       violations.
 
     """
@@ -142,8 +159,8 @@ def validate(graph: Graph):
     for task in graph.tasks:
         violations = violations_of_task(task)
         if violations:
-            messages.append(f"  Task '{task.name}' ({task.entity.name}): " + ", ".join(violations))
+            messages.append(f"  Task '{task.name}' ({task.declared_entity.label}): " + ", ".join(violations))
     assert not messages, (
-        "Task graph is invalid: Action sets plug into events which their task's entity does not permit. "
-        "Split the task into tasks per entity (GLOBAL tasks for the traversal events).\n" + "\n".join(messages)
+        "Task graph is invalid: Tasks of the start or the end of the step use mesh events. "
+        "Split the task into a global task and a task for the mesh.\n" + "\n".join(messages)
     )

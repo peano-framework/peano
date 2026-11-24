@@ -111,13 +111,31 @@ class Task:
 
     """
 
-    class GridEntity(enum.Enum):
+    class GridEntity(enum.Flag):
         """!
 
-        Which kind of mesh entity a Task works on.
+        Which kind of mesh entities a Task works on.
 
-        GLOBAL tasks do not work on any mesh entity at all. They only plug
-        into prepareTraversal()/unprepareTraversal(), i.e. they realise
+        The entity is a set of marks: VERTEX, FACE and CELL for the mesh
+        entities and GLOBAL for the activities per rank. They combine
+        freely, e.g. FACE_CELL (the same as FACE | CELL), which results in
+        2x2x2x2 = 16 variants. The compiler synthesises the marks from the
+        events which the task's action sets use
+        (@ref peano4.api.taskgraph.Task.Task.entity). The projection of the
+        cell data onto the faces, for example, acts in touchCellFirstTime() and
+        in the touchFace...() events and thus becomes a FACE_CELL task.
+
+        Tasks which carry the GLOBAL mark besides mesh marks (e.g.
+        CELL | GLOBAL) are mesh tasks which also act in the traversal
+        events.
+
+        For the entity order of the fusion
+        (@ref peano4.api.taskgraph.compiler.FuseSteps.translate()), a task
+        counts as its primary entity, i.e. its highest mesh mark:
+        a FACE_CELL task is a cell task.
+
+        GLOBAL tasks do not work on any mesh entity at all, i.e. they carry no
+        mesh mark. They only plug into prepareTraversal()/unprepareTraversal(), i.e. they realise
         global (per rank) activities such as triggering the load balancing.
         They therefore may not declare any cell, face or vertex data, may
         not repeat. Task graph compilers which fuse tasks append a GLOBAL
@@ -154,19 +172,37 @@ class Task:
 
         VERTEX = 1
         FACE = 2
-        CELL = 3
-        GLOBAL = 4
-        GLOBAL_START_OF_STEP = 5
-        GLOBAL_END_OF_STEP = 6
+        CELL = 4
+        GLOBAL = 8
+        GLOBAL_START_OF_STEP = 8 | 16
+        GLOBAL_END_OF_STEP = 8 | 32
+        FACE_VERTEX = 2 | 1
+        VERTEX_CELL = 1 | 4
+        FACE_CELL = 2 | 4
+        FACE_VERTEX_CELL = 2 | 1 | 4
+
+        @property
+        def mesh_marks(self) -> "Task.GridEntity":
+            """! The VERTEX, FACE and CELL marks of the entity """
+            return self & (Task.GridEntity.FACE_VERTEX_CELL)
 
         @property
         def is_global(self) -> bool:
-            """! True for GLOBAL, GLOBAL_START_OF_STEP and GLOBAL_END_OF_STEP """
-            return self in (
-                Task.GridEntity.GLOBAL,
-                Task.GridEntity.GLOBAL_START_OF_STEP,
-                Task.GridEntity.GLOBAL_END_OF_STEP,
-            )
+            """! True for GLOBAL, GLOBAL_START_OF_STEP and GLOBAL_END_OF_STEP, i.e. if there is no mesh mark """
+            return bool(self & Task.GridEntity.GLOBAL) and not self.mesh_marks
+
+        @property
+        def primary(self) -> "Task.GridEntity":
+            """! The highest mesh mark, i.e. CELL, FACE or VERTEX. Undefined for global tasks """
+            for mark in (Task.GridEntity.CELL, Task.GridEntity.FACE, Task.GridEntity.VERTEX):
+                if self & mark:
+                    return mark
+            raise ValueError(f"{self} has no mesh mark")
+
+        @property
+        def label(self) -> str:
+            """! Name of the entity, e.g. FACE_CELL, also for combinations without a name of their own """
+            return self.name if self.name is not None else str(self)
 
     class DataAccess(enum.Enum):
         """!
@@ -246,7 +282,8 @@ class Task:
     ):
         self.name = name
         self.tags: Set[str] = set(tags) if tags is not None else set()
-        self.entity = entity
+        self.declared_entity = entity
+        self._derived_entity_cache = None
         self.dependencies: List["Task"] = []
         self.action_sets: List["peano4.api.solversteps.ActionSet"] = []
         self.cell_data: List["peano4.api.datamodel.DoF"] = []
@@ -260,6 +297,31 @@ class Task:
         assert not (entity.is_global and task_has_to_repeat is not None), (
             f"Task {name} is global and hence may not repeat"
         )
+
+    @property
+    def entity(self) -> "Task.GridEntity":
+        """!
+
+        The entity of the task: the marks which the action sets' events imply
+        united with the declared entity
+
+        The task graph compiler synthesises the entity from the action sets,
+        i.e. nobody has to find the right one of the 16 combinations.
+        Which event implies which mark is defined by
+        @ref peano4.api.taskgraph.compiler.ValidateTaskGraph.MARKS_OF_EVENTS.
+        The declared entity (constructor) is a lower bound. A task declared as
+        GLOBAL_START_OF_STEP or GLOBAL_END_OF_STEP keeps this entity, as
+        this is a statement on when the task runs, which the action sets cannot tell.
+
+        """
+        if self.declared_entity in (Task.GridEntity.GLOBAL_START_OF_STEP, Task.GridEntity.GLOBAL_END_OF_STEP):
+            return self.declared_entity
+        key = tuple(id(action_set) for action_set in self.action_sets)
+        if self._derived_entity_cache is None or self._derived_entity_cache[0] != key:
+            from .compiler.ValidateTaskGraph import derive_marks
+
+            self._derived_entity_cache = (key, derive_marks(self.action_sets))
+        return self.declared_entity | self._derived_entity_cache[1]
 
     def add_dependency(self, task: "Task"):
         self.dependencies.append(task)
@@ -276,7 +338,7 @@ class Task:
         into every touch-cell/create-cell/... operation.
 
         """
-        assert not self.entity.is_global, f"Task {self.name} is global and hence may not use cell data"
+        assert not self.declared_entity.is_global, f"Task {self.name} is global and hence may not use cell data"
         self.cell_data.append(submodel)
         self.cell_data_access[submodel] = qualifier
 
@@ -288,7 +350,7 @@ class Task:
         for what qualifier to pass.
 
         """
-        assert not self.entity.is_global, f"Task {self.name} is global and hence may not use face data"
+        assert not self.declared_entity.is_global, f"Task {self.name} is global and hence may not use face data"
         self.face_data.append(submodel)
         self.face_data_access[submodel] = qualifier
 
@@ -300,7 +362,7 @@ class Task:
         for what qualifier to pass.
 
         """
-        assert not self.entity.is_global, f"Task {self.name} is global and hence may not use vertex data"
+        assert not self.declared_entity.is_global, f"Task {self.name} is global and hence may not use vertex data"
         self.vertex_data.append(submodel)
         self.vertex_data_access[submodel] = qualifier
 
@@ -311,8 +373,8 @@ class Task:
         the overarching task graph will be mapped onto a sequence of steps
         (observers) and those steps then grab those action sets from the tasks and execute them. 
         
-        The task's entity restricts the events the action set may use
-        (@ref peano4.api.taskgraph.compiler.ValidateTaskGraph.validate()).
+        The events the action set uses determine the task's entity
+        (@ref peano4.api.taskgraph.Task.Task.entity).
         
         """
         self.action_sets.append(action_set)

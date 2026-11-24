@@ -319,8 +319,8 @@ this option is hidden from the task compiler.
     current_group = None
     highest_entity_of_current_group = None
     for node in nodes:
-        lowest_entity = min(task.entity.value for task in node)
-        highest_entity = max(task.entity.value for task in node)
+        lowest_entity = min(task.entity.primary.value for task in node)
+        highest_entity = max(task.entity.primary.value for task in node)
         is_repeating = len(node) == 1 and node[0].has_to_repeat
         tasks_of_current_group = [task for group_node in current_group or [] for task in group_node]
         # A task which depends on a global task runs after the traversal that holds the global task

@@ -373,7 +373,7 @@ class Graph:
 
         lines = [f"Task graph '{title}':"]
         for task in ordered_tasks:
-            lines.append(f"- {task.name} «{task.entity.name.lower()}»")
+            lines.append(f"- {task.name} «{task.entity.label.lower()}»")
             if task.dependencies:
                 lines.append(
                     "    depends on: " + ", ".join(dependency.name for dependency in task.dependencies)
@@ -633,7 +633,7 @@ class Graph:
                 ha="center", va="center", zorder=3, fontsize=7.5, fontweight="bold",
             )
             axes.annotate(
-                f"«{task.entity.name.lower()}»",
+                f"«{task.entity.label.lower()}»",
                 (x, header_center_y - 0.13),
                 ha="center", va="center", zorder=3, fontsize=6, style="italic", color="dimgray",
             )
@@ -754,13 +754,13 @@ class Graph:
         title_height = TOP_CHROME - LEGEND_HEIGHT
         figure.suptitle(title, y=1.0 - 0.5 * title_height / figure_height, fontsize=10)
 
-        used_entities = [entity for entity in Task.GridEntity if any(task.entity == entity for task in self.tasks)]
+        used_entities = list(dict.fromkeys(task.entity for task in self.tasks))
         legend_handles = [
             Line2D(
                 [0], [0],
                 marker="o", linestyle="none", markersize=6,
                 markerfacecolor=entity_colour.get(entity, "tab:gray"), markeredgecolor="none",
-                label=f"«{entity.name.lower()}»",
+                label=f"«{entity.label.lower()}»",
             )
             for entity in used_entities
         ]
