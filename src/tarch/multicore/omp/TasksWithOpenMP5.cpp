@@ -7,6 +7,7 @@
 #include "config.h"
 #include "tarch/Assertions.h"
 #include "tarch/logging/Log.h"
+#include "tarch/logging/Statistics.h"
 #include "tarch/multicore/BooleanSemaphore.h"
 #include "tarch/multicore/Lock.h"
 #include "tarch/multicore/multicore.h"
@@ -57,8 +58,14 @@ namespace {
 
   /**
    * One task which has been spawned and not terminated yet. The members
-   * unfinishedPredecessors and successors are only changed while we hold
-   * the semaphore. The other fields are written once or atomic.
+   * predecessors and successors are only changed while we hold the semaphore.
+   * The other fields are written once or atomic.
+   *
+   * Whoever sets claimed first runs the job: either the OpenMP task which
+   * release() creates or a thread that waits for the task in waitFor().
+   * The predecessors are cleared once the node has terminated. Otherwise,
+   * nodes would keep their whole history alive through the cycle between
+   * predecessors and successors.
    */
   struct TaskNode {
     TaskNode(tarch::multicore::Task* job_, tarch::multicore::TaskNumber number_):
@@ -66,20 +73,23 @@ namespace {
       number(number_),
       priority(job_->getPriority()),
       status(Status::WaitingForPredecessors),
+      claimed(false),
       unfinishedPredecessors(0) {}
 
     tarch::multicore::Task*                       job;
     const tarch::multicore::TaskNumber            number;
     const int                                     priority;
     std::atomic<Status>                           status;
+    std::atomic<bool>                             claimed;
     std::atomic<int>                              unfinishedPredecessors;
+    std::vector< std::shared_ptr<TaskNode> >      predecessors;
     std::vector< std::shared_ptr<TaskNode> >      successors;
   };
 
   using TaskNodePointer = std::shared_ptr<TaskNode>;
 
   /**
-   * Guards liveTasks and the successors of all nodes.
+   * Guards liveTasks and the predecessors and successors of all nodes.
    *
    * The critical sections are short and never contain a task scheduling
    * point: Neither do we create a task nor do we yield or wait while we hold
@@ -94,15 +104,9 @@ namespace {
    */
   std::unordered_map< tarch::multicore::TaskNumber, TaskNodePointer >  liveTasks;
 
-  std::string describe( const std::vector<TaskNodePointer>& nodes ) {
+  std::string describe( const TaskNodePointer& node ) {
     std::ostringstream msg;
-    msg << "{";
-    bool first = true;
-    for (auto& p: nodes) {
-      msg << (first ? "" : ", ") << p->number << ":" << toString(p->status.load()) << "(" << p->unfinishedPredecessors.load() << " predecessors)";
-      first = false;
-    }
-    msg << "}";
+    msg << node->number << ":" << toString(node->status.load()) << "(" << node->unfinishedPredecessors.load() << " unfinished predecessors)";
     return msg.str();
   }
 
@@ -136,6 +140,7 @@ namespace {
         }
       }
       node->successors.clear();
+      node->predecessors.clear();
     }
 
     for (auto& successor: readySuccessors) {
@@ -144,27 +149,126 @@ namespace {
   }
 
   /**
+   * Try to become the one that runs the task. Exactly one caller succeeds.
+   */
+  bool claim( const TaskNodePointer& node ) {
+    return not node->claimed.exchange(true);
+  }
+
+  /**
+   * Run a task that the caller has claimed and release its successors. The
+   * caller has to ensure that all predecessors have terminated.
+   */
+  void runClaimedTask( TaskNodePointer node ) {
+    node->status = Status::Running;
+    tarch::multicore::omp::internal::trackTaskEvent( "start", node->number, {} );
+
+    node->job->run();
+    delete node->job;
+
+    tarch::multicore::omp::internal::trackTaskEvent( "end", node->number, {} );
+    terminateTask(node);
+  }
+
+  /**
    * Turn a task whose predecessors have all terminated into an OpenMP task.
    * This is the only place where we create OpenMP tasks.
+   *
+   * A thread that waits for the task might already have claimed it, as it
+   * does not need the OpenMP task. We then do not create it. If it
+   * claims it later, the OpenMP task finds the claim taken and does nothing.
    */
   void release( TaskNodePointer node ) {
-    node->status = Status::Released;
+    Status expected = Status::WaitingForPredecessors;
+    if ( not node->status.compare_exchange_strong(expected, Status::Released) ) {
+      return;
+    }
+
     const int priority = node->priority;
 
     OTTER_DEFINE_TASK(task, otterGetActiveTask(), otter_no_add_to_pool, __func__);
 
     #pragma omp task priority(priority) firstprivate(node) untied
     {
-      node->status = Status::Running;
-      tarch::multicore::omp::internal::trackTaskEvent( "start", node->number, {} );
+      if ( claim(node) ) {
+        OTTER_TASK_START(task);
+        runClaimedTask(node);
+        OTTER_TASK_END();
+      }
+    }
+  }
 
-      OTTER_TASK_START(task);
-      node->job->run();
-      delete node->job;
-      OTTER_TASK_END();
+  /**
+   * Yield until a task that somebody else has claimed terminates. Without the
+   * yield, the thread would spin and block other threads from executing
+   * tasks. We only wait for tasks that run, i.e. the wait ends.
+   */
+  void pollUntilTerminated( const TaskNodePointer& node ) {
+    int polls = 0;
+    while ( node->status.load()!=Status::Terminated ) {
+      #pragma omp taskyield
 
-      tarch::multicore::omp::internal::trackTaskEvent( "end", node->number, {} );
-      terminateTask(node);
+      polls++;
+      if (polls==NumberOfPollsBeforeTaskIsReportedAsStuck) {
+        tarch::multicore::omp::internal::reportStuckTask(
+          "waitForTasks(...) (OpenMP thread " + std::to_string(omp_get_thread_num()) + ") waits for task " + describe(node) + " after " + std::to_string(polls) + " polls"
+        );
+      }
+    }
+    if (polls>0) {
+      tarch::logging::Statistics::getInstance().inc( "tarch::multicore::omp::yields-while-waiting", polls );
+    }
+  }
+
+  /**
+   * Wait for a task by doing the work that nobody else has started
+   *
+   * We follow the predecessors backwards from the task that we wait for to
+   * the first one that has no unfinished predecessors, run it on this thread
+   * and then work our way forward again. We never create or wait for an
+   * OpenMP task unless somebody else runs the task already. The stack is an
+   * explicit one, as chains of tasks might be long.
+   */
+  void waitFor( const TaskNodePointer& target ) {
+    std::vector<TaskNodePointer> stack;
+    stack.push_back(target);
+
+    while ( not stack.empty() ) {
+      TaskNodePointer node = stack.back();
+
+      if ( node->status.load()==Status::Terminated ) {
+        stack.pop_back();
+      }
+      else if ( node->claimed.load() ) {
+        pollUntilTerminated(node);
+        stack.pop_back();
+      }
+      else {
+        TaskNodePointer unfinishedPredecessor;
+        {
+          tarch::multicore::Lock lock(semaphore);
+          for (auto& predecessor: node->predecessors) {
+            if ( predecessor->status.load()!=Status::Terminated ) {
+              unfinishedPredecessor = predecessor;
+              break;
+            }
+          }
+        }
+
+        if (unfinishedPredecessor) {
+          stack.push_back(unfinishedPredecessor);
+        }
+        else {
+          if ( claim(node) ) {
+            tarch::logging::Statistics::getInstance().inc( "tarch::multicore::omp::tasks-run-by-waiting-thread" );
+            runClaimedTask(node);
+          }
+          else {
+            pollUntilTerminated(node);
+          }
+          stack.pop_back();
+        }
+      }
     }
   }
 } // empty (internal) namespace
@@ -185,6 +289,7 @@ void tarch::multicore::native::spawnTask(
       auto p = liveTasks.find(inTask);
       if ( p!=liveTasks.end() and p->second->status.load()!=Status::Terminated ) {
         p->second->successors.push_back(node);
+        node->predecessors.push_back(p->second);
         predecessors.push_back(inTask);
       }
     }
@@ -228,17 +333,7 @@ void tarch::multicore::native::waitForTasks(const std::set<TaskNumber>& inDepend
   }
 
   for (auto& node: nodes) {
-    int polls = 0;
-    while ( node->status.load()!=Status::Terminated ) {
-      #pragma omp taskyield
-
-      polls++;
-      if (polls==NumberOfPollsBeforeTaskIsReportedAsStuck) {
-        tarch::multicore::omp::internal::reportStuckTask(
-          "waitForTasks(...) (OpenMP thread " + std::to_string(omp_get_thread_num()) + ") waits for " + describe(nodes) + " after " + std::to_string(polls) + " polls"
-        );
-      }
-    }
+    waitFor(node);
   }
 }
 

@@ -54,6 +54,17 @@ class tarch::multicore::tests::TaskTest: public tarch::tests::TestCase {
      */
     void testTaskNumberReusedAsInoutDependency();
 
+    /**
+     * The thread that waits has to run tasks that nobody else runs
+     *
+     * We spawn A and B, a task C that depends on both, and a task D that
+     * depends on C, and wait for D. A team of two threads runs the code, but
+     * the second thread spins and never runs a task. The wait has to
+     * run all four tasks itself in an order that respects the dependencies.
+     * If it only yielded, it would depend on the runtime to pick up the tasks.
+     */
+    void testWaitRunsTasksThatHaveNotStarted();
+
   public:
     TaskTest();
 

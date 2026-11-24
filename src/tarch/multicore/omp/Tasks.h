@@ -119,11 +119,24 @@ namespace tarch {
        * task. A terminating task only removes itself from the map if it has
        * not been replaced.
        *
-       * Waits (tarch::multicore::native::waitForTasks()) poll the status of
-       * the nodes and yield between two polls. As nothing but runnable tasks
-       * becomes an OpenMP task, the awaited tasks never wait for the polling
-       * thread. A thread which does not yield would spin and block other
-       * threads from executing tasks.
+       * ### Waits do the work themselves
+       *
+       * A thread that waits for a task (tarch::multicore::native::waitForTasks())
+       * does not wait for the OpenMP runtime to run it. Each node knows its
+       * unfinished predecessors. Starting at the task that we wait for, the
+       * waiting thread follows these predecessors backwards until it finds a
+       * task without unfinished predecessors, runs it itself, and then works
+       * its way forward again. Whoever sets the claim flag of a task first runs
+       * it: the OpenMP task that has been created for it, or a waiting thread.
+       * If the OpenMP task comes late, it finds the claim taken and
+       * returns. The wait only polls and yields if the task (or a predecessor)
+       * is already running on another thread. In this case, it ends once
+       * that thread has finished the task.
+       *
+       * If you compile with -DTrackStatistics, the statistics count how many
+       * tasks waiting threads ran
+       * ("tarch::multicore::omp::tasks-run-by-waiting-thread") and how often
+       * they yielded ("tarch::multicore::omp::yields-while-waiting").
        *
        * ### Lesson learned: Do not poll in tasks
        *
