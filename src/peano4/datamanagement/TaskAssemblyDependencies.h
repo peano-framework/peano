@@ -51,6 +51,20 @@ namespace peano4 {
        */
 
       /**
+       * The one task enumerator of all task numbers of the task graph assembly
+       *
+       * Several tarch::multicore::TaskEnumerator instances do not hand out
+       * disjoint numbers, i.e. the vertex tasks, the face tasks and the cell
+       * tasks share this one instance. A task enumerator per label type would
+       * give the task of a face the number of the task of a cell, and the two
+       * would wait for each other. The instance is created on first use.
+       */
+      inline tarch::multicore::TaskEnumerator& getTaskEnumerator() {
+        static tarch::multicore::TaskEnumerator enumerator;
+        return enumerator;
+      }
+
+      /**
        * Add a task number to a dependency set
        *
        * @param inDependencies Is extended by number unless the latter is

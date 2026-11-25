@@ -79,7 +79,7 @@ class WaitForTasksActionSet(ActionSet):
                 ):
                     result += f"""  {{
     int number = {me}.get{accessor(attribute)}();
-    peano4::datamanagement::taskassembly::waitForAndReleaseTask( {me}.getTaskEnumerator(), number );
+    peano4::datamanagement::taskassembly::waitForAndReleaseTask( peano4::datamanagement::taskassembly::getTaskEnumerator(), number );
     {me}.set{accessor(attribute)}( number );
   }}
 """

@@ -207,13 +207,33 @@ class SpawnTaskActionSet(ActionSet):
         return ", ".join(captures)
 
     def _chain(
-        self, kind: str, which: str, include_self: bool
+        self, kind: str, which: str, include_self: bool, scope: str = "all"
     ) -> List["SpawnTaskActionSet"]:
-        """! Wrappers with an attribute on the entity, latest first"""
+        """!
+
+        Wrappers with an attribute on the entity, latest first
+
+        @param scope: str
+          all, or ancestors for the wrappers of the tasks which this task depends on, or own for the wrappers of this task.
+
+        """
         wrappers = self.earlier + ([self] if include_self else [])
+        if scope == "ancestors":
+            wrappers = [
+                wrapper for wrapper in wrappers if wrapper.task is not self.task
+            ]
+        elif scope == "own":
+            wrappers = [wrapper for wrapper in wrappers if wrapper.task is self.task]
         return [wrapper for wrapper in reversed(wrappers) if kind in wrapper.attributes]
 
-    def _latest(self, kind: str, which: str, entity: str, include_self: bool) -> str:
+    def _latest(
+        self,
+        kind: str,
+        which: str,
+        entity: str,
+        include_self: bool,
+        scope: str = "all",
+    ) -> str:
         """!
 
         C++ expression for the number of the latest first or last task on an entity
@@ -222,7 +242,7 @@ class SpawnTaskActionSet(ActionSet):
           C++ expression of the entity's label object, e.g. fineGridCellX or fineGridVerticesX(i)
 
         """
-        chain = self._chain(kind, which, include_self)
+        chain = self._chain(kind, which, include_self, scope)
         if not chain:
             return "tarch::multicore::TaskEnumerator::NoNumber"
         getters = ", ".join(
@@ -353,7 +373,24 @@ class SpawnTaskActionSet(ActionSet):
                 )
                 if "latestTask" in expression:
                     result += f"  for (int i=0; i<{count}; i++) {helper}::addTask( inDependencies, {expression} );\n"
-        # Entities below
+        result += self._dependencies_on_lower_entities(kind)
+        return result
+
+    def _dependencies_on_lower_entities(self, kind: str) -> str:
+        """!
+
+        Statements which add the first tasks of the vertices and faces of the entity
+
+        The first and the last task of an entity both work on the data of the
+        vertices and faces of the entity, i.e. they both wait for the first tasks
+        of these. Peano touches them for the first time before the entity itself.
+        If the last task did not wait, the clearing of the face data by a first
+        task of the faces could run after the projection of the cell in its last
+        task, and delete it.
+
+        """
+        helper = "peano4::datamanagement::taskassembly"
+        result = ""
         for lower, enumerator, count in (
             (VERTEX, "fineGridVertices", "TwoPowerD"),
             (FACE, "fineGridFaces", "2*Dimensions"),
@@ -376,6 +413,7 @@ class SpawnTaskActionSet(ActionSet):
         attributes = self.attributes[kind]
         result += self._add(self._latest(kind, "first", me, include_self=True))
         result += self._add(self._latest(kind, "last", me, include_self=False))
+        result += self._dependencies_on_lower_entities(kind)
         if attributes.children is not None:
             if kind == VERTEX:
                 result += f"  {helper}::addTask( inDependencies, {me}.get{accessor(attributes.children)}() );\n"
@@ -436,7 +474,7 @@ class SpawnTaskActionSet(ActionSet):
             return self.action_set.get_implementation_of_operation(spec.first_event)
         me = self._me(kind)
         result = self._reset(kind)
-        enumerator = f"{me}.getTaskEnumerator()"
+        enumerator = "peano4::datamanagement::taskassembly::getTaskEnumerator()"
         if self.spawns(kind, first=False):
             result += (
                 f"  {me}.set{accessor(attributes.last)}( {enumerator}.getNumber() );\n"
@@ -470,14 +508,16 @@ class SpawnTaskActionSet(ActionSet):
             return self.action_set.get_implementation_of_operation(spec.last_event)
         me = self._me(kind)
         guard = self.action_set.get_guard_of_operation(spec.last_event)
+        number = f"{me}.get{accessor(attributes.last)}()"
+        run = self._spawn(spec.last_event, number, kind)
         return f"""
 {self._dependencies_of_last(kind)}
   if ({guard}) {{
-{self._spawn(spec.last_event, f'{me}.get{accessor(attributes.last)}()', kind)}
+{run}
   }}
   else {{
-    peano4::datamanagement::taskassembly::spawnEmptyTask( inDependencies, {me}.get{accessor(attributes.last)}() );
-{self._record(kind, f'{me}.get{accessor(attributes.last)}()')}  }}
+    peano4::datamanagement::taskassembly::spawnEmptyTask( inDependencies, {number} );
+{self._record(kind, number)}  }}
 """
 
     def _wait_before_destroy(self, kind: str) -> str:
@@ -490,44 +530,76 @@ class SpawnTaskActionSet(ActionSet):
             result += f"""
   {{
     int number = {me}.get{accessor(name)}();
-    peano4::datamanagement::taskassembly::waitForAndReleaseTask( {me}.getTaskEnumerator(), number );
+    peano4::datamanagement::taskassembly::waitForAndReleaseTask( peano4::datamanagement::taskassembly::getTaskEnumerator(), number );
     {me}.set{accessor(name)}( number );
   }}
 """
         return result
 
-    def _wait_for_coarse_entities(self, kind: str) -> str:
+    def _wait_for_all_spawned_tasks(self) -> str:
         """!
 
-        Wait for the first tasks of the coarse entities before a hanging entity is created or destroyed
+        Wait for all tasks which this traversal has spawned so far
 
-        Hanging entities are not persistent and only see create and destroy events,
-        i.e. they never hold task numbers, and nothing in the task graph
-        orders the main thread's interpolation or restriction against the tasks of
-        the coarse entity. We therefore wait for the coarse entity's first tasks.
+        Hanging faces and vertices live between the first touch of a cell and its
+        destruction, i.e. a task of the cell writes into them, and the main thread
+        restricts them into the coarse entity when the cell is left. They interpolate from
+        coarse faces and vertices that tasks of neighbouring coarse cells have written.
+        They hold no task numbers, and we do not know the cells that touch them, i.e. we
+        cannot name the tasks to wait for. This barrier is correct but slow near the refinement boundaries.
+        It has to be replaced by dependencies if adaptive meshes matter.
+
+        """
+        return """
+  tarch::multicore::waitForTasks( _tasksSpawnedByThisTraversal );
+  _tasksSpawnedByThisTraversal.clear();
+"""
+
+    def _wait_for_coarse_entities(self, kind: str, hanging: bool) -> str:
+        """!
+
+        Wait for the tasks of the coarse entities before an entity is created or destroyed
+
+        The create and destroy events run on the main thread. They interpolate from
+        and restrict into the coarse entities, i.e. they read and write data which the
+        tasks of the coarse entity might still use or produce. Nothing in the task graph
+        orders them. Hanging entities see no touch events and never hold task numbers, and a
+        new cell does not hold any yet. We therefore wait for the first tasks of the
+        coarse entity, and for the last tasks of tasks that this task depends on.
+
+        @param hanging: bool
+          If True, the coarse face is the one the marker selects. Otherwise, we wait for all of them.
 
         """
         if kind not in self.labels or not self._chain(kind, "first", True):
             return ""
         labels = self.labels[kind]
-        if kind == FACE:
-            entities = f"coarseGridFaces{labels}( marker.getSelectedFaceNumber() )"
-            expression = self._latest(kind, "first", entities, include_self=True)
-            return f"""
-  {{
-    const int number = {expression};
+        if kind == CELL:
+            entity, loop = f"coarseGridCell{labels}", None
+        elif kind == FACE and hanging:
+            entity, loop = (
+                f"coarseGridFaces{labels}( marker.getSelectedFaceNumber() )",
+                None,
+            )
+        elif kind == FACE:
+            entity, loop = f"coarseGridFaces{labels}(i)", "2*Dimensions"
+        else:
+            entity, loop = f"coarseGridVertices{labels}(i)", "TwoPowerD"
+        result = ""
+        for which, scope in (("first", "all"), ("last", "ancestors")):
+            expression = self._latest(
+                kind, which, entity, include_self=True, scope=scope
+            )
+            if "latestTask" not in expression:
+                continue
+            statement = f"""    const int number = {expression};
     if (number>=0) tarch::multicore::waitForTask( number );
-  }}
 """
-        expression = self._latest(
-            kind, "first", f"coarseGridVertices{labels}(i)", include_self=True
-        )
-        return f"""
-  for (int i=0; i<TwoPowerD; i++) {{
-    const int number = {expression};
-    if (number>=0) tarch::multicore::waitForTask( number );
-  }}
-"""
+            if loop is None:
+                result += f"  {{\n{statement}  }}\n"
+            else:
+                result += f"  for (int i=0; i<{loop}; i++) {{\n{statement}  }}\n"
+        return result
 
     # ActionSet interface -------------------------------------------------
 
@@ -566,21 +638,30 @@ class SpawnTaskActionSet(ActionSet):
                     return self._touch_first(kind)
                 if operation_name == spec.last_event:
                     return self._touch_last(kind)
-                if operation_name in spec.destroy_events:
-                    return self._wait_before_destroy(
-                        kind
-                    ) + self.action_set.get_implementation_of_operation(operation_name)
-        hanging_kind = {
-            ActionSet.OPERATION_CREATE_HANGING_FACE: FACE,
-            ActionSet.OPERATION_DESTROY_HANGING_FACE: FACE,
-            ActionSet.OPERATION_CREATE_HANGING_VERTEX: VERTEX,
-            ActionSet.OPERATION_DESTROY_HANGING_VERTEX: VERTEX,
+        waits = {
+            ActionSet.OPERATION_CREATE_CELL: (CELL, False, False),
+            ActionSet.OPERATION_DESTROY_CELL: (CELL, False, True),
+            ActionSet.OPERATION_CREATE_PERSISTENT_FACE: (FACE, False, False),
+            ActionSet.OPERATION_DESTROY_PERSISTENT_FACE: (FACE, False, True),
+            ActionSet.OPERATION_CREATE_HANGING_FACE: (FACE, True, False),
+            ActionSet.OPERATION_DESTROY_HANGING_FACE: (FACE, True, False),
+            ActionSet.OPERATION_CREATE_PERSISTENT_VERTEX: (VERTEX, False, False),
+            ActionSet.OPERATION_DESTROY_PERSISTENT_VERTEX: (VERTEX, False, True),
+            ActionSet.OPERATION_CREATE_HANGING_VERTEX: (VERTEX, True, False),
+            ActionSet.OPERATION_DESTROY_HANGING_VERTEX: (VERTEX, True, False),
         }
-        if operation_name in hanging_kind:
+        if operation_name in waits:
+            kind, hanging, persistent_destroy = waits[operation_name]
             body = self.action_set.get_implementation_of_operation(operation_name)
-            if body.strip() == "":
+            if body.strip() == "" or kind not in self.labels:
                 return body
-            return self._wait_for_coarse_entities(hanging_kind[operation_name]) + body
+            if hanging:
+                prefix = self._wait_for_all_spawned_tasks()
+            else:
+                prefix = self._wait_for_coarse_entities(kind, hanging)
+            if persistent_destroy:
+                prefix += self._wait_before_destroy(kind)
+            return prefix + body
         if operation_name == ActionSet.OPERATION_END_TRAVERSAL:
             body = self.action_set.get_implementation_of_operation(operation_name)
             barrier = """
@@ -603,6 +684,7 @@ class SpawnTaskActionSet(ActionSet):
             self.action_set.get_attributes()
             + """
   std::set<tarch::multicore::TaskNumber> _tasksToFinishBeforeDataExchange;
+  std::set<tarch::multicore::TaskNumber> _tasksSpawnedByThisTraversal;
 """
         )
 

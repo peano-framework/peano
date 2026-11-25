@@ -168,6 +168,11 @@ if __name__ == "__main__":
         default=0.02,
         help="Allowed maximum difference relative to the range (default: 0.02)",
     )
+    parser.add_argument(
+        "--compiler",
+        default=None,
+        help="Task graph compiler, see point-source.py (default: the script's default)",
+    )
     args = parser.parse_args()
 
     volumes_per_axis = args.patch_count * VOLUMES_PER_PATCH_AXIS
@@ -178,7 +183,7 @@ if __name__ == "__main__":
         str(args.end_time),
         "--plots",
         "5",
-    ]
+    ] + (["--compiler", args.compiler] if args.compiler else [])
     os.makedirs(args.work_directory, exist_ok=True)
     regular = run(args.work_directory, 0, extra)
     adaptive = run(args.work_directory, args.amr_levels, extra)

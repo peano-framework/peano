@@ -156,6 +156,7 @@ def _translate(
 
     """
     validate(graph)
+    graph = _merge_tasks_sharing_temporary_data(graph)
     assembly = _Assembly(graph, identifier)
     assembly.build()
 
@@ -168,9 +169,7 @@ def _translate(
                     CELL: peano_project.datamodel.add_cell,
                 }[kind](labels)
 
-    non_fusable_task_pairs = [
-        (producer, consumer) for producer, consumer in assembly.producer_consumer_pairs
-    ]
+    non_fusable_task_pairs = assembly.producer_consumer_pairs + assembly.hazard_pairs
     if use_fusion:
         steps = FuseSteps.translate(
             assembly.result, identifier, peano_project, non_fusable_task_pairs
@@ -370,6 +369,194 @@ def _warn_about_unsafe_task(task: Task, action_set, task_body: str):
             )
 
 
+MERGE_NAME_SEPARATOR = " to "
+"""! Joins the names of the first and last task of two tasks that are merged, see _merge_tasks_sharing_temporary_data()"""
+
+
+def _merge_access(first, last):
+    """!
+
+    Access to a submodel by two tasks which run one after the other: The
+    merged task loads the submodel if the first task does and stores it if
+    the last task does.
+
+    """
+    Access = Task.DataAccess
+    loads = first in (Access.READ_AND_DISCARD, Access.READ_AND_WRITE)
+    stores = last in (Access.WRITE, Access.READ_AND_WRITE)
+    if loads and stores:
+        return Access.READ_AND_WRITE
+    if loads:
+        return Access.READ_AND_DISCARD
+    if stores:
+        return Access.WRITE
+    return Access.TEMPORARY
+
+
+def _shared_temporary_data(first: Task, last: Task) -> bool:
+    """! True if both tasks use the same face, vertex or cell submodel as TEMPORARY"""
+    for accesses, further_accesses in (
+        (first.cell_data_access, last.cell_data_access),
+        (first.face_data_access, last.face_data_access),
+        (first.vertex_data_access, last.vertex_data_access),
+    ):
+        for submodel, access in accesses.items():
+            if (
+                access == Task.DataAccess.TEMPORARY
+                and further_accesses.get(submodel) == Task.DataAccess.TEMPORARY
+            ):
+                return True
+    return False
+
+
+def _merge_two_tasks(first: Task, last: Task) -> Task:
+    """! The task which runs the action sets of first and then the ones of last. It depends on whatever first depends on and on the other dependencies of last."""
+    merged = Task(
+        name=first.name + MERGE_NAME_SEPARATOR + last.name,
+        entity=first.declared_entity | last.declared_entity,
+        may_spawn_background_tasks=True
+        if True in (first.may_spawn_background_tasks, last.may_spawn_background_tasks)
+        else None,
+        tags=first.tags | last.tags,
+    )
+    merged.action_sets = list(first.action_sets) + list(last.action_sets)
+    for declare, first_data, first_access, last_data, last_access in (
+        (
+            merged.use_cell,
+            first.cell_data,
+            first.cell_data_access,
+            last.cell_data,
+            last.cell_data_access,
+        ),
+        (
+            merged.use_face,
+            first.face_data,
+            first.face_data_access,
+            last.face_data,
+            last.face_data_access,
+        ),
+        (
+            merged.use_vertex,
+            first.vertex_data,
+            first.vertex_data_access,
+            last.vertex_data,
+            last.vertex_data_access,
+        ),
+    ):
+        for submodel in first_data + [m for m in last_data if m not in first_data]:
+            if submodel in first_access and submodel in last_access:
+                declare(
+                    submodel,
+                    _merge_access(first_access[submodel], last_access[submodel]),
+                )
+            else:
+                declare(
+                    submodel,
+                    first_access[submodel]
+                    if submodel in first_access
+                    else last_access[submodel],
+                )
+    return merged
+
+
+def _merge_tasks_sharing_temporary_data(graph: Graph) -> Graph:
+    """!
+
+    Merge tasks A and B into one task if B depends on A and both use a submodel as TEMPORARY
+
+    Peano creates TEMPORARY data at the beginning of a mesh traversal and destroys them at the end,
+    i.e. the tasks that use them have to run in one traversal. A producer and its consumer are
+    never in the same traversal, and a task which depends on a split task depends on the consumer,
+    i.e. it runs in a later traversal. The clearing of the face projections and the projection
+    onto the faces, for example, share the TEMPORARY update of the faces, and the projection accumulates onto
+    uninitialised memory if we split them (@ref src/exahype2/api/rkfd4/adrs/0002-eigenvalue-follows-projection.md).
+    We merge them into one task and thus one producer and one consumer.
+
+    A and B are merged if B depends on A, A has no further dependents, and neither task repeats.
+    The merge repeats for chains. The graph passed in remains untouched.
+
+    @param graph: peano4.api.taskgraph.Graph
+
+    @return peano4.api.taskgraph.Graph
+      A new graph with copies of the tasks.
+
+    """
+    copies = {task: _copy_task(task) for task in graph.tasks}
+    for task, copy_of_task in copies.items():
+        copy_of_task.dependencies = [copies.get(d, d) for d in task.dependencies]
+    result = Graph()
+    result.tasks = list(copies.values())
+
+    merged_something = True
+    while merged_something:
+        merged_something = False
+        for last in result.tasks:
+            for first in last.dependencies:
+                if (
+                    first not in result.tasks
+                    or first.has_to_repeat is not None
+                    or last.has_to_repeat is not None
+                    or first.entity.is_global
+                    or last.entity.is_global
+                    or not _shared_temporary_data(first, last)
+                    or [
+                        task
+                        for task in result.tasks
+                        if first in task.dependencies and task is not last
+                    ]
+                ):
+                    continue
+                merged = _merge_two_tasks(first, last)
+                merged.dependencies = list(first.dependencies) + [
+                    d
+                    for d in last.dependencies
+                    if d is not first and d not in first.dependencies
+                ]
+                for task in result.tasks:
+                    task.dependencies = [
+                        merged if d is last else d for d in task.dependencies
+                    ]
+                result.tasks[result.tasks.index(last)] = merged
+                result.tasks.remove(first)
+                merged_something = True
+                break
+            if merged_something:
+                break
+    return result
+
+
+def _conflict_on_shared_data(first: Task, second: Task) -> bool:
+    """!
+
+    True if one of the tasks writes a face or vertex submodel which the other one reads or writes
+
+    TEMPORARY uses are ignored. Cell data is not shared between cells and does not count.
+
+    """
+    writing = (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
+    using = (
+        Task.DataAccess.READ_AND_DISCARD,
+        Task.DataAccess.WRITE,
+        Task.DataAccess.READ_AND_WRITE,
+    )
+
+    def submodels(task, accesses):
+        return {
+            (kind, submodel)
+            for kind, access_of_submodel in (
+                ("face", task.face_data_access),
+                ("vertex", task.vertex_data_access),
+            )
+            for submodel, access in access_of_submodel.items()
+            if access in accesses
+        }
+
+    return bool(
+        (submodels(first, writing) & submodels(second, using))
+        or (submodels(second, writing) & submodels(first, using))
+    )
+
+
 def _writes_shared_data(task: Task) -> bool:
     """! True if the task writes a face or a vertex submodel, i.e. data which Peano exchanges between trees"""
     writing = (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
@@ -405,6 +592,7 @@ class _Assembly:
         self.identifier = identifier
         self.result = Graph()
         self.producer_consumer_pairs: List[Tuple[Task, Task]] = []
+        self.hazard_pairs: List[Tuple[Task, Task]] = []
         self.labels: Dict[str, "peano4.api.datamodel.DaStGen2"] = {}
         self.has_attributes: Dict[str, bool] = {kind: False for kind in ENTITIES}
         self._wrappers_of_task: Dict[Task, List[SpawnTaskActionSet]] = {}
@@ -418,15 +606,6 @@ class _Assembly:
             (CELL, "CellTaskLabels"),
         ):
             labels = peano4.api.datamodel.DaStGen2(f"{self.identifier}_{name}")
-            labels.data.add_attribute(
-                dastgen2.attributes.UserDefinedType(
-                    name="taskEnumerator",
-                    type="tarch::multicore::TaskEnumerator",
-                    include='#include "tarch/multicore/TaskEnumerator.h"',
-                    qualifier=dastgen2.attributes.Attribute.Qualifier.STATIC,
-                    user_type_has_toString_method=False,
-                )
-            )
             self.labels[kind] = labels
 
     @staticmethod
@@ -476,6 +655,34 @@ class _Assembly:
                 consumer.add_dependency(producer)
                 self.result.add_task(consumer)
                 self.producer_consumer_pairs.append((producer, consumer))
+        self._add_hazard_pairs(ordered)
+
+    def _add_hazard_pairs(self, ordered: List[Task]):
+        """!
+
+        Keep the consumer of a task away from tasks that follow it and use the same face or vertex data
+
+        The consumer waits for the tasks of a cell only when it enters the cell. A task which follows
+        and which is fused into the consumer's traversal has spawned tasks on the faces and vertices of
+        the cell by then. If the two work on the same face or vertex submodel and one of them writes it, the
+        later task might overwrite what the earlier one still reads, or read what it still writes.
+        FuseSteps checks this for tasks but cannot see it for the consumer, which does not declare any
+        data: A consumer must not declare the data of its producer. Peano relays data from one traversal to the next
+        in a strict alternation (@ref peano4.api.taskgraph.compiler.PropagateUseStatements), i.e. a
+        declaration would store data that the producer has discarded, or load data that does not exist.
+
+        """
+        for task in ordered:
+            if task not in self._consumer_of_task:
+                continue
+            consumer = self._consumer_of_task[task]
+            for follower in ordered:
+                if task in self._ancestors(follower) and _conflict_on_shared_data(
+                    task, follower
+                ):
+                    self.hazard_pairs.append(
+                        (consumer, self._producer_of_task[follower])
+                    )
 
     def _wrap(self, task: Task, ordered: List[Task]):
         """! Replace the spawnable action sets of the producer by wrappers and create the consumer"""
@@ -565,17 +772,6 @@ class _Assembly:
             entity = Task.GridEntity.CELL
         consumer = Task(name=f"{task.name}{CONSUMER_SUFFIX}", entity=entity)
         consumer.add_action_set(consumer_action_set)
-        # The consumer stands for the tasks of the producer. FuseSteps has to see the
-        # conflicts on shared data between these tasks and the tasks which follow:
-        # The consumer waits for the tasks of a cell only when it enters the cell, i.e. after
-        # a fused producer has already spawned tasks on the faces and vertices of the cell.
-        # READ_AND_WRITE does not alter the data, but never loses it.
-        for submodel in task.face_data:
-            if task.face_data_access[submodel] != Task.DataAccess.TEMPORARY:
-                consumer.use_face(submodel, Task.DataAccess.READ_AND_WRITE)
-        for submodel in task.vertex_data:
-            if task.vertex_data_access[submodel] != Task.DataAccess.TEMPORARY:
-                consumer.use_vertex(submodel, Task.DataAccess.READ_AND_WRITE)
         self._consumer_of_task[task] = consumer
 
     def _add_attributes(

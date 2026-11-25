@@ -22,6 +22,11 @@ into a producer and a consumer.
   and `touchCellFirstTime/LastTime` are spawned as tasks, one per entity and event. A vertex, a face and a cell hold
   two task numbers per wrapped action set, one for the first and one for the last event. They are independent:
   an action set that only has a last event only has a last task.
+- **One enumerator.** All task numbers come from one `tarch::multicore::TaskEnumerator`
+  (`peano4::datamanagement::taskassembly::getTaskEnumerator()`), and not from one per label type: Different
+  enumerator instances do not hand out disjoint numbers. With one per label type, a face task and a cell task shared a
+  number and waited for each other (the run produced NaNs in multi-threaded runs only, as a single thread runs
+  tasks as soon as they are spawned).
 - **Numbers are reserved early.** The number of the last task is reserved in the first touch, as
   the coarse entity and the entities around have to know it before the entity's last touch spawns the task.
 - **Dependencies** (`peano4/datamanagement/TaskAssemblyDependencies.h`, all follow from the event order):
@@ -51,11 +56,19 @@ into a producer and a consumer.
 - **Consumer.** The consumer visits every persistent entity in its first touch and waits for the entity's tasks, releases
   the numbers and resets them. As the last task of a cell waits for the whole subtree, and the last task of a vertex or face
   for the cells around it, nothing is left once the traversal has terminated.
-- **Data of the consumer.** The consumer declares the face and vertex data of its producer as READ_AND_WRITE.
-  It waits for the tasks of a cell only when it enters the cell. A producer of the next task fused into the same traversal
-  has spawned its tasks on the faces and vertices of the cell by then, and FuseSteps would not see that these two tasks
-  conflict on face data. (Found the hard way: without the declaration, the Runge-Kutta time step reached dt=inf on
-  meshes decomposed into several trees.)
+- **The consumer declares no data.** The consumer waits for the tasks of a cell only when it enters the cell. A task which follows
+  and which is fused into the consumer's traversal has spawned tasks on the faces and vertices of the cell by then. If both tasks
+  work on the same face or vertex submodel and one writes it, they race. FuseSteps cannot see this for a consumer which
+  declares no data, i.e. the compiler hands it the pairs (consumer, follower with conflicting face or vertex data) as non-fusable
+  pairs (`_add_hazard_pairs()`). The consumer must not declare the data of its producer instead: Peano relays data from
+  one traversal to the next in a strict alternation (`PropagateUseStatements`). A declaration stores data that the producer
+  has discarded, and the exchange stack of the next traversal is not empty anymore (assertion in `SpacetreeSet.cpph`).
+- **Tasks that share TEMPORARY data are merged.** Peano creates TEMPORARY data at the beginning of a traversal and destroys
+  them at the end. A producer and its consumer never share a traversal. The clearing of the face projections and the
+  projection onto the faces share the TEMPORARY update of the faces: split, the projection accumulates onto
+  uninitialised memory. `_merge_tasks_sharing_temporary_data()` merges such tasks into one task before the split.
+- **A last task waits for the first tasks of the vertices and faces of its entity, too.** Otherwise the clearing of
+  the faces, a face first task, runs after the projection of the cell, which is a cell last task, and deletes it.
 - **Labels.** The compiler adds `<identifier>_VertexTaskLabels`, `_FaceTaskLabels` and `_CellTaskLabels`. They are added
   to the *steps* after the fusion (producers WRITE, consumers READ_AND_DISCARD, a fused step with both READ_AND_WRITE),
   and not to the tasks. Otherwise two producers which both write the face labels would conflict on face data and
@@ -78,4 +91,16 @@ into a producer and a consumer.
   copied. `TaskGraphAssembly` warns like `CellTaskProducerConsumer` does.
 - The vertex last task does not wait for the faces around the vertex, only for the cells around it.
 - The assembly uses data which `TaskGraphAssembly` adds to every entity, i.e. the memory per cell, face and vertex grows with the number of wrapped action sets.
-- Only the sequential and the fusion variant are validated by the integration tests so far.
+- Only the sequential and the fusion variant exist so far.
+
+## Validation and open issues
+
+- Euler entropy wave (Runge-Kutta, rk4fd4, 8 trees): the errors and the orders are the ones of `FuseSteps`, bit by bit.
+- Euler point source on a regular grid, debug build (assertions on), 2, 4 and 8 threads: the same time steps as `FuseSteps`.
+- Euler point source with AMR: identical to `FuseSteps` with one tree (one thread). With two or more trees the
+  solution deviates after the second mesh adaptation (the density criterion then wants to refine more cells), and the run
+  reaches dt=inf some time steps later. The cause is not known. `FuseSteps` itself trips `SpacetreeSet.cpph:212`
+  (exchange stack not empty) in a debug build of this setup, i.e. data relayed in the mesh adaptation phase is not consistent
+  in either compiler. Hanging faces and vertices wait for everything which the traversal has spawned so far, which is correct but slow.
+- `sequential` does not work on benchmarks whose setup repeats a traversal until the grid is stationary, as the load balancing
+  task then sits in its own traversal (the plain `Sequential` compiler hangs in the same way).

@@ -258,7 +258,7 @@ def test_destroying_persistent_entities_waits_for_their_tasks():
         assert code.index("waitForAndReleaseTask") < code.index(body)
 
 
-def test_hanging_entities_wait_for_the_first_tasks_of_the_coarse_entity():
+def test_hanging_entities_wait_for_everything_spawned_so_far():
     wrapper = _wrapper_of(
         _task(
             "Mesh",
@@ -269,12 +269,34 @@ def test_hanging_entities_wait_for_the_first_tasks_of_the_coarse_entity():
             },
         )
     )
-    face = _code(wrapper, Operation.OPERATION_CREATE_HANGING_FACE)
-    vertex = _code(wrapper, Operation.OPERATION_DESTROY_HANGING_VERTEX)
-    assert "coarseGridFaces" in face and "waitForTask" in face
-    assert face.index("waitForTask") < face.index("interpolate();")
-    assert "coarseGridVertices" in vertex and "waitForTask" in vertex
-    assert vertex.index("waitForTask") < vertex.index("restrict();")
+    for operation, body in (
+        (Operation.OPERATION_CREATE_HANGING_FACE, "interpolate();"),
+        (Operation.OPERATION_DESTROY_HANGING_VERTEX, "restrict();"),
+    ):
+        code = _code(wrapper, operation)
+        assert "waitForTasks( _tasksSpawnedByThisTraversal )" in code
+        assert code.index("waitForTasks") < code.index(body)
+
+
+def test_new_cells_wait_for_the_first_tasks_of_the_parent_cell():
+    wrapper = _wrapper_of(
+        _task(
+            "Mesh",
+            {
+                **SIX_EVENTS,
+                Operation.OPERATION_CREATE_CELL: "interpolate();",
+                Operation.OPERATION_DESTROY_CELL: "restrict();",
+            },
+        )
+    )
+    labels = wrapper.labels[TaskGraphAssembly.CELL]
+    for operation, body in (
+        (Operation.OPERATION_CREATE_CELL, "interpolate();"),
+        (Operation.OPERATION_DESTROY_CELL, "restrict();"),
+    ):
+        code = _code(wrapper, operation)
+        assert f"coarseGridCell{labels}" in code and "waitForTask(" in code
+        assert code.index("waitForTask(") < code.index(body)
 
 
 def test_global_events_wait_for_all_tasks():
@@ -442,29 +464,41 @@ def test_all_compilers_are_registered_under_their_names():
     assert "fusion" in Compilers.COMPILERS and "sequential" in Compilers.COMPILERS
 
 
-def test_consumer_declares_the_face_and_vertex_data_of_its_producer():
+def test_consumer_declares_no_data_but_stays_away_from_conflicting_followers():
     class _Submodel:
         def __init__(self, name):
             self.name = name
             self.generator = None
 
-    face_data = _Submodel("Q")
-    vertex_data = _Submodel("V")
-    task = _task("Cells", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "a();"})
-    task.use_face(face_data, Task.DataAccess.READ_AND_DISCARD)
-    task.use_vertex(vertex_data, Task.DataAccess.READ_AND_WRITE)
+    faces = _Submodel("Q")
+    reading = _task("Reading", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "a();"})
+    reading.use_face(faces, Task.DataAccess.READ_AND_DISCARD)
+    writing = _task("Writing", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "b();"})
+    writing.use_face(faces, Task.DataAccess.WRITE)
+    writing.add_dependency(reading)
+    unrelated = _task("Unrelated", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "c();"})
+    unrelated.add_dependency(reading)
     graph = Graph()
-    graph.add_task(task)
+    for task in (reading, writing, unrelated):
+        graph.add_task(task)
     assembly = TaskGraphAssembly._Assembly(graph, "Probe")
     assembly.build()
-    consumer = [
+    consumers = [
         t
         for t in assembly.result.tasks
         if t.name.endswith(TaskGraphAssembly.CONSUMER_SUFFIX)
-    ][0]
-    # FuseSteps must see that the consumer stands for tasks which read and write these data
-    assert consumer.face_data_access == {face_data: Task.DataAccess.READ_AND_WRITE}
-    assert consumer.vertex_data_access == {vertex_data: Task.DataAccess.READ_AND_WRITE}
+    ]
+    # A declaration would load or store data which the producer discards: Peano relays data strictly alternating
+    for consumer in consumers:
+        assert not consumer.face_data and not consumer.vertex_data
+    # The consumer of the reader must not share a traversal with the writer, but it can with the other follower
+    assert len(assembly.hazard_pairs) == 1
+    consumer, follower = assembly.hazard_pairs[0]
+    assert consumer.name.startswith("Reading") and follower.name.startswith("Writing")
+    steps = _compile(reading, writing, unrelated, fusion=True)
+    for step in steps:
+        names = step.name
+        assert not ("Reading_Consumer" in names and "Writing_Producer" in names)
 
 
 def test_the_end_of_the_traversal_waits_for_the_tasks_that_touch_exchanged_data():
@@ -488,3 +522,96 @@ def test_cell_tasks_that_write_cell_data_only_may_outlive_the_traversal():
     assert "_tasksToFinishBeforeDataExchange.insert" not in _code(
         cell_only, Operation.OPERATION_TOUCH_CELL_FIRST_TIME
     )
+
+
+def test_tasks_sharing_temporary_data_are_merged_into_one_traversal():
+    class _Submodel:
+        def __init__(self, name):
+            self.name = name
+            self.generator = None
+
+    update = _Submodel("Update")
+    clearing = _task(
+        "Clearing",
+        {Operation.OPERATION_TOUCH_FACE_FIRST_TIME: "clear();"},
+        entity=Entity.FACE,
+    )
+    clearing.use_face(update, Task.DataAccess.TEMPORARY)
+    projection = _task(
+        "Projection", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "project();"}
+    )
+    projection.use_face(update, Task.DataAccess.TEMPORARY)
+    projection.add_dependency(clearing)
+    follower = _task(
+        "Follower", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "follow();"}
+    )
+    follower.add_dependency(projection)
+    graph = Graph()
+    for task in (clearing, projection, follower):
+        graph.add_task(task)
+    merged = TaskGraphAssembly._merge_tasks_sharing_temporary_data(graph)
+    assert len(merged.tasks) == 2
+    assert [t.name for t in merged.tasks][0] == (
+        "Clearing" + TaskGraphAssembly.MERGE_NAME_SEPARATOR + "Projection"
+    )
+    # Clearing runs before the projection within one task
+    assert [a.get_action_set_name() for a in merged.tasks[0].action_sets] == [
+        "ClearingActions",
+        "ProjectionActions",
+    ]
+    assert merged.tasks[0].face_data_access[update] == Task.DataAccess.TEMPORARY
+    assert merged.tasks[1].dependencies == [merged.tasks[0]]
+    # The original graph is untouched
+    assert len(graph.tasks) == 3
+    steps = _compile(clearing, projection, follower, fusion=True)
+    producers = [
+        s
+        for s in steps
+        if any(isinstance(a, SpawnTaskActionSet) for a in s.action_sets)
+    ]
+    first_producer = [
+        a for a in producers[0].action_sets if isinstance(a, SpawnTaskActionSet)
+    ]
+    assert len(first_producer) == 2
+
+
+def test_tasks_are_not_merged_if_somebody_else_depends_on_the_first_one():
+    class _Submodel:
+        def __init__(self, name):
+            self.name = name
+            self.generator = None
+
+    update = _Submodel("Update")
+    first = _task(
+        "First", {Operation.OPERATION_TOUCH_FACE_FIRST_TIME: "a();"}, entity=Entity.FACE
+    )
+    first.use_face(update, Task.DataAccess.TEMPORARY)
+    second = _task("Second", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "b();"})
+    second.use_face(update, Task.DataAccess.TEMPORARY)
+    second.add_dependency(first)
+    third = _task("Third", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "c();"})
+    third.add_dependency(first)
+    graph = Graph()
+    for task in (first, second, third):
+        graph.add_task(task)
+    assert len(TaskGraphAssembly._merge_tasks_sharing_temporary_data(graph).tasks) == 3
+
+
+def test_all_entities_take_their_task_numbers_from_one_enumerator():
+    # Different tarch::multicore::TaskEnumerator instances do not hand out disjoint
+    # numbers: A face task and a cell task would get the same number and wait for each other
+    wrapper = _wrapper_of(_task("Mesh", SIX_EVENTS))
+    for operation in SIX_EVENTS:
+        code = _code(wrapper, operation)
+        assert ".getTaskEnumerator()" not in code.replace(
+            "taskassembly::getTaskEnumerator()", ""
+        ), operation
+    assert "taskassembly::getTaskEnumerator().getNumber()" in _code(
+        wrapper, Operation.OPERATION_TOUCH_FACE_FIRST_TIME
+    )
+    graph = Graph()
+    graph.add_task(_task("Mesh", SIX_EVENTS))
+    assembly = TaskGraphAssembly._Assembly(graph, "Probe")
+    assembly.build()
+    for labels in assembly.labels.values():
+        assert "taskEnumerator" not in str(labels.data)
