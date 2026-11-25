@@ -26,5 +26,7 @@ COMPILERS = {
     "producer-consumer-chains-sequential": CellTaskProducerConsumer.translate_with_chains_and_sequential,
     "assembly": TaskGraphAssembly.translate_with_sequential,
     "assembly-fusion": TaskGraphAssembly.translate_with_fusion,
+    "assembly-concatenation": TaskGraphAssembly.translate_with_concatenation_and_sequential,
+    "assembly-concatenation-fusion": TaskGraphAssembly.translate_with_concatenation_and_fusion,
 }
 """! Name of a task graph compiler to the compiler function """

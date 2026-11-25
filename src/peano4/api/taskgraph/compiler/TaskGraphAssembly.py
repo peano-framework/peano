@@ -29,7 +29,12 @@ from .SpawnTaskActionSet import (
     EntityAttributes,
     SpawnTaskActionSet,
 )
-from .ValidateTaskGraph import derive_marks_and_events, validate
+from .ValidateTaskGraph import (
+    MARKS_OF_EVENTS,
+    derive_marks_and_events,
+    events_of_action_set,
+    validate,
+)
 from .WaitForTasksActionSet import WaitForTasksActionSet
 
 PRODUCER_SUFFIX = " Producer"
@@ -81,11 +86,46 @@ def translate_with_fusion(
     return _translate(graph, identifier, peano_project, use_fusion=True)
 
 
+def translate_with_concatenation_and_sequential(
+    graph: Graph,
+    identifier: str,
+    peano_project: "peano4.api.Project",
+) -> List["peano4.api.solversteps.Step"]:
+    """!
+
+    Like translate_with_sequential(), but remove consumers whose wait can be a task dependency
+
+    See @ref peano4.api.taskgraph.compiler.TaskGraphAssembly._translate() on concatenation.
+
+    """
+    return _translate(
+        graph, identifier, peano_project, use_fusion=False, concatenate=True
+    )
+
+
+def translate_with_concatenation_and_fusion(
+    graph: Graph,
+    identifier: str,
+    peano_project: "peano4.api.Project",
+) -> List["peano4.api.solversteps.Step"]:
+    """!
+
+    Like translate_with_fusion(), but remove consumers whose wait can be a task dependency
+
+    See @ref peano4.api.taskgraph.compiler.TaskGraphAssembly._translate() on concatenation.
+
+    """
+    return _translate(
+        graph, identifier, peano_project, use_fusion=True, concatenate=True
+    )
+
+
 def _translate(
     graph: Graph,
     identifier: str,
     peano_project: "peano4.api.Project",
     use_fusion: bool,
+    concatenate: bool = False,
 ) -> List["peano4.api.solversteps.Step"]:
     """!
 
@@ -137,6 +177,24 @@ def _translate(
     All of them follow from the order of the events within a traversal. See
     @ref peano4_datamanagement_TaskAssemblyDependencies for a description.
 
+    ## Concatenation
+
+    The consumer of task A waits for the tasks of A. With concatenation, the consumer disappears
+    if this wait can be a dependency: The task numbers of A stay in the task labels, the
+    tasks of the follower B of A depend on them, and the consumer of the last task of the chain
+    waits for the numbers of the whole chain. A consumer is removed if A has exactly one follower
+    B, B is split, B has no action set which runs on the main thread and acts on the mesh
+    (it would not wait for A), and none of the tasks that follow A uses a face or vertex submodel
+    in conflict with A: Such a follower has to wait for the tasks of the neighbouring cells, and these
+    are not known to the entities. A follower which is not split (a global task, the dynamic mesh refinement,
+    the load balancing) always sees the consumer, i.e. a barrier. The decision is autonomous. The labels
+    of a step that holds a producer which depends on a removed consumer are READ_AND_WRITE,
+    as they carry the numbers.
+
+    The cell tasks of a time step then form one task graph over several mesh traversals. Face and vertex
+    tasks (and cell tasks of tasks that write face and vertex data) finish with the traversal, as Peano exchanges
+    their data between the trees when the traversal terminates.
+
     @param graph: peano4.api.taskgraph.Graph
       The task graph to compile. Assumed to be acyclic.
 
@@ -151,13 +209,16 @@ def _translate(
       If True, hand the rewritten graph over to FuseSteps, otherwise to
       Sequential.
 
+    @param concatenate: bool
+      See the section on concatenation.
+
     @return [peano4.api.solversteps.Step]
       @ref peano4.api.taskgraph.compiler.FuseSteps.translate()
 
     """
     validate(graph)
     graph = _merge_tasks_sharing_temporary_data(graph)
-    assembly = _Assembly(graph, identifier)
+    assembly = _Assembly(graph, identifier, concatenate)
     assembly.build()
 
     if peano_project is not None:
@@ -525,6 +586,27 @@ def _merge_tasks_sharing_temporary_data(graph: Graph) -> Graph:
     return result
 
 
+def _has_main_thread_mesh_events(
+    task: Task, wrappers: List[SpawnTaskActionSet]
+) -> bool:
+    """!
+
+    True if an action set of the task acts on the mesh and is not wrapped
+
+    It runs on the main thread and would not wait for the tasks of the task in front, which a concatenation
+    leaves running.
+
+    """
+    wrapped = {id(wrapper.action_set) for wrapper in wrappers}
+    for action_set in task.action_sets:
+        if id(action_set) in wrapped:
+            continue
+        for operation in events_of_action_set(action_set):
+            if MARKS_OF_EVENTS[operation].mesh_marks:
+                return True
+    return False
+
+
 def _conflict_on_shared_data(first: Task, second: Task) -> bool:
     """!
 
@@ -587,9 +669,13 @@ class _Assembly:
 
     """
 
-    def __init__(self, graph: Graph, identifier: str):
+    def __init__(self, graph: Graph, identifier: str, concatenate: bool = False):
         self.graph = graph
         self.identifier = identifier
+        self.concatenate = concatenate
+        self.carried_into: set = set()
+        self._removed: set = set()
+        self._inherited: Dict[Task, List[SpawnTaskActionSet]] = {}
         self.result = Graph()
         self.producer_consumer_pairs: List[Tuple[Task, Task]] = []
         self.hazard_pairs: List[Tuple[Task, Task]] = []
@@ -640,6 +726,13 @@ class _Assembly:
         for task in ordered:
             if task in split:
                 self._wrap(task, ordered)
+
+        self._inherited = {task: [] for task in ordered}
+        if self.concatenate:
+            self._remove_consumers(ordered)
+        for task in ordered:
+            if task in split and task not in self._removed:
+                self._create_consumer(task)
 
         for task in ordered:
             producer = self._producer_of_task[task]
@@ -752,13 +845,16 @@ class _Assembly:
         self._wrappers_of_task[task] = own_wrappers
         producer.action_sets = wrapped
 
+    def _create_consumer(self, task: Task):
+        """! The consumer of a split task: it waits for the tasks of the task and for the tasks of all tasks whose consumers were removed in front of it"""
+        wrappers = self._wrappers_of_task[task] + self._inherited[task]
         consumer_action_set = WaitForTasksActionSet(
             re.sub(
                 r"[^0-9A-Za-z_]+",
                 "",
                 f"{_stem(task, 0)[:-len('ActionSet0')]}WaitForTasks",
             ),
-            own_wrappers,
+            wrappers,
         )
         entity = Task.GridEntity(0)
         for kind in consumer_action_set.kinds():
@@ -773,6 +869,36 @@ class _Assembly:
         consumer = Task(name=f"{task.name}{CONSUMER_SUFFIX}", entity=entity)
         consumer.add_action_set(consumer_action_set)
         self._consumer_of_task[task] = consumer
+
+    def _remove_consumers(self, ordered: List[Task]):
+        """!
+
+        Decide which consumers disappear, and hand their wait to the consumer of the follower
+
+        @ref peano4.api.taskgraph.compiler.TaskGraphAssembly._translate() lists the rules.
+        The tasks are visited in topological order, i.e. a chain A to B to C hands the numbers of A to B and
+        those of A and B on to C.
+
+        """
+        for task in ordered:
+            if task not in self._wrappers_of_task:
+                continue
+            followers = [other for other in ordered if task in other.dependencies]
+            if len(followers) != 1 or followers[0] not in self._wrappers_of_task:
+                continue
+            follower = followers[0]
+            if _has_main_thread_mesh_events(follower, self._wrappers_of_task[follower]):
+                continue
+            if any(
+                task in self._ancestors(other) and _conflict_on_shared_data(task, other)
+                for other in ordered
+            ):
+                continue
+            self._removed.add(task)
+            self._inherited[follower] += (
+                self._wrappers_of_task[task] + self._inherited[task]
+            )
+            self.carried_into.add(follower)
 
     def _add_attributes(
         self, attributes: Dict[str, EntityAttributes], needs_around: Dict[str, bool]
@@ -833,9 +959,20 @@ class _Assembly:
             )
             if not (produces or consumes):
                 continue
+            # Numbers of a removed consumer have to be loaded unless their producer runs in this very traversal
+            wrappers_of_step = [
+                action_set
+                for action_set in step.action_sets
+                if isinstance(action_set, SpawnTaskActionSet)
+            ]
+            loads_carried_numbers = any(
+                earlier.task in self._removed and earlier not in wrappers_of_step
+                for wrapper in wrappers_of_step
+                for earlier in wrapper.earlier
+            )
             access = (
                 Access.READ_AND_WRITE
-                if produces and consumes
+                if (produces and consumes) or loads_carried_numbers
                 else (Access.WRITE if produces else Access.READ_AND_DISCARD)
             )
             for kind in ENTITIES:

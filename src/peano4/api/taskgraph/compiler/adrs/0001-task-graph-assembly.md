@@ -1,6 +1,6 @@
 # ADR 0001: The task graph assembly spawns the six touch events as tasks and builds the DAG while it traverses
 
-Status: proposed (implementation in progress: sequential and fusion done, concatenation open)
+Status: proposed (implemented: sequential, fusion and concatenation; open issue: adaptive meshes with several trees)
 Date: 2026-11-24
 
 ## Context
@@ -77,8 +77,16 @@ into a producer and a consumer.
   wrappers act in more events (they reset the arrays), and FuseSteps would otherwise place the producers too late.
 - **A task is not split** if it does not act on the mesh, repeats, opts out (`may_spawn_background_tasks=False`), has
   nothing to spawn, or has an action set which has to run on the main thread (`may_run_in_background_task()`) but acts in a touch event.
-- **Concatenation** (turning the consumer's wait into a task dependency of the next producer and removing consumer sweeps)
-  is not part of this version.
+- **Concatenation** (`translate_with_concatenation_and_sequential/fusion`) turns the consumer's wait into a task
+  dependency of the next producer and removes the consumer. The task numbers of the removed consumer stay in the
+  labels (READ_AND_WRITE in the steps that carry them), the first and last tasks of the follower depend on the last
+  tasks of the tasks in front (own entity, vertices and faces of the cell), and the consumer at the end of the chain
+  waits for the numbers of the whole chain. The compiler decides autonomously: A consumer is removed if its task has
+  exactly one follower, the follower is split and has no main-thread action set on the mesh, and no task that follows
+  conflicts on face or vertex data. A follower that is not split (global tasks, mesh refinement, load balancing)
+  keeps the consumer in front of it, i.e. it acts as a barrier. Conservative on purpose: A conflicting follower would
+  have to wait for the tasks of the neighbouring cells, and the entities do not know them. Only cell tasks
+  that write cell data thus run across traversals; in the Euler time step, a consumer fewer is needed.
 
 ## Consequences
 

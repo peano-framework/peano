@@ -350,6 +350,10 @@ class SpawnTaskActionSet(ActionSet):
         result = ""
         helper = "peano4::datamanagement::taskassembly"
         result += self._add(self._latest(kind, "first", me, include_self=False))
+        # Tasks in front whose consumer is gone: Their last tasks are still running
+        result += self._add(
+            self._latest(kind, "last", me, include_self=False, scope="ancestors")
+        )
         # Parent to child
         if kind == CELL:
             result += self._add(
@@ -401,6 +405,15 @@ class SpawnTaskActionSet(ActionSet):
                     "first",
                     f"{enumerator}{self.labels[lower]}(i)",
                     include_self=True,
+                )
+                if "latestTask" in expression:
+                    result += f"  for (int i=0; i<{count}; i++) {helper}::addTask( inDependencies, {expression} );\n"
+                expression = self._latest(
+                    lower,
+                    "last",
+                    f"{enumerator}{self.labels[lower]}(i)",
+                    include_self=False,
+                    scope="ancestors",
                 )
                 if "latestTask" in expression:
                     result += f"  for (int i=0; i<{count}; i++) {helper}::addTask( inDependencies, {expression} );\n"

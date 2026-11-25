@@ -615,3 +615,153 @@ def test_all_entities_take_their_task_numbers_from_one_enumerator():
     assembly.build()
     for labels in assembly.labels.values():
         assert "taskEnumerator" not in str(labels.data)
+
+
+def _chain(*tasks):
+    for earlier, later in zip(tasks, tasks[1:]):
+        later.add_dependency(earlier)
+    graph = Graph()
+    for task in tasks:
+        graph.add_task(task)
+    return graph
+
+
+def _cell_task(name, **kwargs):
+    return _task(
+        name,
+        {
+            Operation.OPERATION_TOUCH_CELL_FIRST_TIME: f"{name.lower()}();",
+            Operation.OPERATION_TOUCH_CELL_LAST_TIME: f"{name.lower()}Last();",
+        },
+        **kwargs,
+    )
+
+
+def _concatenated(graph):
+    return TaskGraphAssembly.translate_with_concatenation_and_sequential(
+        graph, "Probe", None
+    )
+
+
+def _names(steps):
+    return [step.name for step in steps]
+
+
+def test_consumers_of_a_chain_vanish_except_the_last_one():
+    first, second, third = (
+        _cell_task("First"),
+        _cell_task("Second"),
+        _cell_task("Third"),
+    )
+    steps = _concatenated(_chain(first, second, third))
+    assert _names(steps) == [
+        "Probe_First_Producer",
+        "Probe_Second_Producer",
+        "Probe_Third_Producer",
+        "Probe_Third_Consumer",
+    ]
+    consumers = [
+        a for s in steps for a in s.action_sets if isinstance(a, WaitForTasksActionSet)
+    ]
+    assert len(consumers) == 1
+    # It waits for the numbers of the whole chain: 3 tasks with 2 numbers each
+    code = consumers[0].get_implementation_of_operation(
+        Operation.OPERATION_TOUCH_CELL_FIRST_TIME
+    )
+    assert code.count("waitForAndReleaseTask") == 6
+    for name in ("First", "Second", "Third"):
+        assert name in code
+
+
+def test_without_concatenation_every_task_keeps_its_consumer():
+    first, second = _cell_task("First"), _cell_task("Second")
+    assert len(_compile(first, second)) == 4
+    second.dependencies = []
+    steps = TaskGraphAssembly.translate_with_sequential(
+        _chain(_cell_task("A"), _cell_task("B")), "Probe", None
+    )
+    assert len(steps) == 4
+
+
+def test_the_follower_depends_on_the_numbers_of_the_removed_consumer():
+    first, second = _cell_task("First"), _cell_task("Second")
+    steps = _concatenated(_chain(first, second))
+    wrappers = _wrappers(steps)
+    code = _code(wrappers[1], Operation.OPERATION_TOUCH_CELL_FIRST_TIME)
+    first_attributes = wrappers[0].attributes[TaskGraphAssembly.CELL]
+    assert first_attributes.first[0].upper() + first_attributes.first[1:] in code
+    # The last task of the first task runs, too: Its consumer has gone
+    assert first_attributes.last[0].upper() + first_attributes.last[1:] in code
+
+
+def test_the_labels_carry_the_numbers_from_producer_to_producer():
+    steps = _concatenated(_chain(_cell_task("First"), _cell_task("Second")))
+    producer_of_first, producer_of_second, consumer = steps
+    assert list(producer_of_first.cell_data_access.values()) == [Task.DataAccess.WRITE]
+    assert list(producer_of_second.cell_data_access.values()) == [
+        Task.DataAccess.READ_AND_WRITE
+    ]
+    assert list(consumer.cell_data_access.values()) == [
+        Task.DataAccess.READ_AND_DISCARD
+    ]
+
+
+def test_a_consumer_stays_if_two_tasks_follow():
+    first = _cell_task("First")
+    second, third = _cell_task("Second"), _cell_task("Third")
+    second.add_dependency(first)
+    third.add_dependency(first)
+    graph = Graph()
+    for task in (first, second, third):
+        graph.add_task(task)
+    assert "Probe_First_Consumer" in _names(_concatenated(graph))
+
+
+def test_a_consumer_stays_in_front_of_a_task_that_is_not_split():
+    first = _cell_task("First")
+    global_task = Task("Reduction", Entity.GLOBAL_END_OF_STEP)
+    steps = _concatenated(_chain(first, global_task))
+    assert "Probe_First_Consumer" in _names(steps)
+
+
+def test_a_consumer_stays_if_the_follower_has_main_thread_action_sets_on_the_mesh():
+    first = _cell_task("First")
+    second = _cell_task("Second")
+    second.add_action_set(
+        _ActionSet(
+            "Plain",
+            {Operation.OPERATION_CREATE_HANGING_FACE: "interpolate();"},
+            may_run_in_task=False,
+        )
+    )
+    assert "Probe_First_Consumer" in _names(_concatenated(_chain(first, second)))
+
+
+def test_a_consumer_stays_if_a_follower_conflicts_on_face_data():
+    class _Submodel:
+        def __init__(self, name):
+            self.name = name
+            self.generator = None
+
+    faces = _Submodel("Q")
+    first = _cell_task("First")
+    first.use_face(faces, Task.DataAccess.READ_AND_DISCARD)
+    second = _cell_task("Second")
+    third = _cell_task("Third")
+    third.use_face(faces, Task.DataAccess.WRITE)
+    steps = _concatenated(_chain(first, second, third))
+    names = _names(steps)
+    assert "Probe_First_Consumer" in names
+    # The second one can still be dropped
+    assert "Probe_Second_Consumer" not in names
+
+
+def test_concatenating_compilers_are_registered():
+    assert (
+        Compilers.COMPILERS["assembly-concatenation"]
+        is TaskGraphAssembly.translate_with_concatenation_and_sequential
+    )
+    assert (
+        Compilers.COMPILERS["assembly-concatenation-fusion"]
+        is TaskGraphAssembly.translate_with_concatenation_and_fusion
+    )
