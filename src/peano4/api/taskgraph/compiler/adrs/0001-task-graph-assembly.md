@@ -1,6 +1,6 @@
 # ADR 0001: The task graph assembly spawns the six touch events as tasks and builds the DAG while it traverses
 
-Status: proposed (implemented: sequential, fusion and concatenation; open issue: adaptive meshes with several trees)
+Status: proposed (implemented: sequential, fusion and concatenation)
 Date: 2026-11-24
 
 ## Context
@@ -44,15 +44,9 @@ into a producer and a consumer.
   - Between tasks: the first task depends on the latest numbers of all wrapped action sets of tasks it depends on.
 - **Hanging entities** are not persistent and see no touch events, i.e. they never hold a number.
   The create and destroy events of hanging faces and vertices run on the main thread and interpolate from or restrict into coarse data.
-  They wait for the first tasks of the coarse entities. Persistent destroy events (`destroyCell`, `destroyPersistentFace`,
-  `destroyPersistentVertex`) wait for the entity's own tasks and release their numbers.
-- **Barriers.** `endTraversal()` and `unprepareTraversal()` of a wrapped action set start with
-  `waitForAllTasks()`. The last event of the task is then global, and the global tasks follow the consumer anyway.
-- **Domain decomposition.** Peano exchanges face and vertex data between the trees when a traversal ends, i.e.
-  before the consumer sweep. The producer therefore records the numbers of all vertex tasks, of the face tasks next to a
-  parallel boundary (`marker.isAdjacentToParallelBoundary()`), and of the cell tasks of a task that writes face or vertex
-  data. Its `endTraversal()` waits for them (per tree, no global barrier). Cell tasks which write cell data only
-  may outlive the traversal.
+  They wait for the first tasks (and, with concatenation, the last tasks of the tasks in front) of the coarse entities.
+  Persistent destroy events (`destroyCell`, `destroyPersistentFace`, `destroyPersistentVertex`) wait for the entity's own tasks and
+  release their numbers. The tasks next to a resolution transition are sequential anyway (enclave tasking, below).
 - **Consumer.** The consumer visits every persistent entity in its first touch and waits for the entity's tasks, releases
   the numbers and resets them. As the last task of a cell waits for the whole subtree, and the last task of a vertex or face
   for the cells around it, nothing is left once the traversal has terminated.
@@ -104,11 +98,15 @@ into a producer and a consumer.
 ## Validation and open issues
 
 - Euler entropy wave (Runge-Kutta, rk4fd4, 8 trees): the errors and the orders are the ones of `FuseSteps`, bit by bit.
-- Euler point source on a regular grid, debug build (assertions on), 2, 4 and 8 threads: the same time steps as `FuseSteps`.
-- Euler point source with AMR: identical to `FuseSteps` with one tree (one thread). With two or more trees the
-  solution deviates after the second mesh adaptation (the density criterion then wants to refine more cells), and the run
-  reaches dt=inf some time steps later. The cause is not known. `FuseSteps` itself trips `SpacetreeSet.cpph:212`
-  (exchange stack not empty) in a debug build of this setup, i.e. data relayed in the mesh adaptation phase is not consistent
-  in either compiler. Hanging faces and vertices wait for everything which the traversal has spawned so far, which is correct but slow.
+- Euler point source on a regular grid, debug build (assertions on), 2 and 8 threads: the same time steps as `FuseSteps`.
+- Euler point source with AMR, release build, 1, 2, 4 and 8 threads: the same 109 time steps, final time and time step size as
+  `FuseSteps` (112 steps with one tree for both), including the same number of mesh adaptation sweeps.
+  What it took: With all cells asynchronous, the run deviates from `FuseSteps` after the second mesh adaptation and reaches dt=inf with two or more
+  trees (hypothesis: enclave tasking, confirmed). With the skeleton wait for all entities it matches. Cells only need it next to resolution transitions.
+  An earlier workaround (barrier for all tasks at hanging entities and before the end of the traversal) gave the same result and is gone.
+- The same case trips the debug assertion `SpacetreeSet.cpph:212` in `FuseSteps` too (exchange stack not empty, mesh adaptation phase),
+  i.e. this is not specific to the assembly.
 - `sequential` does not work on benchmarks whose setup repeats a traversal until the grid is stationary, as the load balancing
   task then sits in its own traversal (the plain `Sequential` compiler hangs in the same way).
+- Hanging faces and vertices still wait for the first tasks of the coarse entities explicitly. With enclave tasking, the coarse entities along
+  a resolution transition are sequential, i.e. this wait is probably redundant (not tried).

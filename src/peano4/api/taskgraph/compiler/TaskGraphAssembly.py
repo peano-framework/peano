@@ -639,16 +639,6 @@ def _conflict_on_shared_data(first: Task, second: Task) -> bool:
     )
 
 
-def _writes_shared_data(task: Task) -> bool:
-    """! True if the task writes a face or a vertex submodel, i.e. data which Peano exchanges between trees"""
-    writing = (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
-    return any(
-        access in writing
-        for access in list(task.face_data_access.values())
-        + list(task.vertex_data_access.values())
-    )
-
-
 def _stem(task: Task, action_set_index: int) -> str:
     """!
 
@@ -836,7 +826,6 @@ class _Assembly:
                 face_enumerators,
                 vertex_enumerators,
                 task=task,
-                writes_shared_data=_writes_shared_data(task),
             )
             own_wrappers.append(wrapper)
             wrapped.append(wrapper)

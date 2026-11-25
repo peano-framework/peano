@@ -124,7 +124,6 @@ class SpawnTaskActionSet(ActionSet):
         face_enumerators: List[str],
         vertex_enumerators: List[str],
         task=None,
-        writes_shared_data: bool = True,
     ):
         """!
 
@@ -161,12 +160,6 @@ class SpawnTaskActionSet(ActionSet):
           task reset and fill each other's arrays within a traversal. Numbers of
           the wrappers of other tasks are only read as plain numbers.
 
-        @param writes_shared_data: bool
-          Whether the task writes face or vertex data. Peano exchanges these data
-          between the trees of a domain decomposition when a traversal ends, i.e.
-          the tasks of such a task must have finished by then
-          (@ref peano4.api.taskgraph.compiler.SpawnTaskActionSet.SpawnTaskActionSet._record()).
-
         """
         super().__init__(
             descend_invocation_order=action_set.descend_invocation_order,
@@ -178,7 +171,6 @@ class SpawnTaskActionSet(ActionSet):
         self.earlier = list(earlier)
         self.needs_around = dict(needs_around)
         self.task = task
-        self.writes_shared_data = writes_shared_data
         self._face_enumerators = list(face_enumerators)
         self._vertex_enumerators = list(vertex_enumerators)
 
@@ -441,29 +433,40 @@ class SpawnTaskActionSet(ActionSet):
                     result += f"  for (int i=0; i<{size}; i++) {helper}::addTask( inDependencies, {me}.get{accessor(around)}(i) );\n"
         return result
 
-    def _record(self, kind: str, number: str) -> str:
+    @staticmethod
+    def _enclave_condition(kind: str) -> str:
         """!
 
-        Remember the task number if the task has to finish before the traversal ends
+        C++ predicate: May the entity's task run in the background?
 
-        Peano exchanges face and vertex data between the trees of a domain
-        decomposition at the end of the traversal, i.e. before the consumer
-        waits for the tasks. A task that might still run then modifies data
-        which is sent to the neighbour. We therefore record the numbers of
-        all vertex tasks, of the face tasks of faces next to a parallel
-        boundary, and of the cell tasks of a task that writes face or vertex
-        data. endTraversal() waits for them. Cell tasks which write cell data
-        only are free to outlive the traversal.
+        This is the enclave tasking of Charrier, Hazelwood and Weinzierl. Entities along boundaries
+        have to follow a strict sequential order, and all others are real background tasks.
+
+        - A cell belongs to exactly one tree, i.e. a non-overlapping domain decomposition does not
+          share its data. Only cells next to a resolution transition are skeleton cells: Their tasks work
+          on hanging faces and vertices, which the traversal interpolates and restricts on the main
+          thread right before and after the cell
+          (@ref peano4::datamanagement::CellMarker::isAdjacentToResolutionTransition()).
+        - Faces and vertices are shared between trees. Their data are exchanged when the entity is stored, i.e.
+          right after the last event. Entities next to a parallel boundary, next to refined cells or hanging, are skeleton entities.
 
         """
-        statement = f"_tasksToFinishBeforeDataExchange.insert( {number} );"
-        if kind == VERTEX:
-            return f"    {statement}\n"
+        if kind == CELL:
+            return "not marker.isAdjacentToResolutionTransition()"
         if kind == FACE:
-            return (
-                f"    if ( marker.isAdjacentToParallelBoundary() ) {{ {statement} }}\n"
-            )
-        return f"    {statement}\n" if self.writes_shared_data else ""
+            return "not marker.isAdjacentToParallelBoundary() and not marker.hasBeenRefined() and not marker.willBeRefined()"
+        return "not marker.isAdjacentToParallelDomainBoundary() and not marker.isHanging() and not marker.hasBeenRefined() and not marker.willBeRefined()"
+
+    def _wait_if_skeleton(self, kind: str, number: str) -> str:
+        """!
+
+        Wait for the task right after its spawn if the entity is a skeleton entity
+
+        The task is still a task with all its dependencies, but the traversal cannot continue before it
+        has finished, i.e. the tasks along tree and AMR boundaries are executed sequentially.
+
+        """
+        return f"    if ( not ({self._enclave_condition(kind)}) ) {{ tarch::multicore::waitForTask( {number} ); }}\n"
 
     def _spawn(self, operation_name: str, number: str, kind: str) -> str:
         return f"""
@@ -478,7 +481,7 @@ class SpawnTaskActionSet(ActionSet):
       inDependencies,
       {number}
     );
-{self._record(kind, number)}"""
+{self._wait_if_skeleton(kind, number)}"""
 
     def _touch_first(self, kind: str) -> str:
         spec = SPECS[kind]
@@ -530,7 +533,7 @@ class SpawnTaskActionSet(ActionSet):
   }}
   else {{
     peano4::datamanagement::taskassembly::spawnEmptyTask( inDependencies, {number} );
-{self._record(kind, number)}  }}
+{self._wait_if_skeleton(kind, number)}  }}
 """
 
     def _wait_before_destroy(self, kind: str) -> str:
@@ -548,25 +551,6 @@ class SpawnTaskActionSet(ActionSet):
   }}
 """
         return result
-
-    def _wait_for_all_spawned_tasks(self) -> str:
-        """!
-
-        Wait for all tasks which this traversal has spawned so far
-
-        Hanging faces and vertices live between the first touch of a cell and its
-        destruction, i.e. a task of the cell writes into them, and the main thread
-        restricts them into the coarse entity when the cell is left. They interpolate from
-        coarse faces and vertices that tasks of neighbouring coarse cells have written.
-        They hold no task numbers, and we do not know the cells that touch them, i.e. we
-        cannot name the tasks to wait for. This barrier is correct but slow near the refinement boundaries.
-        It has to be replaced by dependencies if adaptive meshes matter.
-
-        """
-        return """
-  tarch::multicore::waitForTasks( _tasksSpawnedByThisTraversal );
-  _tasksSpawnedByThisTraversal.clear();
-"""
 
     def _wait_for_coarse_entities(self, kind: str, hanging: bool) -> str:
         """!
@@ -668,22 +652,15 @@ class SpawnTaskActionSet(ActionSet):
             body = self.action_set.get_implementation_of_operation(operation_name)
             if body.strip() == "" or kind not in self.labels:
                 return body
-            if hanging:
-                prefix = self._wait_for_all_spawned_tasks()
-            else:
-                prefix = self._wait_for_coarse_entities(kind, hanging)
+            prefix = self._wait_for_coarse_entities(kind, hanging)
             if persistent_destroy:
                 prefix += self._wait_before_destroy(kind)
             return prefix + body
         if operation_name == ActionSet.OPERATION_END_TRAVERSAL:
             body = self.action_set.get_implementation_of_operation(operation_name)
-            barrier = """
-  tarch::multicore::waitForTasks( _tasksToFinishBeforeDataExchange );
-  _tasksToFinishBeforeDataExchange.clear();
-"""
-            if body.strip() != "":
-                barrier += "  tarch::multicore::waitForAllTasks();\n"
-            return barrier + body
+            if body.strip() == "":
+                return body
+            return "  tarch::multicore::waitForAllTasks();\n" + body
         return self.action_set.get_implementation_of_operation(operation_name)
 
     def get_action_set_name(self):
@@ -693,13 +670,7 @@ class SpawnTaskActionSet(ActionSet):
         return False
 
     def get_attributes(self):
-        return (
-            self.action_set.get_attributes()
-            + """
-  std::set<tarch::multicore::TaskNumber> _tasksToFinishBeforeDataExchange;
-  std::set<tarch::multicore::TaskNumber> _tasksSpawnedByThisTraversal;
-"""
-        )
+        return self.action_set.get_attributes()
 
     def get_includes(self):
         return (

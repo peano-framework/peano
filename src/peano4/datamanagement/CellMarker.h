@@ -238,6 +238,28 @@ public:
   bool willBeEnclaveCell() const;
 
   /**
+   * Is the cell next to a resolution transition or about to change the mesh
+   *
+   * True if one of the cell's vertices is hanging, created or destroyed, or if the cell is or
+   * will be refined. This is the part of the definition of a skeleton cell that concerns adaptive
+   * mesh refinement (see hasBeenEnclaveCell()). A task which works on such a cell touches
+   * data, e.g. hanging faces, which the traversal interpolates or restricts on the
+   * main thread right before or after the cell.
+   */
+  bool isAdjacentToResolutionTransition() const {
+    return _isOneVertexHanging or _isOneVertexCreatedOrDestroyed or _hasBeenRefined or _willBeRefined;
+  }
+
+  /**
+   * Is the cell next to the boundary between two trees or two ranks
+   *
+   * This is the part of the definition of a skeleton cell that concerns the domain decomposition (see
+   * hasBeenEnclaveCell()). As every cell belongs to exactly one tree, the cell's own data are
+   * not exchanged. The faces and vertices around the cell are.
+   */
+  bool isAdjacentToParallelDomainBoundary() const { return not _areAllVerticesInsideDomain; }
+
+  /**
    * A skeleton cell is a not-enclave cell
    *
    * @see hasBeenEnclaveCell()

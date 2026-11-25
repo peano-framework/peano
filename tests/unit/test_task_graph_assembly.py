@@ -258,26 +258,6 @@ def test_destroying_persistent_entities_waits_for_their_tasks():
         assert code.index("waitForAndReleaseTask") < code.index(body)
 
 
-def test_hanging_entities_wait_for_everything_spawned_so_far():
-    wrapper = _wrapper_of(
-        _task(
-            "Mesh",
-            {
-                **SIX_EVENTS,
-                Operation.OPERATION_CREATE_HANGING_FACE: "interpolate();",
-                Operation.OPERATION_DESTROY_HANGING_VERTEX: "restrict();",
-            },
-        )
-    )
-    for operation, body in (
-        (Operation.OPERATION_CREATE_HANGING_FACE, "interpolate();"),
-        (Operation.OPERATION_DESTROY_HANGING_VERTEX, "restrict();"),
-    ):
-        code = _code(wrapper, operation)
-        assert "waitForTasks( _tasksSpawnedByThisTraversal )" in code
-        assert code.index("waitForTasks") < code.index(body)
-
-
 def test_new_cells_wait_for_the_first_tasks_of_the_parent_cell():
     wrapper = _wrapper_of(
         _task(
@@ -499,29 +479,6 @@ def test_consumer_declares_no_data_but_stays_away_from_conflicting_followers():
     for step in steps:
         names = step.name
         assert not ("Reading_Consumer" in names and "Writing_Producer" in names)
-
-
-def test_the_end_of_the_traversal_waits_for_the_tasks_that_touch_exchanged_data():
-    wrapper = _wrapper_of(_task("Mesh", SIX_EVENTS))
-    end = _code(wrapper, Operation.OPERATION_END_TRAVERSAL)
-    assert "waitForTasks( _tasksToFinishBeforeDataExchange )" in end
-    assert "_tasksToFinishBeforeDataExchange" in wrapper.get_attributes()
-    # All vertex tasks, the face tasks next to a parallel boundary
-    assert "_tasksToFinishBeforeDataExchange.insert" in _code(
-        wrapper, Operation.OPERATION_TOUCH_VERTEX_LAST_TIME
-    )
-    assert "isAdjacentToParallelBoundary" in _code(
-        wrapper, Operation.OPERATION_TOUCH_FACE_LAST_TIME
-    )
-
-
-def test_cell_tasks_that_write_cell_data_only_may_outlive_the_traversal():
-    cell_only = _wrapper_of(
-        _task("Cells", {Operation.OPERATION_TOUCH_CELL_FIRST_TIME: "a();"})
-    )
-    assert "_tasksToFinishBeforeDataExchange.insert" not in _code(
-        cell_only, Operation.OPERATION_TOUCH_CELL_FIRST_TIME
-    )
 
 
 def test_tasks_sharing_temporary_data_are_merged_into_one_traversal():
@@ -765,3 +722,68 @@ def test_concatenating_compilers_are_registered():
         Compilers.COMPILERS["assembly-concatenation-fusion"]
         is TaskGraphAssembly.translate_with_concatenation_and_fusion
     )
+
+
+def test_hanging_entities_wait_for_the_tasks_of_the_coarse_entity():
+    wrapper = _wrapper_of(
+        _task(
+            "Mesh",
+            {
+                **SIX_EVENTS,
+                Operation.OPERATION_CREATE_HANGING_FACE: "interpolate();",
+                Operation.OPERATION_DESTROY_HANGING_VERTEX: "restrict();",
+            },
+        )
+    )
+    face = _code(wrapper, Operation.OPERATION_CREATE_HANGING_FACE)
+    vertex = _code(wrapper, Operation.OPERATION_DESTROY_HANGING_VERTEX)
+    assert "coarseGridFaces" in face and "waitForTask(" in face
+    assert face.index("waitForTask(") < face.index("interpolate();")
+    assert "coarseGridVertices" in vertex and "waitForTask(" in vertex
+    assert vertex.index("waitForTask(") < vertex.index("restrict();")
+
+
+def test_tasks_along_tree_and_resolution_boundaries_are_executed_sequentially():
+    # Enclave tasking: Only enclave entities run as real background tasks. The others wait for
+    # their task right after the spawn, i.e. they are tasks with all their dependencies, but sequential.
+    # Cells need no serialisation along tree boundaries: they belong to one tree only
+    wrapper = _wrapper_of(_task("Mesh", SIX_EVENTS))
+    for operation, number_name, marker_query in (
+        (
+            Operation.OPERATION_TOUCH_CELL_FIRST_TIME,
+            "firstTaskNumber",
+            "isAdjacentToResolutionTransition",
+        ),
+        (
+            Operation.OPERATION_TOUCH_FACE_FIRST_TIME,
+            "firstTaskNumber",
+            "isAdjacentToParallelBoundary",
+        ),
+        (
+            Operation.OPERATION_TOUCH_VERTEX_FIRST_TIME,
+            "firstTaskNumber",
+            "isAdjacentToParallelDomainBoundary",
+        ),
+    ):
+        code = _code(wrapper, operation)
+        assert marker_query in code, operation
+        assert f"waitForTask( {number_name} )" in code, operation
+        assert code.index("spawnTask") < code.index(f"waitForTask( {number_name} )")
+    for operation, marker_query in (
+        (Operation.OPERATION_TOUCH_CELL_LAST_TIME, "isAdjacentToResolutionTransition"),
+        (Operation.OPERATION_TOUCH_FACE_LAST_TIME, "isAdjacentToParallelBoundary"),
+        (
+            Operation.OPERATION_TOUCH_VERTEX_LAST_TIME,
+            "isAdjacentToParallelDomainBoundary",
+        ),
+    ):
+        code = _code(wrapper, operation)
+        # The task and the empty task which the parent waits for
+        assert code.count("waitForTask(") == 2, operation
+        assert marker_query in code, operation
+
+
+def test_no_barrier_before_the_end_of_the_traversal_is_needed_anymore():
+    wrapper = _wrapper_of(_task("Mesh", SIX_EVENTS))
+    assert _code(wrapper, Operation.OPERATION_END_TRAVERSAL) == ""
+    assert wrapper.get_attributes() == ""
