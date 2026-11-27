@@ -143,6 +143,10 @@ def available_memory_in_kilobytes():
     return sys.maxsize
 
 
+## Task graph compiler of gauge-wave.py; None keeps the script's default
+Compiler = None
+
+
 def build_and_run(scheme, volumes_per_axis, threads, work_directory):
     """!
 
@@ -183,7 +187,8 @@ def build_and_run(scheme, volumes_per_axis, threads, work_directory):
                 "--threads",
                 str(threads),
                 "--plot-along-x-axis",
-            ],
+            ]
+            + (["--compiler", Compiler] if Compiler else []),
             cwd=directory,
             env=environment,
             check=True,
@@ -446,12 +451,18 @@ if __name__ == "__main__":
     )
     parser.add_argument("--cores", type=int, default=os.cpu_count())
     parser.add_argument(
+        "--compiler",
+        default=None,
+        help="Task graph compiler, see gauge-wave.py (default: the script's default)",
+    )
+    parser.add_argument(
         "--concurrent-large-runs",
         type=int,
         default=2,
         help="Maximum number of runs on meshes with more than 27 cells that run at the same time",
     )
     args = parser.parse_args()
+    Compiler = args.compiler
 
     work_directory = os.path.abspath(args.work_directory)
     os.makedirs(work_directory, exist_ok=True)

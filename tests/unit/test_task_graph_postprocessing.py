@@ -295,3 +295,23 @@ def test_sink_tasks_of_chain_and_empty_graph():
     graph.add_task(a)
     graph.add_task(b)
     assert graph.sink_tasks() == [b]
+
+
+def test_remove_redundant_edges_removes_shortcuts_only():
+    graph = peano4.api.taskgraph.Graph()
+    a, b1, b2, c, d = (_cell_task(name) for name in ["a", "b1", "b2", "c", "d"])
+    b1.add_dependency(a)
+    b2.add_dependency(b1)
+    c.add_dependency(a)  # shortcut around b1, b2
+    c.add_dependency(b2)
+    d.add_dependency(a)  # no alternative path, stays
+    for task in [a, b1, b2, c, d]:
+        graph.add_task(task)
+
+    assert graph.remove_redundant_edges() == 1
+
+    assert c.dependencies == [b2]
+    assert b2.dependencies == [b1]
+    assert b1.dependencies == [a]
+    assert d.dependencies == [a]
+    assert graph.remove_redundant_edges() == 0

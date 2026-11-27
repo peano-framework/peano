@@ -82,6 +82,8 @@ Tarch_SOURCES = tarch/tarch.cpp \
 	tarch/multicore/omp/Core.cpp \
 	tarch/multicore/omp/RecursiveSemaphore.cpp \
 	tarch/multicore/omp/Tasks.cpp \
+	tarch/multicore/omp/TasksWithOpenMP5.cpp \
+	tarch/multicore/omp/TasksWithOpenMP6.cpp \
 	tarch/multicore/taskfusion/taskfusion.cpp \
 	tarch/multicore/taskfusion/FusableTasksQueue.cpp \
 	tarch/multicore/taskfusion/LogReadyTask.cpp \
@@ -144,6 +146,7 @@ Tarch_SOURCES = tarch/tarch.cpp \
 	tarch/mpi/IntegerMessage.cpp \
 	tarch/mpi/StringMessage.cpp \
 	tarch/mpi/tests/StringTest.cpp \
+	tarch/multicore/tests/TaskTest.cpp \
 	tarch/logging/CommandLineLogger.cpp \
 	tarch/logging/ChromeTraceFileLogger.cpp \
 	tarch/logging/ITACLogger.cpp \

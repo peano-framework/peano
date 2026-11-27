@@ -193,7 +193,13 @@ parser.add_argument(
 )
 parser.add_argument(
     "--compiler",
-    choices=["sequential", "fusion", "producer-consumer", "producer-consumer-fusion"],
+    choices=[
+        "sequential",
+        "fusion",
+        "producer-consumer",
+        "producer-consumer-fusion",
+        "producer-consumer-chains",
+    ],
     default="fusion",
     help="Task graph compiler: one traversal per task (sequential), tasks fused "
     "into as few traversals as possible (fusion, default), or the same two "
@@ -207,6 +213,7 @@ task_graph_compiler = {
     "fusion": compilers.FuseSteps.translate,
     "producer-consumer": compilers.CellTaskProducerConsumer.translate_with_sequential,
     "producer-consumer-fusion": compilers.CellTaskProducerConsumer.translate_with_fusion,
+    "producer-consumer-chains": compilers.CellTaskProducerConsumer.translate_with_chains_and_fusion,
 }[args.compiler]
 
 ## The grid construction refines every cell whose edge length is greater than
