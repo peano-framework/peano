@@ -228,6 +228,13 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
     ## Width of the halo. Subclasses with wider stencils override it.
     HALO_SIZE = 2
 
+    ## Name of the task that projects the outcome of a stage onto the faces,
+    ## restricts the hanging faces and rolls the faces over, without the
+    ## solver's name as prefix. The placeholder is "stage k" for the outcome
+    ## of an intermediate stage and "solution" after the last stage. Coupled
+    ## solvers (exagrype.api.scalarfield) look the task up by this name.
+    PROJECTION_TASK_NAME = "Project {} onto faces"
+
     @property
     def halo_size(self) -> int:
         """! Width of the halo. Alias of HALO_SIZE, as the generic parts of exahype2.api expect this name."""
@@ -1040,7 +1047,8 @@ Patch overlap data
         task holds one action set (@ref peano4.api.taskgraph.compiler.FuseSteps).
         Where the scheme needs several action sets in a row, it hence creates
         a chain of tasks. If several solvers share a task graph, their chains
-        overlap.
+        overlap. The exception is the projection onto the faces, whose action
+        sets have to share one mesh traversal.
 
         - {SolverName}_Disable load balancing: switches the load balancing
           off throughout the time step. Added last by
@@ -1077,22 +1085,16 @@ Patch overlap data
           eigenvalue of the new solution. Exists after the last stage for
           adaptive time stepping only.
         - {SolverName}_Project stage k+1 onto faces, or {SolverName}_Project
-          solution onto faces after the last stage: projects the outcome of
-          the linear combination onto the faces and restricts the hanging
-          faces onto the coarse faces.
-        - {SolverName}_Roll over stage k+1 faces, or {SolverName}_Roll over
-          solution faces. The projection (with the restriction) and the roll over
-          share the update patch, which is temporary, i.e. they rely on the
-          task graph compiler to fuse them into one mesh traversal. Only
-          the roll over writes the face data of the current time step, but
-          the projection declares it, and the roll over declares it as
-          temporary. If the roll over declared it, the projection would not conflict with the reconstruction, which reads
-          the faces. The compiler would then fuse them into the traversal of
-          the previous stage, and only the roll over would start a new
-          traversal. The update patch does not survive such a split, and the
-          roll over reads uninitialised data (observed as NaNs in the next
-          stage's input). The fused traversal merges the qualifiers back into
-          the one of the projection.
+          solution onto faces after the last stage
+          (PROJECTION_TASK_NAME): projects the outcome of the linear
+          combination onto the faces, restricts the hanging faces onto the
+          coarse faces and rolls the face data over. The roll over is part
+          of the task, as it copies the update patch, which is temporary,
+          i.e. lives within one mesh traversal only
+          (see adrs/0004-roll-over-is-part-of-the-projection.md). The task
+          declares that it writes the face data of the current time step.
+          The reconstruction reads these faces, so the compiler does not
+          fuse the task into the traversal of the reconstruction.
 
         After the last stage, {SolverName}_Compute time step size determines
         the time step size of the next time step and advances the solver's
@@ -1365,11 +1367,8 @@ Patch overlap data
 
             ## Project the outcome onto the faces, restrict it on hanging faces and
             ## roll the faces over. After the last stage, we determine the maximum
-            ## eigenvalue of the new solution right after the projection, i.e. in
-            ## parallel to the roll over (see adrs/0002-eigenvalue-follows-projection.md
-            ## for why not in parallel to the projection). All tasks share the
-            ## update patch, which is temporary, i.e. they rely on the task graph
-            ## compiler to fuse them into one mesh traversal.
+            ## eigenvalue of the new solution once this task has finished
+            ## (see adrs/0002-eigenvalue-follows-projection.md).
             eigenvalue_task = None
             if is_last_stage and self.has_adaptive_time_step_size:
                 eigenvalue_task = peano4.api.taskgraph.Task(
@@ -1397,9 +1396,7 @@ Patch overlap data
                 time_step.add_task(reduction_task)
 
             projection_task = peano4.api.taskgraph.Task(
-                name=f"{name}_Project {suffix} onto faces"
-                if not is_last_stage
-                else f"{name}_Project solution onto faces",
+                name=f"{name}_{self.PROJECTION_TASK_NAME.format(suffix)}",
                 entity=Entity.CELL,
             )
             projection_task.add_dependency(combination_task)
@@ -1407,7 +1404,7 @@ Patch overlap data
             projection_task.use_face(
                 self._solver._patch_overlap_update, Access.TEMPORARY
             )
-            ## See construct_output() for why the projection declares these faces
+            ## The roll over writes these faces
             projection_task.use_face(
                 self._solver._patch_overlap_current_time_step,
                 get_access_to_persistent_face_data(
@@ -1433,22 +1430,17 @@ Patch overlap data
             if eigenvalue_task is not None:
                 eigenvalue_task.add_dependency(projection_task)
 
-            # Sommerfeld boundary conditions advance the ghost grid cells
-            # within the roll over, from the time stamp of this stage to the
-            # one of the next stage (@ref exahype2.api.blockstructured.BoundaryConditions)
+            ## The roll over is part of the projection: The update of the face
+            ## data is temporary, i.e. it lives within one mesh traversal only
+            ## (see adrs/0004-roll-over-is-part-of-the-projection.md). It
+            ## follows the restriction, as it has to copy the restricted data.
+            ## Sommerfeld boundary conditions advance the ghost grid cells
+            ## within the roll over, from the time stamp of this stage to the
+            ## one of the next stage (@ref exahype2.api.blockstructured.BoundaryConditions)
             next_relative_time_step_size = (
                 1.0 if is_last_stage else relative_time_step_sizes[stage + 1]
             )
-            roll_over_task = peano4.api.taskgraph.Task(
-                name=f"{name}_Roll over {suffix} faces", entity=Entity.CELL
-            )
-            roll_over_task.use_face(
-                self._solver._patch_overlap_update, Access.TEMPORARY
-            )
-            roll_over_task.use_face(
-                self._solver._patch_overlap_current_time_step, Access.TEMPORARY
-            )
-            roll_over_task.add_action_set(
+            projection_task.add_action_set(
                 RollOverUpdatedFaceWithSommerfeldBoundaryConditions.create_roll_over(
                     self._solver,
                     exahype2_project,
@@ -1460,9 +1452,7 @@ Patch overlap data
                     ),
                 )
             )
-            roll_over_task.add_dependency(projection_task)
-            time_step.add_task(roll_over_task)
-            previous_stage_task = roll_over_task
+            previous_stage_task = projection_task
 
         ## Determine the next time step size and advance the time stamp. The task
         ## acts at the end of the time step only, i.e. it needs no traversal
