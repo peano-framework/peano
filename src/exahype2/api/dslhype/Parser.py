@@ -367,7 +367,9 @@ class Parser:
         SyntaxTree.Node.use_memory_manager = use_memory_manager
         #SyntaxTree.FunctionDefinition._syclDataToCopy.clear()
         self.inuse_pde_terms = inuse_pde_terms
-        source_code = inspect.getsource(function)
+        # A generator may hand over the source text of a function it has
+        # assembled, e.g. exahype2.api.rkfd4 for compact second derivatives
+        source_code = function if isinstance(function, str) else inspect.getsource(function)
         
         module = ast.parse(source_code)
         function_definition = module.body[0]
