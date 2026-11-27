@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from enum import Enum
 from copy import copy, deepcopy
 
+from exahype2.api.dslhype2.Types import Type
+
 """!
 An expression is an object with a value and a type. Since DSLHyPE
 operates predominantly over loops all expressions must provide an index_at
@@ -193,9 +195,8 @@ class Variable(AssignableExpression):
         return self
     
     def index_at(self, indices: Sequence[Element | Variable], get_address = False) -> AssignableExpression:
-        if isinstance(self.get_type(), Element):
+        if isinstance(self.get_type(), TElement):
             return self
-
         array = self.get_value()
         assert (isinstance(array, Array))
         return Subscript(self, array.calculate_indices(indices), flatten=array.flatten, get_address=get_address)
@@ -284,6 +285,23 @@ class Float(Element):
     def print(self, printer, indent_level: int = 0):
         return printer.print_float(self, indent_level)
 
+class Vector(Element):
+    def __init__(self, values: list[Element], base_type: TElement):
+        self.values = values
+        self.base_type = base_type
+
+    def convert_integers_to_indices(self) -> Vector:
+        return self
+
+    def convert_indices_to_integers(self) -> Vector:
+        return self
+    
+    def get_type(self) -> TVector:
+        return TVector(self.base_type, len(self.values))
+
+    def print(self, printer, indent_level: int = 0):
+        return printer.print_vector(self, indent_level)
+
 class Operator(Enum):
     ADDITION = 1
     SUBTRACTION = 2
@@ -354,15 +372,46 @@ class ElementIndex(Element):
     def print(self, printer, indent_level: int = 0):
         return printer.print_element_index(self, indent_level)
 
+class FunctionCallExpression(Expression):
+    def __init__(self, name: Name, return_type: Type, arguments: list[Expression], type: TFunction):
+        self.name = name
+        self.return_type = return_type
+        self.function_type = type
+        self.arguments = arguments
+
+    def index_at(self, indices: Sequence[Element], get_address = False) -> FunctionCallExpression:
+        return FunctionCallExpression(self.name, self.return_type, [argument.index_at(indices, get_address) for argument in self.arguments], self.function_type)
+    
+    def get_type(self) -> Type:
+        return self.return_type
+
+    def print(self, printer, indent_level: int = 0):
+        return printer.print_function_call_expression(self, indent_level)
+
+class IndexVector(Expression):
+    def __init__(self, dimensions: int):
+        self.dimensions = dimensions
+
+    # An Index returns a Vector<int, Dimensions> representing the index of the current position being considered
+    def index_at(self, indices: Sequence[Element], get_address = False):
+        return Vector(indices[0:self.dimensions], TInteger())
+
+    def get_type(self) -> Type:
+        return TVector(TInteger(), self.dimensions)
+
+    def print(self, printer, indent_level: int = 0):
+        raise Exception("An Index object should not be printed directly")
+
 class External(Expression):
-    def __init__(self, reference: str):
-        self.reference = reference
+    def __init__(self, name: Name, type: Type):
+        self.name = name
+        self.type = type
 
     def index_at(self, indices: Sequence[Element], get_address = False) -> None:
         raise Exception("External references should not be indexed")
 
-    def get_type(self) -> None:
-        raise Exception("External references have no type to obtain")
+    def get_type(self) -> Type:
+        return self.type
 
     def print(self, printer, indent_level: int = 0):
         raise Exception("External references should not have print called on them")
@@ -372,13 +421,13 @@ class ExternalStructField(External):
         self.struct_name = struct_name
         self.struct_type = struct_type
         self.field_name = field_name
-        External.__init__(self, self.struct_name.id + "." + self.field_name.id)
+        External.__init__(self, Name(self.struct_name.id + "." + self.field_name.id), self.get_type())
 
     def get_type(self) -> Type:
         return self.struct_type.fields[self.field_name]
 
 class DataBlock(Array):
-    def __init__(self, iteration_range: Sequence[Sequence[Element | Variable]], value: Element | ExternalStructField | FunctionCall | None, flatten):
+    def __init__(self, iteration_range: Sequence[Sequence[Element | Variable]], value: Element | External | FunctionCall | None, flatten):
         self.value = value
         self.iteration_range = iteration_range
 
@@ -389,7 +438,7 @@ class DataBlock(Array):
 
         if isinstance(value, Element):
             element_type = value.get_type()
-        elif isinstance(value, ExternalStructField):
+        elif isinstance(value, External):
             external_type = value.get_type()
             assert(isinstance(external_type, TArray))
             element_type = external_type.element_type
@@ -577,3 +626,12 @@ class Subscript(AssignableExpression):
     
     def print(self, printer, indent_level: int = 0):
         return printer.print_subscript(self, indent_level)
+
+# This is useful for creating objects for function arguments to add to Variable.symbol_map
+def create_default_expression_from_type(type: Type):
+    if isinstance(type, TFloat):
+        return Float(0.0)
+    if isinstance(type, Integer):
+        return Integer(0)
+    if isinstance(type, TVector):
+        return Vector([create_default_expression_from_type(type.base_type)] * type.dimensions, type.base_type)

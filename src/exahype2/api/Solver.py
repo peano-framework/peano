@@ -10,6 +10,7 @@ import peano4.api
 import peano4.api.toolbox
 
 from .PDETerm import PDETerm
+from .KernelVariants import KernelConfiguration
 
 VariableSpecification = Union[int, Dict[str, int]]
 
@@ -224,15 +225,15 @@ class Solver(abc.ABC):
             the purpose of microbenchmarking, but a kernel call is only generated for one 
             at a time.
             """
-            def __init__(self, solver: Solver, configurations: list[tuple[Target, bool]]):
+            def __init__(self, solver: Solver, configurations: list[KernelConfiguration]):
                 self._solver = solver
                 self._configurations = configurations
 
-            def reset_configurations(self, target: Target, stateless: bool):
+            def reset_configurations(self):
                 self._configurations.clear()
             
-            def add_configuration(self, target: Target, stateless: bool):
-                self._configurations.append((target, stateless))
+            def add_configuration(self, new_configuration: KernelConfiguration):
+                self._configurations.append(new_configuration)
 
             def construct_output(
                 self, exahype2_project, peano_project, time_step, add_global_tasks=True

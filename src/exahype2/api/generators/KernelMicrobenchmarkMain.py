@@ -74,6 +74,7 @@ int main(int argc, char** argv);
 #include "tarch/logging/LogFilterFileReader.h"
 #include "tarch/timing/Measurement.h"
 #include "tarch/timing/Watch.h"
+#include "kernels/{{SOLVER_NAME}}_initialConditions.h"
 {{ADDITIONAL_INCLUDES}}
 
 {% if SUBDIRECTORIES -%}
@@ -135,18 +136,20 @@ constexpr int NumberOfFiniteVolumesPerPatch
 #endif
   ;
   
-/**
- * Set input data according to the initial conditions provided for the solver
- */
-void initInputData(double* Q) {
-  parallelDfor( volume, repositories::{{SOLVER_INSTANCE}}.PatchSize + 2 * repositories::{{SOLVER_INSTANCE}}.HaloSize) {
-    int index = peano4::utils::dLinearised(volume,repositories::{{SOLVER_INSTANCE}}.PatchSize + 2 * repositories::{{SOLVER_INSTANCE}}.HaloSize) * (repositories::{{SOLVER_INSTANCE}}.NumberOfUnknowns + repositories::{{SOLVER_INSTANCE}}.NumberOfAuxiliaryVariables);
-    repositories::{{SOLVER_INSTANCE}}.initPointWisely(
-      ::exahype2::fv::getVolumeCentre( CellOffset + 0.5 * CellSize, CellSize, repositories::{{SOLVER_INSTANCE}}.PatchSize, volume),
-      Q + index
-    );
-  } endParallelDfor
-}
+///**
+// * Set input data according to the initial conditions provided for the solver
+// */
+//void initInputData(double* Q) {
+//  #pragma omp target
+//  parallelDfor( volume, repositories::{{SOLVER_INSTANCE}}.PatchSize + 2 * repositories::{{SOLVER_INSTANCE}}.HaloSize) {
+//    int index = peano4::utils::dLinearised(volume,repositories::{{SOLVER_INSTANCE}}.PatchSize + 2 * repositories::{{SOLVER_INSTANCE}}.HaloSize) * (repositories::{{SOLVER_INSTANCE}}.NumberOfUnknowns + repositories::{{SOLVER_INSTANCE}}.NumberOfAuxiliaryVariables);
+//    Abstract{{SOLVER_NAME}}::initPointWisely(
+//      ::exahype2::fv::getVolumeCentre( CellOffset + 0.5 * CellSize, CellSize, repositories::{{SOLVER_INSTANCE}}.PatchSize, volume),
+//      Q + index,
+//      Abstract{{SOLVER_NAME}}::Offloadable::Yes
+//    );
+//  } endParallelDfor
+//}
 
 /**
  * Store outcome of one compute kernel
@@ -316,6 +319,14 @@ void wrapMLIRFlattenedHostKernel(int device, ::exahype2::CellData<double, double
   mlirCellData.copyBackAndDestroy();
 }
 
+template <void (*Kernel)(exahype2::MLIRCellDataFlattened&, tarch::timing::Measurement&)>
+void wrapMLIRFlattenedDeviceKernel(int device, ::exahype2::CellData<double, double>& patchData) {
+  assertion(device != tarch::accelerator::Device::HostDevice);
+  exahype2::MLIRCellDataFlattened mlirCellData(patchData, NumberOfInputEntriesPerPatch, NumberOfOutputEntriesPerPatch);
+  Kernel(mlirCellData, timingComputeKernel);
+  mlirCellData.copyBackAndDestroy();
+}
+
 template <void (*Kernel)(exahype2::MLIRCellDataNested&, tarch::timing::Measurement&)>
 void wrapMLIRNestedHostKernel(int device, ::exahype2::CellData<double, double>& patchData) {
   assertion(device == tarch::accelerator::Device::HostDevice);
@@ -381,7 +392,25 @@ void runBenchmarks(int numberOfPatches, int launchingThreads) {
             CellSize
           );
           patchData.maxEigenvalue[i] = 0.0;
-          initInputData(patchData.QIn[i]);
+
+          #if defined (OMPUnifiedSharedMemory)
+            if (device != tarch::accelerator::Device::HostDevice){
+              cpp::flattened::EulerFVSmooth_initialiseFullPatchStateless<Abstract{{SOLVER_NAME}}>(device, patchData.QIn[i], patchData.cellCentre[i], patchData.cellSize[i]);
+            else{
+              std::function<void(const tarch::la::Vector<Dimensions, double>&, double* __restrict__)> initFunction =
+              [&](const tarch::la::Vector<Dimensions, double>& x, double* __restrict__ I) -> void {
+                  repositories::instanceOfEulerFVSmooth.initPointWisely(x, I);
+              };
+              cpp::flattened::EulerFVSmooth_initialiseFullPatch(patchData.QIn[i], patchData.cellCentre[i], patchData.cellSize[i], initFunction);
+            }
+          #else
+            std::function<void(const tarch::la::Vector<Dimensions, double>&, double* __restrict__)> initFunction =
+            [&](const tarch::la::Vector<Dimensions, double>& x, double* __restrict__ I) -> void {
+                repositories::instanceOfEulerFVSmooth.initPointWisely(x, I);
+            };
+            cpp::flattened::EulerFVSmooth_initialiseFullPatch(patchData.QIn[i], patchData.cellCentre[i], patchData.cellSize[i], initFunction);
+          #endif
+          
           std::memset(
             patchData.QOut[i],
             0.0,

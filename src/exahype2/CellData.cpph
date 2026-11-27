@@ -213,25 +213,40 @@ exahype2::CopyCellDataGPU<inType, outType>::CopyCellDataGPU(
 
   for (int i = 0; i < numberOfCells; i++){
     if (currentPatchDevice != tarch::accelerator::Device::HostDevice) {
-      omp_target_memcpy(&QIn[i * QInStride], cellData.QIn[i], QInStride * sizeof(inType), 0, 0, targetDevice, currentPatchDevice);
+      tarch::accelerator::GPUMemoryManager::copyData(&QIn[i * QInStride], cellData.QIn[i], QInStride * sizeof(inType), targetDevice, currentPatchDevice);
     } else {
-      omp_target_memcpy(&QIn[i * QInStride], cellData.QIn[i], QInStride * sizeof(inType), 0, 0, targetDevice, omp_get_initial_device());
+      tarch::accelerator::GPUMemoryManager::copyData(&QIn[i * QInStride], cellData.QIn[i], QInStride * sizeof(inType), targetDevice, omp_get_initial_device());
     }
   }
-  omp_target_memcpy(cellCentre, cellData.cellCentre, numberOfCells * sizeof(tarch::la::Vector<Dimensions, double>), 0, 0, targetDevice, omp_get_initial_device());
-  omp_target_memcpy(cellSize, cellData.cellSize, numberOfCells * sizeof(tarch::la::Vector<Dimensions, double>), 0, 0, targetDevice, omp_get_initial_device());
-  omp_target_memcpy(t, cellData.t, numberOfCells * sizeof(double), 0, 0, targetDevice, omp_get_initial_device());
-  omp_target_memcpy(dt, cellData.dt, numberOfCells * sizeof(double), 0, 0, targetDevice, omp_get_initial_device());
-  omp_target_memcpy(id, cellData.id, numberOfCells * sizeof(int), 0, 0, targetDevice, omp_get_initial_device());
-  omp_target_memcpy(maxEigenvalue, cellData.maxEigenvalue, numberOfCells * sizeof(double), 0, 0, targetDevice, omp_get_initial_device());
+  tarch::accelerator::GPUMemoryManager::copyData(cellCentre, cellData.cellCentre, numberOfCells * sizeof(tarch::la::Vector<Dimensions, double>), targetDevice, omp_get_initial_device());
+  tarch::accelerator::GPUMemoryManager::copyData(cellSize, cellData.cellSize, numberOfCells * sizeof(tarch::la::Vector<Dimensions, double>), targetDevice, omp_get_initial_device());
+  tarch::accelerator::GPUMemoryManager::copyData(t, cellData.t, numberOfCells * sizeof(double), targetDevice, omp_get_initial_device());
+  tarch::accelerator::GPUMemoryManager::copyData(dt, cellData.dt, numberOfCells * sizeof(double), targetDevice, omp_get_initial_device());
+  tarch::accelerator::GPUMemoryManager::copyData(id, cellData.id, numberOfCells * sizeof(int), targetDevice, omp_get_initial_device());
+  tarch::accelerator::GPUMemoryManager::copyData(maxEigenvalue, cellData.maxEigenvalue, numberOfCells * sizeof(double), targetDevice, omp_get_initial_device());
+//
+//  for (int i = 0; i < numberOfCells; i++){
+//    if (currentPatchDevice != tarch::accelerator::Device::HostDevice) {
+//      omp_target_memcpy(&QIn[i * QInStride], cellData.QIn[i], QInStride * sizeof(inType), 0, 0, targetDevice, currentPatchDevice);
+//    } else {
+//      omp_target_memcpy(&QIn[i * QInStride], cellData.QIn[i], QInStride * sizeof(inType), 0, 0, targetDevice, omp_get_initial_device());
+//    }
+//  }
+//  omp_target_memcpy(cellCentre, cellData.cellCentre, numberOfCells * sizeof(tarch::la::Vector<Dimensions, double>), 0, 0, targetDevice, omp_get_initial_device());
+//  omp_target_memcpy(cellSize, cellData.cellSize, numberOfCells * sizeof(tarch::la::Vector<Dimensions, double>), 0, 0, targetDevice, omp_get_initial_device());
+//  omp_target_memcpy(t, cellData.t, numberOfCells * sizeof(double), 0, 0, targetDevice, omp_get_initial_device());
+//  omp_target_memcpy(dt, cellData.dt, numberOfCells * sizeof(double), 0, 0, targetDevice, omp_get_initial_device());
+//  omp_target_memcpy(id, cellData.id, numberOfCells * sizeof(int), 0, 0, targetDevice, omp_get_initial_device());
+//  omp_target_memcpy(maxEigenvalue, cellData.maxEigenvalue, numberOfCells * sizeof(double), 0, 0, targetDevice, omp_get_initial_device());
+  
 }
 
 template<typename inType, typename outType>
 void exahype2::CopyCellDataGPU<inType, outType>::copyBackAndDestroy() {
   for (int i = 0; i < numberOfCells; i++){
-    omp_target_memcpy(QOutHost[i], &QOut[i * QOutStride], QOutStride * sizeof(outType), 0, 0, omp_get_initial_device(), targetDevice);
+    tarch::accelerator::GPUMemoryManager::copyData(QOutHost[i], &QOut[i * QOutStride], QOutStride * sizeof(outType), omp_get_initial_device(), targetDevice);
   }
-  omp_target_memcpy(maxEigenvalueHost, maxEigenvalue, numberOfCells * sizeof(double), 0, 0, omp_get_initial_device(), targetDevice);
+  tarch::accelerator::GPUMemoryManager::copyData(maxEigenvalueHost, maxEigenvalue, numberOfCells * sizeof(double), omp_get_initial_device(), targetDevice);
 
   tarch::accelerator::GPUMemoryManager::getInstance().free(QIn, targetDevice);
   tarch::accelerator::GPUMemoryManager::getInstance().free(QOut, targetDevice);
