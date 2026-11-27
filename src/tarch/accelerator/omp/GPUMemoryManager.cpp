@@ -7,7 +7,10 @@
 #include "tarch/accelerator/accelerator.h"
 
 #include <omp.h>
+
+#if defined(OMPUnifiedSharedMemory)
 #pragma omp requires unified_shared_memory
+#endif
 
 tarch::logging::Log  tarch::accelerator::GPUMemoryManager::_log( "tarch::accelerator::GPUMemoryManager" );
 int tarch::accelerator::GPUMemoryManager::_allocatedMemory;
@@ -18,6 +21,9 @@ tarch::accelerator::GPUMemoryManager& tarch::accelerator::GPUMemoryManager::getI
 }
 
 void* tarch::accelerator::GPUMemoryManager::allocateRawData( int size, int device ) {
+  #if defined(OMPUnifiedSharedMemory)
+  return malloc(size);
+  #else
   tarch::multicore::Lock lock(_semaphore);
 
   // Is device initialised?
@@ -44,9 +50,13 @@ void* tarch::accelerator::GPUMemoryManager::allocateRawData( int size, int devic
 
   // Return result
   return result;
+  #endif
 }
 
 void tarch::accelerator::GPUMemoryManager::free(void* devicePointer, int device) {
+  #if defined(OMPUnifiedSharedMemory)
+  free(devicePointer);
+  #else
   tarch::multicore::Lock lock(_semaphore);
 
   assertion( _deviceMemory.count(device)==1 );
@@ -57,6 +67,7 @@ void tarch::accelerator::GPUMemoryManager::free(void* devicePointer, int device)
 
   assertion( _deviceMemory.at(device).freePages.count(size)==1 );
   _deviceMemory.at(device).freePages.at(size).push_back( devicePointer );
+  #endif
 }
 
 tarch::accelerator::GPUMemoryManager::~GPUMemoryManager() {
@@ -84,4 +95,11 @@ void tarch::accelerator::GPUMemoryManager::clear() {
   logInfo("clear()", "Total device memory allocated: " << _allocatedMemory);
 }
 
+void tarch::accelerator::GPUMemoryManager::copyData(void* destination, void* source, size_t length, tarch::accelerator::DeviceType destinationDevice, tarch::accelerator::DeviceType sourceDevice){
+  #if defined(OMPUnifiedSharedMemory)
+  memcpy(destination, source, length);
+  #else
+  omp_target_memcpy(destination, source, length, 0, 0, destinationDevice, sourceDevice);
+  #endif
+}
 #endif
