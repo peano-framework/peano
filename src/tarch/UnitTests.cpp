@@ -12,6 +12,7 @@
 #include "tarch/la/tests/ScalarTest.h"
 #include "tarch/la/tests/VectorTest.h"
 #include "tarch/mpi/tests/StringTest.h"
+#include "tarch/multicore/tests/TaskTest.h"
 
 
 tarch::tests::TestCase* tarch::getUnitTests() {
@@ -24,6 +25,7 @@ tarch::tests::TestCase* tarch::getUnitTests() {
   result->addTestCase( new tarch::la::tests::ScalarTest() );
   result->addTestCase( new tarch::la::tests::VectorTest() );
   result->addTestCase( new tarch::mpi::tests::StringTest() );
+  result->addTestCase( new tarch::multicore::tests::TaskTest() );
   result->addTestCase( new tarch::la::tests::DynamicMatrixTest() );
 
   return result;

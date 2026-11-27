@@ -73,6 +73,12 @@ class Solver(abc.ABC):
         ## informs the load balancing.
         DYNAMIC_MESH_REFINEMENT_TASK_NAME = "Dynamic mesh refinement and load balancing"
 
+        ## Name of the task that reconstructs the solution's patch with its
+        ## halo from the cell and the faces, without the solver's name as
+        ## prefix. Schemes with several stages append " stage k". Coupled
+        ## solvers (exagrype.api.FOSOSolver) look the task up by this name.
+        RECONSTRUCTION_TASK_NAME = "Reconstruct"
+
         def __init__(self, solver: "Solver"):
             """!
 
