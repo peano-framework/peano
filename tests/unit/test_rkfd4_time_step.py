@@ -35,8 +35,15 @@ def _solver(time_step_size=None, rk_order=3, boundary="dirichlet"):
 
 
 def _construct_time_step(solver, directory, periodic_BC=(False, False, False)):
+    """!
+
+    The DSLHyPE kernels end up in directory/temporary/kernels, as only
+    peano4.api.Project.generate() copies them into the output directory.
+
+    """
     exahype2_project = types.SimpleNamespace(periodic_BC=list(periodic_BC))
     peano_project = peano4.api.Project(["probe"], "probe", str(directory))
+    peano_project.temporary_directory = str(directory / "temporary")
     time_step = peano4.api.taskgraph.Graph()
     solver.numerical_scheme.construct_output(exahype2_project, peano_project, time_step)
     return {task.name: task for task in time_step.tasks}
@@ -295,16 +302,18 @@ def test_stage_combinations_use_rows_of_butcher_tableau(tmp_path):
 
 def test_kernels_are_generated_for_both_dimensions(tmp_path):
     _construct_time_step(_solver(), tmp_path)
-    kernels = tmp_path / "kernels"
+    kernels = tmp_path / "temporary" / "kernels"
     for name in [
         "Probe_fd4_2d",
         "Probe_fd4_3d",
         "Probe_fd4_eigenvalue_2d",
         "Probe_fd4_eigenvalue_3d",
-        "rungekutta_linear_combination",
     ]:
         assert (kernels / (name + ".h")).exists(), name
         assert (kernels / (name + ".cpph")).exists(), name
+    # The linear combination goes into the output directory straightaway
+    for suffix in [".h", ".cpph"]:
+        assert (tmp_path / "kernels" / ("rungekutta_linear_combination" + suffix)).exists()
     wrapper = (kernels / "Probe_fd4.h").read_text()
     assert '#include "Probe_fd4_2d.h"' in wrapper
     assert '#include "Probe_fd4_eigenvalue_3d.h"' in wrapper
@@ -314,7 +323,9 @@ def test_kernels_are_generated_for_both_dimensions(tmp_path):
 def test_fixed_time_step_size_skips_eigenvalue(tmp_path):
     solver = _solver(time_step_size=0.01, boundary=None)
     tasks = _construct_time_step(solver, tmp_path, periodic_BC=(True, True, True))
-    assert not (tmp_path / "kernels" / "Probe_fd4_eigenvalue_2d.h").exists()
+    kernels = tmp_path / "temporary" / "kernels"
+    assert (kernels / "Probe_fd4_2d.h").exists()
+    assert not (kernels / "Probe_fd4_eigenvalue_2d.h").exists()
     assert not any(
         isinstance(action_set, exahype2.api.rkfd4.actionsets.ComputeMaxEigenvalue)
         for task in tasks.values()
