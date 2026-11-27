@@ -58,6 +58,7 @@ class FD4WithKODissipation(exahype2.api.rkfd4.CentralDifferencesWithRungeKutta):
         right_hand_side_kernel: exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel.CentralDifferences,
         advection_velocity=None,
         advected_quantities=None,
+        auxiliary_derivatives=None,
     ):
         """!
 
@@ -101,6 +102,9 @@ class FD4WithKODissipation(exahype2.api.rkfd4.CentralDifferencesWithRungeKutta):
           Only for lopsided advection, @see
           exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.
 
+        @param auxiliary_derivatives: List[Tuple[str, str, int, float]] or None
+          @see exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.
+
         """
         super().__init__(
             solver,
@@ -111,6 +115,7 @@ class FD4WithKODissipation(exahype2.api.rkfd4.CentralDifferencesWithRungeKutta):
             right_hand_side_kernel=right_hand_side_kernel,
             advection_velocity=advection_velocity,
             advected_quantities=advected_quantities,
+            auxiliary_derivatives=auxiliary_derivatives,
         )
         if kreiss_oliger_sigma < 0.0:
             raise ValueError(

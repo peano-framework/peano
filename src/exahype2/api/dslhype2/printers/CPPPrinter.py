@@ -83,12 +83,16 @@ class CPPPrinter(Printer):
         lhs_print = memory_deallocation.lhs.print(self)
         return f"""{self.get_indent(indent_level)}delete[] {lhs_print};"""
 
-    def print_function_call(self, function_call: FunctionCall, indent_level: int = 0):
+    def print_function_call_statement(self, function_call: FunctionCallStatement, indent_level: int = 0):
         argument_prints = [argument.print(self) for argument in function_call.arguments]
         if function_call.stateless:
             return f"""{self.get_indent(indent_level)}Solver::{function_call.name.id}({", ".join(argument_prints)}, Solver::Offloadable::Yes);"""
         else:
             return f"""{self.get_indent(indent_level)}{function_call.name.id}({", ".join(argument_prints)});"""
+         
+    def print_function_call_expression(self, function_call: FunctionCallExpression, indent_level: int = 0):
+        argument_prints = [argument.print(self) for argument in function_call.arguments]
+        return f"""{self.get_indent(indent_level)}{function_call.name.id}({", ".join(argument_prints)})"""
          
     def print_for(self, for_loop: For, indent_level: int = 0) -> str:
         index_print = for_loop.iteration_variable.print(self)
@@ -121,7 +125,7 @@ class CPPPrinter(Printer):
         type_print = data_block_construction_from_external.lhs.get_type().print(self)
         lhs_print = data_block_construction_from_external.lhs.print(self)
         assert(isinstance(data_block_construction_from_external.rhs.value, External))
-        rhs_print = data_block_construction_from_external.rhs.value.reference
+        rhs_print = data_block_construction_from_external.rhs.value.name.id
 
         return f"""{self.get_indent(indent_level)}{type_print} {lhs_print} = {rhs_print};"""
 
@@ -153,14 +157,14 @@ class CPPPrinter(Printer):
             return f"""{self.get_indent(indent_level)}{integer.value}"""
         else:
             assert(isinstance(integer.value, External))
-            return f"""{self.get_indent(indent_level)}{integer.value.reference}"""
+            return f"""{self.get_indent(indent_level)}{integer.value.name.id}"""
 
     def print_index(self, index: Index, indent_level: int = 0) -> str:
         if isinstance(index.value, int):
             return f"""{self.get_indent(indent_level)}{index.value}"""
         else:
             assert(isinstance(index.value, External))
-            return f"""{self.get_indent(indent_level)}{index.value.reference}"""
+            return f"""{self.get_indent(indent_level)}{index.value.name.id}"""
 
     def print_float(self, float_val: Float, indent_level: int = 0) -> str:
         if isinstance(float_val.value, float):
@@ -204,6 +208,10 @@ class CPPPrinter(Printer):
         element_print = element_index.element.print(self)
         index_print = element_index.index.print(self)
         return f"""{self.get_indent(indent_level)}{element_print}({index_print})"""
+
+    def print_vector(self, vector: Vector, indent_level: int = 0):
+        value_print = ", ".join([value.print(self) for value in vector.values])
+        return f"""{self.get_indent(indent_level)}tarch::la::Vector<{len(vector.values)}, {vector.base_type.print(self)}>{{{value_print}}}"""
     
     #################################
     # Type Prints

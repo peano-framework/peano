@@ -50,40 +50,66 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
     For each stage of the Runge-Kutta scheme of the CCZ4 solver (once for FV),
     the solver creates a chain of tasks in a task graph of its own:
 
-    1. Interpolate the coarse face data of the primary variables and of the
-       derivatives onto hanging faces (two parallel tasks). From the point of view
-       of this solver, the primary variables are auxiliary variables that are to be
-       interpolated, and the derivative variables are the unknowns.
-    2. Reconstruct the primary variables and the derivative variables
-       (halo from the cell and the faces). The two tasks run in parallel,
-       and each waits for its interpolation.
-    3. Apply the stencil, i.e. recompute the derivatives from the primary variables.
-    4. Project the derivatives onto the faces.
-    5. Restrict them on hanging faces, but only if the derivatives' mode
-       (@ref exahype2.api.AuxiliaryVariables.Mode) is CHANGING_ON_FACES, which it is.
-    6. Roll the face data over.
+    1. Reconstruct the primary variables and the derivative variables
+       (halo from the cell and the faces). The two tasks run in parallel.
+       Each first interpolates the coarse face data onto the hanging faces.
+       From the point of view of this solver, the primary variables are
+       auxiliary variables, and the derivative variables are the unknowns.
+    2. Apply the stencil, i.e. recompute the derivatives from the primary variables.
+    3. Project the derivatives onto the faces, restrict them from the
+       hanging faces onto the coarse faces and roll the face data over. The
+       restriction exists only if the derivatives' mode
+       (@ref exahype2.api.AuxiliaryVariables.Mode) is CHANGING_ON_FACES,
+       which it is.
+
+    Interpolation and restriction are no tasks of their own, but ride along
+    with the tasks which read and write the face data
+    (src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md):
+    Peano creates a hanging face before it enters the adjacent fine cell, and
+    destroys it after it has left the cell. Within one task, the interpolation
+    hence always precedes the reconstruction, and the restriction always
+    follows the projection, whatever traversals the task graph compiler
+    builds. The CCZ4 solver interpolates the faces of the unknowns once more
+    in its own reconstruction. This second interpolation is required: Its
+    reconstruction runs several mesh traversals later, when the hanging faces
+    of the first one do not exist anymore.
+
+    The roll over is part of the projection, too, as in
+    src/exahype2/api/fv/adrs/0003-roll-over-is-part-of-the-projection.md:
+    The update of the face data is temporary, i.e. it lives for one mesh
+    traversal. Peano touches a face for the last time after both adjacent
+    cells have projected onto it, and the roll over acts then. As a task of
+    its own, it would copy the update only if the task graph compiler happens
+    to fuse it into the traversal of the projection. The roll over of the
+    derivatives reads neither the time stamp nor the time step size, i.e.
+    src/exahype2/api/rkfd4/adrs/0001-time-step-size-after-roll-over.md does
+    not constrain it. The CCZ4 solver's own roll over (of exahype2.api.rkfd4)
+    still is a task of its own.
 
     The graph has no dependencies between stages. The host concatenates the graph with the
     one of the CCZ4 solver (exagrype.api.FOSOSolver._couple()): The first tasks of
-    a stage wait for what the CCZ4 solver's reconstruction of the derivatives
-    in this stage waited for.
-    The chain is a block before the CCZ4 solver's reconstructions of the stage:
-    The reconstruction of the derivatives' halo and the reconstruction of the
-    unknowns wait for the last task. In terms of
+    a stage wait for what the CCZ4 solver's reconstructions of the unknowns and
+    of the derivatives in this stage waited for (partner_task_names()). Both
+    read the face data which the chain reads or writes, and each interpolates
+    its face data onto the hanging faces itself.
+    The chain is a block in front of the rest of the stage: Both
+    reconstructions of the CCZ4 solver wait for the last task. In terms of
     @ref page_exahype_programmers_guide_coupling, this is a multiplicative
     coupling, with the coupling repeated per stage.
 
     ## Shortcomings
 
-    - Domain boundaries other than periodic ones and Sommerfeld boundary
-      conditions are not supported, as the reconstruction reads the halo of the
-      CCZ4 solver's unknowns before the Dirichlet boundary conditions
-      are applied. The reconstruction takes the same dependencies as the
-      CCZ4 solver's reconstruction, which makes it work in principle, but this has
-      not been tested.
+    - Only periodic domains are supported. The task graph is ready for
+      Dirichlet boundary conditions (the reconstruction waits for the
+      boundary task of the CCZ4 solver), but the generated code does not
+      compile: The boundary routines of the schemes call
+      dirichletBoundaryConditions() and the Sommerfeld routines without
+      the auxiliary variables, which the solver's signatures expect.
+      Furthermore, nobody sets the derivatives in the ghost grid cells
+      outside of the domain.
     - Supported are exahype2.api.rkfd4.CentralDifferencesWithRungeKutta
-      (fourth-order stencil, halo of at least three grid cells, one task per
-      Runge-Kutta stage) and exahype2.api.fv.RusanovWithExplicitEuler
+      (fourth-order stencil, the scheme's halo of two or more grid cells, one
+      task per Runge-Kutta stage) and exahype2.api.fv.RusanovWithExplicitEuler
       (second-order central differences, overlap of one is enough, a single
       task as there is a single stage). The optimistic Finite Volume scheme is
       not supported.
@@ -126,10 +152,6 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
         self.add_user_solver_includes('\n#include "repositories/SolverRepository.h"\n')
         self._forward_time_stamps_and_time_step_sizes()
 
-    @property
-    def task_graph_title_suffix(self) -> str:
-        return f" (reconstruction part of {self.ccz4.name})"
-
     def _forward_time_stamps_and_time_step_sizes(self):
         """!
 
@@ -168,15 +190,9 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
         scheme = ccz4.numerical_scheme
         match scheme:
             case exahype2.api.rkfd4.CentralDifferencesWithRungeKutta():
-                if scheme.HALO_SIZE < 3:
-                    raise ValueError(
-                        f"Reconstruction {name}: the halo of the scheme of {ccz4.name} has to be "
-                        f"at least three, but is {scheme.HALO_SIZE}. The solver evaluates fluxes and "
-                        "non-conservative products on the faces of the cell, i.e. it needs the "
-                        "derivatives one layer outside of the cell, and the fourth-order stencil reaches "
-                        "two further layers. Use a scheme with lopsided advection or "
-                        "exagrype.api.FD4WithKODissipation."
-                    )
+                # The stencil reaches two layers out, i.e. any halo of the scheme
+                # suffices. The derivatives of the halo come from the
+                # neighbour via the faces.
                 actionsets = exahype2.api.rkfd4.actionsets
                 reconstruction_function = "reconstructFirstDerivativesFD4"
                 stages = scheme.rk_order
@@ -210,23 +226,70 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
 
         Names of the tasks of the CCZ4 solver which the reconstruction of a stage interacts with
 
+        These are the two tasks of the stage which read the face data that
+        the reconstruction reads or writes. Each of them also interpolates its
+        face data onto the hanging faces, as interpolation is no task of its
+        own (src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md).
+
         @param stage: int
           Stage of the Runge-Kutta scheme, 0 for Finite Volumes.
 
         @return unknowns_reconstruction, derivatives_reconstruction
-          Names of the tasks that reconstruct the halo of the unknowns and the
-          halo of the derivatives (both interpolate the hanging faces themselves).
-          The first reconstruction tasks of the stage wait for what the second one
-          waits for, and both wait for the last
+          Names of the tasks that reconstruct the halo of the unknowns and
+          the one of the derivatives. The first reconstruction tasks of the
+          stage wait for what these two wait for, and both wait for the last
           reconstruction task. @ref exagrype.api.FOSOSolver._couple()
+
+        @todo The suffix " stage k" is a convention which this routine and
+          exahype2.api.rkfd4.CentralDifferencesWithRungeKutta spell out
+          independently. If the scheme changes it, the lookup in _couple()
+          fails. The schemes should rather offer a routine which yields the
+          name of the reconstruction task of stage k (the Finite Volumes
+          without suffix), and this routine should call it.
 
         """
         ccz4 = self.ccz4
         suffix = f" stage {stage}" if self._layout()[4] else ""
-        return (
-            f"{ccz4.name}_Reconstruct{suffix}",
-            f"{ccz4.name}_{exahype2.api.AuxiliaryVariables.RECONSTRUCTION_TASK_NAME.format(ccz4.derivatives.name)}{suffix}",
+        derivatives = exahype2.api.AuxiliaryVariables.RECONSTRUCTION_TASK_NAME.format(
+            ccz4.derivatives.name
         )
+        return (
+            f"{ccz4.name}_{ccz4.numerical_scheme.RECONSTRUCTION_TASK_NAME}{suffix}",
+            f"{ccz4.name}_{derivatives}{suffix}",
+        )
+
+    def _reconstruction_call(self, reconstruction_function: str, n: int, h: int) -> str:
+        """!
+
+        C++ which recomputes the derivatives of a cell from its unknowns
+
+        The call hands the table of the CCZ4 solver
+        (@ref exagrype.api.FOSOCCZ4Solver.FOSOCCZ4Solver.derivative_table()) to
+        the C++ routine, which knows nothing about CCZ4 itself
+        (src/exagrype/ccz4/adrs/0005-one-table-defines-the-auxiliary-derivatives.md).
+
+        @param reconstruction_function: str
+          exagrype::ccz4::reconstructFirstDerivativesFD4 or
+          exagrype::ccz4::reconstructFirstDerivativesCentralDifferences.
+
+        @param n: int
+          Grid cells per axis of a patch.
+
+        @param h: int
+          Halo of the reconstructed unknowns.
+
+        """
+        ccz4 = self.ccz4
+        unknown, axis, factor = ccz4.derivative_table()
+        return f"""{{
+    constexpr int    differentiatedUnknown[] = {{{", ".join(str(i) for i in unknown)}}};
+    constexpr int    axis[]                  = {{{", ".join(str(i) for i in axis)}}};
+    constexpr double factor[]                = {{{", ".join(repr(f) for f in factor)}}};
+    ::exagrype::ccz4::{reconstruction_function}(
+      oldQWithHalo, marker.h(), {n}, {h}, {ccz4.unknowns}, {len(unknown)},
+      differentiatedUnknown, axis, factor, newQ
+    );
+  }}"""
 
     def create_task_graph(
         self, exahype2_project, peano_project, stage: int, number_of_stages: int
@@ -237,8 +300,9 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
 
         The CCZ4 solver has to be realised before, as the routine needs its
         data. The graph holds one chain of tasks, without any dependency on the
-        CCZ4 solver's tasks. Its sources are the two interpolation tasks, its only
-        sink the roll over. The host (exagrype.api.FOSOSolver) wires the chain
+        CCZ4 solver's tasks. Its sources are the two reconstruction tasks of
+        the halos (each interpolates the hanging faces first), its only sink
+        the projection (which restricts and rolls over). The host (exagrype.api.FOSOSolver) wires the chain
         into the stage of the CCZ4 solver.
 
         @param exahype2_project: exahype2.api.Project
@@ -298,10 +362,7 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
             )
         primary_halo, derivative_halo = self._scratch_halos
 
-        functor = (
-            f"::exagrype::ccz4::{reconstruction_function}("
-            f"oldQWithHalo, marker.h(), {n}, {h}, newQ);"
-        )
+        functor = self._reconstruction_call(reconstruction_function, n, h)
 
         stage_input = ccz4._patch if stage == 0 else ccz4._stage_input
         suffix = f" stage {stage}" if per_stage else ""
@@ -324,6 +385,13 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
             ccz4._patch_overlap_current_time_step, Access.READ_AND_WRITE
         )
         reconstruct_primary.add_action_set(
+            toolbox.blockstructured.api.InterpolateHangingFaces(
+                ccz4._patch_overlap_current_time_step,
+                scheme=scheme.interpolation,
+                additional_includes=includes,
+            )
+        )
+        reconstruct_primary.add_action_set(
             toolbox.blockstructured.api.ReconstructPatchWithHalo(
                 patch=stage_input,
                 patch_overlap=ccz4._patch_overlap_current_time_step,
@@ -333,41 +401,18 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                 additional_includes=includes,
             )
         )
-        ## Interpolate the coarse face data of the primary variables and of
-        ## the derivatives onto the hanging faces before the reconstruction
-        ## reads the faces. From the point of view of this solver, both are
-        ## auxiliary data that is to be interpolated.
-        interpolate_primary = create_task(
-            "Interpolate primary variables on hanging faces"
-        )
-        interpolate_primary.use_face(
-            ccz4._patch_overlap_current_time_step, Access.READ_AND_WRITE
-        )
-        interpolate_primary.add_action_set(
-            toolbox.blockstructured.api.InterpolateHangingFaces(
-                ccz4._patch_overlap_current_time_step,
-                scheme=scheme.interpolation,
-                additional_includes=includes,
-            )
-        )
-        interpolate_derivatives = create_task(
-            "Interpolate derivative variables on hanging faces"
-        )
-        interpolate_derivatives.use_face(
-            derivatives.patch_overlap_current_time_step, Access.READ_AND_WRITE
-        )
-        interpolate_derivatives.add_action_set(
-            toolbox.blockstructured.api.InterpolateHangingFaces(
-                derivatives.patch_overlap_current_time_step,
-                scheme=scheme.interpolation,
-                additional_includes=includes,
-            )
-        )
         reconstruct_derivatives = create_task("Reconstruct derivative variables")
         reconstruct_derivatives.use_cell(derivatives.patch, Access.READ_AND_WRITE)
         reconstruct_derivatives.use_cell(derivative_halo, Access.WRITE)
         reconstruct_derivatives.use_face(
             derivatives.patch_overlap_current_time_step, Access.READ_AND_WRITE
+        )
+        reconstruct_derivatives.add_action_set(
+            toolbox.blockstructured.api.InterpolateHangingFaces(
+                derivatives.patch_overlap_current_time_step,
+                scheme=scheme.interpolation,
+                additional_includes=includes,
+            )
         )
         reconstruct_derivatives.add_action_set(
             toolbox.blockstructured.api.ReconstructPatchWithHalo(
@@ -402,10 +447,9 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
         project = create_task("Project derivative variables onto faces")
         project.use_cell(derivatives.patch, Access.READ_AND_WRITE)
         project.use_face(derivatives.patch_overlap_update, Access.TEMPORARY)
-        ## Declared to make the compiler start a new mesh traversal here (it
-        ## does not fuse tasks with conflicting face data). The projection, the
-        ## restriction and the roll over share the temporary update patch,
-        ## i.e. they have to run in one traversal.
+        ## The roll over writes the face data. The declaration also makes the
+        ## compiler start a new mesh traversal here (it does not fuse tasks
+        ## with conflicting face data).
         project.use_face(derivatives.patch_overlap_current_time_step, Access.WRITE)
         project.add_action_set(
             actionsets.ProjectPatchOntoFaces(
@@ -415,16 +459,12 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                 includes=includes,
             )
         )
-        project.add_dependency(apply_stencil)
-        last_task = project
-
         ## Restrict from the hanging faces onto the coarse faces, but only
-        ## if the derivatives are allowed to change, i.e. in the
-        ## sense of the auxiliary variables' mode CHANGING_ON_FACES.
+        ## if the derivatives are allowed to change, i.e. in the sense of the
+        ## auxiliary variables' mode CHANGING_ON_FACES. Peano destroys a
+        ## hanging face after the fine cell has projected onto it.
         if derivatives.mode == exahype2.api.AuxiliaryVariables.Mode.CHANGING_ON_FACES:
-            restrict = create_task("Restrict derivative variables on hanging faces")
-            restrict.use_face(derivatives.patch_overlap_update, Access.TEMPORARY)
-            restrict.add_action_set(
+            project.add_action_set(
                 toolbox.blockstructured.api.RestrictHangingFaces(
                     derivatives.patch_overlap_update,
                     scheme=scheme.restriction,
@@ -432,16 +472,8 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                     additional_includes=includes,
                 )
             )
-            restrict.add_dependency(last_task)
-            last_task = restrict
-
-        ## Roll over
-        roll_over = create_task("Roll over derivative variable faces")
-        roll_over.use_face(derivatives.patch_overlap_update, Access.TEMPORARY)
-        roll_over.use_face(
-            derivatives.patch_overlap_current_time_step, Access.TEMPORARY
-        )
-        roll_over.add_action_set(
+        ## Roll over within the same task, as the update is temporary
+        project.add_action_set(
             actionsets.RollOverUpdatedFace(
                 derivatives.patch_overlap_current_time_step,
                 derivatives.patch_overlap_update,
@@ -449,10 +481,7 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                 includes=includes,
             )
         )
-        roll_over.add_dependency(last_task)
-
-        reconstruct_derivatives.add_dependency(interpolate_derivatives)
-        reconstruct_primary.add_dependency(interpolate_primary)
+        project.add_dependency(apply_stencil)
         return graph
 
     def create_readme_descriptor(self, domain_offset, domain_size) -> str:

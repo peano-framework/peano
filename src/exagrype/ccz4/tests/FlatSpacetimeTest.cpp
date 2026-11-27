@@ -147,105 +147,117 @@ void exagrype::ccz4::tests::FlatSpacetimeTest::testGaugeWaveLapse() {
 }
 
 
-void exagrype::ccz4::tests::FlatSpacetimeTest::testFirstDerivativeReconstructionIsExactForCubics() {
-  constexpr int PrimaryVariables = 25;
-  constexpr int Derivatives      = 33;
-  constexpr int N                = 5;
-  const tarch::la::Vector<Dimensions, double> patchSize(0.5);
-  const double h = 0.5 / N;
+namespace {
+  /**
+   * Fill the 25 evolved unknowns of a patch with halo by polynomials, apply a
+   * reconstruction with a table of nine derivatives and hand each derivative
+   * and factor times the analytical derivative to check (which holds the
+   * validation macros of the test case)
+   *
+   * The table is no CCZ4 table: the routines know nothing about CCZ4. It
+   * mixes variables, axes and the factors one, one half and two.
+   */
+  template <typename Reconstruction, typename Field, typename Derivative, typename Check>
+  void compareReconstruction(
+    Reconstruction reconstruction,
+    int            minHalo,
+    int            maxHalo,
+    Field          field,
+    Derivative     derivative,
+    Check          check
+  ) {
+    constexpr int    PrimaryVariables = 25;
+    constexpr int    Derivatives      = 9;
+    constexpr int    N                = 5;
+    constexpr int    variable[]       = {16, 16, 16, 17, 17, 0, 24, 24, 24};
+    constexpr int    axis[]           = { 0,  1,  2,  0,  2, 1,  0,  1,  2};
+    constexpr double factor[]         = {1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 1.0, 1.0, 2.0};
+    const tarch::la::Vector<Dimensions, double> patchSize(0.5);
+    const double h = 0.5 / N;
 
-  // Fields: lapse = x^3 + 2y^2 + 3z, phi = xyz + z^3, shift_0 = x^2 z, G_0 (xx) = y^3
-  auto lapse  = [](double x, double y, double z) { return x * x * x + 2.0 * y * y + 3.0 * z; };
-  auto phi    = [](double x, double y, double z) { return x * y * z + z * z * z; };
-  auto shift0 = [](double x, double y, double z) { return x * x * z; };
-  auto g0     = [](double x, double y, double z) { return y * y * y; };
+    for (int haloSize = minHalo; haloSize <= maxHalo; haloSize++) {
+      const int volumesPerAxis = N + 2 * haloSize;
+      std::vector<double> primaryVariables(volumesPerAxis * volumesPerAxis * volumesPerAxis * PrimaryVariables, 0.0);
+      for (int z = 0; z < volumesPerAxis; z++)
+      for (int y = 0; y < volumesPerAxis; y++)
+      for (int x = 0; x < volumesPerAxis; x++) {
+        double* Q = &primaryVariables[(x + volumesPerAxis * (y + volumesPerAxis * z)) * PrimaryVariables];
+        for (int k : {0, 16, 17, 24}) {
+          Q[k] = field(k, (x - haloSize + 0.5) * h, (y - haloSize + 0.5) * h, (z - haloSize + 0.5) * h);
+        }
+      }
 
-  for (int haloSize = 3; haloSize <= 4; haloSize++) {
-    const int volumesPerAxis = N + 2 * haloSize;
-    std::vector<double> primaryVariables(volumesPerAxis * volumesPerAxis * volumesPerAxis * PrimaryVariables, 0.0);
-    for (int z = 0; z < volumesPerAxis; z++)
-    for (int y = 0; y < volumesPerAxis; y++)
-    for (int x = 0; x < volumesPerAxis; x++) {
-      const double px = (x - haloSize + 0.5) * h;
-      const double py = (y - haloSize + 0.5) * h;
-      const double pz = (z - haloSize + 0.5) * h;
-      double* Q = &primaryVariables[(x + volumesPerAxis * (y + volumesPerAxis * z)) * PrimaryVariables];
-      Q[0]  = g0(px, py, pz);
-      Q[16] = lapse(px, py, pz);
-      Q[17] = shift0(px, py, pz);
-      Q[24] = phi(px, py, pz);
-    }
+      std::vector<double> derivatives(N * N * N * Derivatives, -1.0);
+      reconstruction(
+        primaryVariables.data(), patchSize, N, haloSize, PrimaryVariables, Derivatives,
+        variable, axis, factor, derivatives.data()
+      );
 
-    std::vector<double> derivatives(N * N * N * Derivatives, -1.0);
-    exagrype::ccz4::reconstructFirstDerivativesFD4(primaryVariables.data(), patchSize, N, haloSize, derivatives.data());
-
-    for (int z = 0; z < N; z++)
-    for (int y = 0; y < N; y++)
-    for (int x = 0; x < N; x++) {
-      const double px = (x + 0.5) * h;
-      const double py = (y + 0.5) * h;
-      const double pz = (z + 0.5) * h;
-      const double* d = &derivatives[(x + N * (y + N * z)) * Derivatives];
-      // Entries are shifted by 25 compared to the 58 entries of CCZ4
-      validateNumericalEqualsWithParams4(d[0], 3.0 * px * px, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[1], 4.0 * py, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[2], 3.0, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[30], py * pz, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[31], px * pz, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[32], px * py + 3.0 * pz * pz, haloSize, x, y, z);
-      // dx shift_0 = 28 - 25, dz shift_0 = 34 - 25
-      validateNumericalEqualsWithParams4(d[3], 2.0 * px * pz, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[9], px * px, haloSize, x, y, z);
-      // dy G_xx = 43 - 25. The reconstruction yields D_kij = 1/2 d_k G_ij
-      validateNumericalEqualsWithParams4(d[18], 1.5 * py * py, haloSize, x, y, z);
+      for (int z = 0; z < N; z++)
+      for (int y = 0; y < N; y++)
+      for (int x = 0; x < N; x++) {
+        const double* d = &derivatives[(x + N * (y + N * z)) * Derivatives];
+        for (int row = 0; row < Derivatives; row++) {
+          const double expected = factor[row] * derivative(variable[row], axis[row], (x + 0.5) * h, (y + 0.5) * h, (z + 0.5) * h);
+          check(d[row], expected, haloSize, row, x + N * (y + N * z));
+        }
+      }
     }
   }
 }
 
 
+void exagrype::ccz4::tests::FlatSpacetimeTest::testFirstDerivativeReconstructionIsExactForCubics() {
+  // G_xx (0) = y^3, lapse (16) = x^3 + 2y^2 + 3z, shift_0 (17) = x^2 z, phi (24) = xyz + z^3
+  auto field = [](int k, double x, double y, double z) -> double {
+    switch (k) {
+      case 0:  return y * y * y;
+      case 16: return x * x * x + 2.0 * y * y + 3.0 * z;
+      case 17: return x * x * z;
+      default: return x * y * z + z * z * z;
+    }
+  };
+  auto derivative = [](int k, int axis, double x, double y, double z) -> double {
+    const tarch::la::Vector<3, double> gradient =
+      k == 0  ? tarch::la::Vector<3, double>({0.0, 3.0 * y * y, 0.0}) :
+      k == 16 ? tarch::la::Vector<3, double>({3.0 * x * x, 4.0 * y, 3.0}) :
+      k == 17 ? tarch::la::Vector<3, double>({2.0 * x * z, 0.0, x * x}) :
+                tarch::la::Vector<3, double>({y * z, x * z, x * y + 3.0 * z * z});
+    return gradient(axis);
+  };
+  compareReconstruction(
+    exagrype::ccz4::reconstructFirstDerivativesFD4, 2, 4, field, derivative,
+    [&](double value, double expected, int haloSize, int row, int volume) {
+      validateNumericalEqualsWithParams4(value, expected, haloSize, row, volume, 4);
+    }
+  );
+}
+
+
 void exagrype::ccz4::tests::FlatSpacetimeTest::testCentralDifferenceReconstructionIsExactForQuadratics() {
-  constexpr int PrimaryVariables = 25;
-  constexpr int Derivatives      = 33;
-  constexpr int N                = 5;
-  const tarch::la::Vector<Dimensions, double> patchSize(0.5);
-  const double h = 0.5 / N;
-
-  // lapse = x^2 + 2y + 3z^2, phi = xy + z^2
-  auto lapse = [](double x, double y, double z) { return x * x + 2.0 * y + 3.0 * z * z; };
-  auto phi   = [](double x, double y, double z) { return x * y + z * z; };
-
-  for (int haloSize = 1; haloSize <= 2; haloSize++) {
-    const int volumesPerAxis = N + 2 * haloSize;
-    std::vector<double> primaryVariables(volumesPerAxis * volumesPerAxis * volumesPerAxis * PrimaryVariables, 0.0);
-    for (int z = 0; z < volumesPerAxis; z++)
-    for (int y = 0; y < volumesPerAxis; y++)
-    for (int x = 0; x < volumesPerAxis; x++) {
-      const double px = (x - haloSize + 0.5) * h;
-      const double py = (y - haloSize + 0.5) * h;
-      const double pz = (z - haloSize + 0.5) * h;
-      double* Q = &primaryVariables[(x + volumesPerAxis * (y + volumesPerAxis * z)) * PrimaryVariables];
-      Q[16] = lapse(px, py, pz);
-      Q[24] = phi(px, py, pz);
+  // G_xx (0) = y^2, lapse (16) = x^2 + 2y + 3z^2, shift_0 (17) = xz, phi (24) = xy + z^2
+  auto field = [](int k, double x, double y, double z) -> double {
+    switch (k) {
+      case 0:  return y * y;
+      case 16: return x * x + 2.0 * y + 3.0 * z * z;
+      case 17: return x * z;
+      default: return x * y + z * z;
     }
-
-    std::vector<double> derivatives(N * N * N * Derivatives, -1.0);
-    exagrype::ccz4::reconstructFirstDerivativesCentralDifferences(primaryVariables.data(), patchSize, N, haloSize, derivatives.data());
-
-    for (int z = 0; z < N; z++)
-    for (int y = 0; y < N; y++)
-    for (int x = 0; x < N; x++) {
-      const double px = (x + 0.5) * h;
-      const double py = (y + 0.5) * h;
-      const double pz = (z + 0.5) * h;
-      const double* d = &derivatives[(x + N * (y + N * z)) * Derivatives];
-      validateNumericalEqualsWithParams4(d[0], 2.0 * px, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[1], 2.0, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[2], 6.0 * pz, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[30], py, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[31], px, haloSize, x, y, z);
-      validateNumericalEqualsWithParams4(d[32], 2.0 * pz, haloSize, x, y, z);
+  };
+  auto derivative = [](int k, int axis, double x, double y, double z) -> double {
+    const tarch::la::Vector<3, double> gradient =
+      k == 0  ? tarch::la::Vector<3, double>({0.0, 2.0 * y, 0.0}) :
+      k == 16 ? tarch::la::Vector<3, double>({2.0 * x, 2.0, 6.0 * z}) :
+      k == 17 ? tarch::la::Vector<3, double>({z, 0.0, x}) :
+                tarch::la::Vector<3, double>({y, x, 2.0 * z});
+    return gradient(axis);
+  };
+  compareReconstruction(
+    exagrype::ccz4::reconstructFirstDerivativesCentralDifferences, 1, 2, field, derivative,
+    [&](double value, double expected, int haloSize, int row, int volume) {
+      validateNumericalEqualsWithParams4(value, expected, haloSize, row, volume, 2);
     }
-  }
+  );
 }
 
 

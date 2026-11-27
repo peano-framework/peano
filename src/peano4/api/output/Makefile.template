@@ -111,9 +111,9 @@ MLIR_OBJS={{MLIR_OBJS}}
 #	dslhype-opt --pass-pipeline="builtin.module(dslhype-linearize-nested-memrefs,canonicalize,cse,loop-invariant-code-motion,canonicalize,cse,loop-invariant-code-motion,cse,canonicalize,expand-strided-metadata,fold-memref-alias-ops,lower-affine,finalize-memref-to-llvm,loop-invariant-code-motion,canonicalize,cse,convert-scf-to-openmp,finalize-memref-to-llvm,convert-scf-to-cf,convert-openmp-to-llvm,convert-math-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts,canonicalize,cse)" $< | mlir-translate --mlir-to-llvmir > $@
 
 
-{% for mlir_prefix, pipeline in MLIR_DICT.items() -%}
-{{mlir_prefix}}.ll: {{mlir_prefix}}.mlir
-	{{pipeline}} $< | mlir-translate --mlir-to-llvmir > $@
+{% for mlir_prefix, (pipeline, external_file) in MLIR_DICT.items() -%}
+{{mlir_prefix}}.ll: {{mlir_prefix}}.mlir {% if external_file is not none %}{{external_file}}{% endif %}
+	{{pipeline}} | mlir-translate --mlir-to-llvmir > $@
 {% endfor %}
 
 {% for mlir_prefix in MLIR_DICT.keys() -%}
@@ -121,6 +121,7 @@ MLIR_OBJS={{MLIR_OBJS}}
 	llc -relocation-model=pic -filetype=obj $< -o $@
 {% endfor %}
 
+{{CLEAN_MLIR_FILE_CONSTRUCTION}}
 
 {% for module in FORTRAN_MODULES -%}
 .NOTPARALLEL: {{module | replace(".f90", ".mod") }}

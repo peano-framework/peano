@@ -158,6 +158,7 @@ the SISC paper
         self.hfiles = []
         self.cppfiles = []
         self.mlir_dict = {}
+        self.cleaned_mlir_files = set()
         self.fortranfiles = []
         self.generated_hfiles = []
         self.generated_cppfiles = []
@@ -439,7 +440,7 @@ the SISC paper
         if filename in self.cppfiles:
             self.cppfiles.remove(filename)
     
-    def add_mlir_file(self, filename, pipeline):
+    def add_mlir_file(self, filename, pipeline, external_mlir_file = None):
         """
         Add a new mlir filename. It gets added to a dictionary where the associated value
         is the pipeline that should be applied to the file.
@@ -453,7 +454,10 @@ the SISC paper
            by the cleaning routines 'distclean' or 'maintainer-clean' of the Makefile.
         """
         mlir_prefix = filename.rsplit(".", 1)[0]
-        self.mlir_dict[mlir_prefix] = pipeline
+        assert (isinstance(external_mlir_file, str))
+        cleaned_mlir_file = external_mlir_file.split(".")[0] + "_clean.mlir"
+        self.mlir_dict[mlir_prefix] = (pipeline, cleaned_mlir_file)
+        self.cleaned_mlir_files.add(cleaned_mlir_file)
 
     def remove_mlir_file(self, filename):
         mlir_prefix = filename.rsplit(".", 1)[0]
@@ -566,7 +570,12 @@ then this message can typically be ignored.
         #self.d["MLIR_PREFIXES"] = mlir_prefixes
         self.d["MLIR_DICT"] = self.mlir_dict
         self.d["MLIR_OBJS"] = " ".join([f"{prefix}_mlir.o" for prefix in self.mlir_dict.keys()])
-
+        cleaned_mlir_files_construction = ""
+        for cleaned_file in self.cleaned_mlir_files:
+            cleaned_mlir_files_construction += f"""{cleaned_file}: {cleaned_file.replace("_clean", "")}
+\txdsl-opt -p 'clean-polygeist-functions' $< > $@
+"""
+        self.d["CLEAN_MLIR_FILE_CONSTRUCTION"] = cleaned_mlir_files_construction
         # Encapsulate file generation as a function
         def generate_output_file(input_file_path, output_file_path):
             if write_file(overwrite, self.default_overwrite, output_file_path):
