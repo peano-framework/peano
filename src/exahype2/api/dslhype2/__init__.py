@@ -8,8 +8,8 @@ from .Types import *
 from .Parser import Parser
 from .printers.CPPPrinter import CPPPrinter
 from .printers.OMPTargetPrinter import OMPTargetPrinter
-from .kernels import translate_dslhype_function, generate_namespace, generate_mlir_function_call_bridges
-
+from .kernels import translate_dslhype_function, generate_namespace, generate_mlir_function_call_bridges, construct_mlir_pipeline
+from .CellDataType import construct_cell_data_type
 
 def __getattr__(name):
     """!

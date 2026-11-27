@@ -18,6 +18,11 @@ def translate_dslhype_function(
     output_directory: str = ".",
 ):
     """!
+    function: Python function or str
+      The DSL function, or its source text (a single def). A generator
+      which assembles a kernel per solver, such as the compact second
+      derivatives of exahype2.api.rkfd4, hands over the text.
+
     function_name: str
       Name of the generated C++ function. Defaults to the name of the
       Python DSL function passed in as function.

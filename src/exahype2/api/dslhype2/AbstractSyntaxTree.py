@@ -119,7 +119,7 @@ class DataBlockConstructionFromFunctionCall(Statement):
         self.lhs = lhs
         self.rhs = rhs
         Variable.symbol_map.update({self.lhs.get_name(): self.rhs})
-        assert(isinstance(rhs.value, FunctionCall))
+        assert(isinstance(rhs.value, FunctionCallStatement))
 
         self.allocation = ArrayAllocation(self.lhs, rhs)
         
@@ -138,7 +138,7 @@ class DataBlockConstructionFromFunctionCall(Statement):
             else:
                 indexed_arguments.append(argument.index_at(output_data_block_indices, get_address=False))
         indexed_arguments.append(self.lhs.index_at(output_data_block_indices, get_address=True))
-        fors[-1].add_statement(FunctionCall(rhs.value.name, indexed_arguments, rhs.value.type, rhs.value.stateless))
+        fors[-1].add_statement(FunctionCallStatement(rhs.value.name, indexed_arguments, rhs.value.type, rhs.value.stateless))
         self.initialisation = fors[0]
         
         for for_loop in fors:
@@ -185,7 +185,7 @@ class DataBlockUnaryMax(Statement):
     def print(self, printer, indent_level: int = 0):
         return printer.print_data_block_unary_max(self, indent_level)
 
-class FunctionCall(Statement):
+class FunctionCallStatement(Statement):
     def __init__(self, name: Name, arguments: list[Expression], type: TFunction, stateless: bool = False):
         self.name = name
         self.type = type
@@ -193,7 +193,7 @@ class FunctionCall(Statement):
         self.stateless = stateless
     
     def print(self, printer, indent_level: int = 0):
-        return printer.print_function_call(self, indent_level)
+        return printer.print_function_call_statement(self, indent_level)
 
 class DataBlockAssignment(Statement):
     def __init__(self, lhs: AssignableExpression, rhs: Expression):

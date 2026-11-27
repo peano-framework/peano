@@ -270,6 +270,7 @@ AC_ARG_WITH(
     case "${withval}" in
       no)    AC_MSG_RESULT(no);                                             gpu=false ;;
       omp)   AC_MSG_RESULT(build with OpenMP offloading to GPUs);           gpu=omp ;;
+      omp_unified_memory)   AC_MSG_RESULT(build with OpenMP offloading to GPUs, using unified memory);           gpu=omp ;;
       sycl)  AC_MSG_RESULT(build with SYCL GPU support);                    gpu=sycl ;;
       cpp)   AC_MSG_RESULT(build with C++ GPU support);                     gpu=cpp ;;
       hip)   AC_MSG_RESULT(build with HIP GPU support);                     gpu=hip ;;
@@ -367,6 +368,12 @@ AC_SUBST(GPU_ARCH)
 if test "$gpu" == omp; then
   AC_CHECK_HEADERS([omp.h],[],[AC_MSG_WARN([header <omp.h> not found])])
   AC_DEFINE([GPUOffloadingOMP], [1], [GPUOffloadingOMP])
+fi
+
+if test "$gpu" == omp_unified_memory; then
+  AC_CHECK_HEADERS([omp.h],[],[AC_MSG_WARN([header <omp.h> not found])])
+  AC_DEFINE([GPUOffloadingOMP], [1], [GPUOffloadingOMP])
+  AC_DEFINE([OMPUnifiedSharedMemory], [1], [OMPUnifiedSharedMemory])
 fi
 
 if test "$gpu" == sycl; then

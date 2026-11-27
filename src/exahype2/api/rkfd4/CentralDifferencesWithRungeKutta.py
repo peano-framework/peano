@@ -25,6 +25,8 @@ from ..rungekutta.LinearCombination import generate_linear_combination_kernel
 from ..rungekutta.LinearCombination import include_implementation_into_header
 from . import FD4Kernels
 from .Quantities import resolve_quantities
+from ..Quantities import resolve_auxiliary_derivatives
+from . import CompactSecondDerivatives
 from .actionsets import AddLopsidedAdvection
 from .actionsets import ApplyDirichletBoundaryConditions
 from ..blockstructured.BoundaryConditions import get_access_to_persistent_face_data
@@ -171,6 +173,14 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
       three grid cells into the neighbouring patches, the halo is three
       grid cells wide.
 
+    Independent of the kernel, auxiliary variables which are derivatives of
+    unknowns (argument auxiliary_derivatives) get compact second
+    derivatives along their own axis: The kernels hand the
+    non-conservative product the compact five-point second derivative of the
+    unknown instead of the first derivative of the derivative
+    (@ref exahype2.api.rkfd4.CompactSecondDerivatives,
+    src/exahype2/api/rkfd4/adrs/0003-compact-second-derivatives-of-auxiliary-derivatives.md).
+
     ## Data flow
 
     __create_data_structures() documents the data per mesh cell and
@@ -241,6 +251,7 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
         right_hand_side_kernel: "CentralDifferencesWithRungeKutta.RightHandSideKernel" = RightHandSideKernel.CentralDifferences,
         advection_velocity=None,
         advected_quantities=None,
+        auxiliary_derivatives=None,
         min_volume_size: float = None,
         max_volume_size: float = None,
         interpolation: "toolbox.blockstructured.api.InterpolateHangingFaces.Scheme" = toolbox.blockstructured.api.InterpolateHangingFaces.Scheme.Linear,
@@ -294,6 +305,16 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
           Only for CentralDifferencesWithLopsidedAdvection: the unknowns
           which are advected, as names of variables or indices of entries,
           @see exahype2.api.rkfd4.Quantities.resolve_quantities().
+
+        @param auxiliary_derivatives: List[Tuple[str, str, int, float]] or None
+          Auxiliary variables which are derivatives of unknowns, as rows
+          (derivative, unknown, axis, factor), @see
+          exahype2.api.Quantities.resolve_auxiliary_derivatives(). For these
+          entries, the right-hand side hands the non-conservative product the
+          compact second derivative of the unknown along the row's axis instead
+          of the first derivative of the derivative
+          (@ref exahype2.api.rkfd4.CompactSecondDerivatives). None (the
+          default) leaves the kernels unchanged.
 
         @param min_volume_size: float
           The time step asks for a refinement of a cell only if its grid
@@ -382,6 +403,11 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
                 )
             self.advection_velocity = None
             self.advected_quantities = None
+        self.auxiliary_derivatives = (
+            None
+            if auxiliary_derivatives is None
+            else resolve_auxiliary_derivatives(solver, auxiliary_derivatives)
+        )
         self.patch_size = patch_size
         assert (
             min_volume_size is None
@@ -764,14 +790,29 @@ Patch overlap data
             ),
         ]
 
+        ## With auxiliary derivatives, DSLHyPE translates the source of the
+        ## right-hand side with the compact second derivatives inserted
+        right_hand_side = {
+            dimensions: (
+                function
+                if self.auxiliary_derivatives is None
+                else CompactSecondDerivatives.right_hand_side_source(
+                    function, self.auxiliary_derivatives, dimensions
+                )
+            )
+            for dimensions, function in [
+                (2, FD4Kernels.rightHandSideWithFD42D),
+                (3, FD4Kernels.rightHandSideWithFD43D),
+            ]
+        }
         kernels = [
             (
-                FD4Kernels.rightHandSideWithFD42D,
+                right_hand_side[2],
                 "_fd4_2d",
                 self.right_hand_side_kernel_name,
             ),
             (
-                FD4Kernels.rightHandSideWithFD43D,
+                right_hand_side[3],
                 "_fd4_3d",
                 self.right_hand_side_kernel_name,
             ),
@@ -1147,7 +1188,8 @@ Patch overlap data
 
             ## Reconstruct the stage's input with its halo
             reconstruction_task = peano4.api.taskgraph.Task(
-                name=f"{name}_Reconstruct stage {stage}", entity=Entity.CELL
+                name=f"{name}_{self.RECONSTRUCTION_TASK_NAME} stage {stage}",
+                entity=Entity.CELL,
             )
             time_step.add_task(reconstruction_task)
             if previous_stage_task is not None:

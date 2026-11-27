@@ -1136,7 +1136,7 @@ Patch overlap data
         self.max_eigenvalue_kernel_call = self.__construct_kernel_call(Target.Serial, False, self.max_eigenvalue_kernel_function_name)
         self.__create_time_step_functions(peano_project.directory)
         
-        reconstruction_task           = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reconstruct", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        reconstruction_task           = peano4.api.taskgraph.Task(name=f"{self._solver.name}_{self.RECONSTRUCTION_TASK_NAME}", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         update_cell_task              = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Update cell", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         update_cell_shell_task        = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Update cell shell", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         insert_patch_interior_task    = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Insert patch interior", entity=peano4.api.taskgraph.Task.GridEntity.CELL, may_spawn_background_tasks=False)
