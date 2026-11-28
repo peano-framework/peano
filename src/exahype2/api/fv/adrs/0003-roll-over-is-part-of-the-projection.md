@@ -38,4 +38,8 @@ the projection and the restriction of the hanging faces, i.e. it copies the fina
   the roll over copies garbage and nothing detects it in a release build.
 - The explicit scheme has no task `Roll over faces` anymore.
 - Runge-Kutta Finite Differences follow the same pattern
-  (`src/exahype2/api/rkfd4/adrs/0004-roll-over-is-part-of-the-projection.md`).
+  (`src/exahype2/api/rkfd4/adrs/0004-roll-over-is-part-of-the-projection.md`), and so do the FOSO
+  derivatives of ExaGRyPE. Their separate roll over tasks also produced `dt=inf` as soon as the compiler
+  honoured the events of the tasks (`src/peano4/api/taskgraph/adrs/0002-fusion-follows-first-and-last-event.md`):
+  the roll over acts in `touchFaceLastTime()`, and the node of the max eigenvalue task and of the roll over
+  could not follow the projection.

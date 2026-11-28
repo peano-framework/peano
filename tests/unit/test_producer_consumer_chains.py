@@ -27,6 +27,9 @@ class _ActionSet:
     def get_implementation_of_unprepareTraversal(self):
         return ""
 
+    def get_implementation_of_prepareTraversal(self):
+        return ""
+
     def may_run_in_background_task(self):
         return self.background
 

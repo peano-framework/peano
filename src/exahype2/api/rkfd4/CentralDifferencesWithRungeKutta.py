@@ -840,7 +840,7 @@ Patch overlap data
 
         output_directory = peano4_project.directory
         temporary_output_directory = peano4_project.temporary_directory
-            
+
         for function, file_suffix, function_name in kernels:
             dslhype.translate_dslhype_function(
                 function=function,
@@ -872,7 +872,10 @@ Patch overlap data
             if file_suffix.endswith("3d")
         )
         with open(
-            os.path.join(temporary_output_directory, "kernels", f"{self._solver.name}_fd4.h"), "w"
+            os.path.join(
+                temporary_output_directory, "kernels", f"{self._solver.name}_fd4.h"
+            ),
+            "w",
         ) as file:
             file.write(
                 f"""#pragma once
@@ -1489,10 +1492,6 @@ Patch overlap data
             self.wrap_task_graph_in_load_balancing_and_amr_tasks(time_step)
 
         if peano4.api.Logger().is_visualisation:
-            time_step.visualise(
-                title="Time stepping task graph for {}".format(name)
-            )
+            time_step.visualise(title="Time stepping task graph for {}".format(name))
         if peano4.api.Logger().is_text:
-            time_step.log_as_text(
-                title="Time stepping task graph for {}".format(name)
-            )
+            time_step.log_as_text(title="Time stepping task graph for {}".format(name))

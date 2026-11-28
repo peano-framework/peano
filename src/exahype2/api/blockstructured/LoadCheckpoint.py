@@ -334,7 +334,9 @@ class LoadCheckpoint(Solver.GridConstruction):
             ),
         )
         refine_task.add_action_set(_RefineFromCheckpoint(reader, includes))
-        refine_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
+        balance_load_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Balance load after refinement", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL)
+        balance_load_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
+        balance_load_task.add_dependency(refine_task)
 
         consolidate_load_balancing_task = peano4.api.taskgraph.Task(
             name=f"{self._solver.name}_Consolidate mesh",
@@ -345,14 +347,16 @@ class LoadCheckpoint(Solver.GridConstruction):
                 " and ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasSplitRecently() )"
             ),
         )
-        consolidate_load_balancing_task.add_action_set(
+        consolidate_balance_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Consolidate load balancing", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL)
+        consolidate_balance_task.add_action_set(
             toolbox.loadbalancing.api.actionsets.ToggleLoadBalancing(
                 enable_load_balancing=False, plug_into_prepare_traversal=True
             )
         )
-        consolidate_load_balancing_task.add_action_set(
+        consolidate_balance_task.add_action_set(
             toolbox.loadbalancing.api.actionsets.LoadBalancing()
         )
+        consolidate_balance_task.add_dependency(consolidate_load_balancing_task)
         consolidate_load_balancing_task.add_dependency(refine_task)
 
         load_task = peano4.api.taskgraph.Task(
@@ -385,6 +389,8 @@ class LoadCheckpoint(Solver.GridConstruction):
 
         setup_simulation.add_task(refine_task)
         setup_simulation.add_task(consolidate_load_balancing_task)
+        setup_simulation.add_task(balance_load_task)
+        setup_simulation.add_task(consolidate_balance_task)
         setup_simulation.add_task(load_task)
 
         if peano4.api.Logger().is_visualisation:

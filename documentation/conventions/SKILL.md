@@ -11,7 +11,7 @@ Significant means actual text has changed.
 Fixing single typos or references does not mean significant.
 If a current merge request would already involve more than 10 files, then only focus on the 10 files that have already most of the changes.
 Ignore the others.
-Ensure that the formatter never changes more than 10 percent of a file by means of lines of code.
+Ensure that the formatter never changes more than 20 percent of a file by means of lines of code.
 
 
 
