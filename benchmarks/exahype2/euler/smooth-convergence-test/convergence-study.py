@@ -14,10 +14,8 @@ By default, the study runs the Finite Difference schemes rk1fd4, rk2fd4, rk3fd4 
 rk4fd4 one after another (each in a subdirectory of the work directory) and fails
 if any of them misses its minimum order.
 
-All of this is repeated for each task graph compiler in COMPILERS: the default
-one (fusion) and the task graph assembly
-(@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
-graph while it traverses the mesh, without and with concatenation. The runs of a
+All of this is repeated for each task graph compiler of the registry
+@ref peano4.api.taskgraph.compiler.Compilers. The runs of a
 compiler live in <work directory>/<load balancing>/<compiler>/<scheme>.
 
 A set, i.e. one task graph compiler with one scheme, stops at its first failure:
@@ -40,6 +38,8 @@ import re
 import subprocess
 import sys
 
+import peano4.api.taskgraph.compiler.Compilers
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ## Orders the scheme has to reach at least, i.e. slightly below the formal ones
 MINIMUM_ORDERS = {
@@ -56,8 +56,9 @@ END_TIME = 0.05
 ## a single tree, then several trees, so errors which stem from the load balancing
 ## show up as such
 LOAD_BALANCINGS = ["none", "spread-out"]
-## Task graph compilers the study checks, see smooth-convergence-test.py
-COMPILERS = ["fusion", "assembly-fusion", "assembly-concatenation-fusion"]
+## Task graph compilers the study checks, i.e. all of them, see
+## smooth-convergence-test.py
+COMPILERS = list(peano4.api.taskgraph.compiler.Compilers.COMPILERS)
 
 parser = argparse.ArgumentParser(description=__doc__.strip().split("\n")[0])
 parser.add_argument(

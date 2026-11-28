@@ -1,6 +1,6 @@
 ---
 name: exahype2:integration-test
-description: Re-run the ExaHyPE 2 / ExaGRyPE integration test, i.e. the convergence study of the gauge wave benchmark (benchmarks/exagrype/gauge-wave) over the schemes fv, rk1fd4, rk2fd4, rk3fd4 and rk4fd4 and over several mesh sizes, plus the Euler entropy wave convergence study of the Finite Differences schemes rk1fd4 to rk4fd4 with adaptive time stepping (benchmarks/exahype2/euler/smooth-convergence-test), plus the AMR check of the Euler point source (benchmarks/exahype2/euler/point-source). Use when the user asks to run/re-run the integration test or the gauge wave convergence study, or to check that changes to the numerical schemes, task graph, kernels or code generation have not broken the numerical correctness. All studies run first with a single tree and then with the load balancing SpreadOut. The gauge wave uses all task graph compilers, the Euler studies the default one and the task graph assembly. Runtimes are recorded, but they are not an acceptance criterion (that is the job of exahype2:performance-test).
+description: Re-run the ExaHyPE 2 / ExaGRyPE integration test, i.e. the convergence study of the gauge wave benchmark (benchmarks/exagrype/gauge-wave) over the schemes fv, rk1fd4, rk2fd4, rk3fd4 and rk4fd4 and over several mesh sizes, plus the Euler entropy wave convergence study of the Finite Differences schemes rk1fd4 to rk4fd4 with adaptive time stepping (benchmarks/exahype2/euler/smooth-convergence-test), plus the AMR check of the Euler point source (benchmarks/exahype2/euler/point-source). Use when the user asks to run/re-run the integration test or the gauge wave convergence study, or to check that changes to the numerical schemes, task graph, kernels or code generation have not broken the numerical correctness. All studies run first with a single tree and then with the load balancing SpreadOut, each with all task graph compilers. Runtimes are recorded, but they are not an acceptance criterion (that is the job of exahype2:performance-test).
 allowed-tools: [Bash, Read]
 ---
 
@@ -89,28 +89,23 @@ replacement for the `spread-out` runs.
 
 ## Task graph compilers
 
-All three scripts repeat their study with several compilers (see
-`src/peano4/api/taskgraph/compiler/Compilers.py`), and each compiler has to pass with the
-same criteria. The gauge wave study uses all compilers of this registry. The two Euler
-studies use these three:
-
-- `fusion`, the default of the benchmarks;
-- `assembly-fusion`, the task graph assembly (`TaskGraphAssembly`), which spawns the touch
-  events as tasks and assembles the task graph while it traverses the mesh (ADR 0001 in
-  `src/peano4/api/taskgraph/compiler/adrs`);
-- `assembly-concatenation-fusion`, the same where task dependencies replace consumers, i.e.
-  the task graph spans several mesh traversals.
+All three scripts repeat their study with all compilers of the registry in
+`src/peano4/api/taskgraph/compiler/Compilers.py`, and each compiler has to pass with the
+same criteria. `fusion` is the default of the benchmarks. The `producer-consumer*` compilers
+spawn cell tasks as background tasks (`CellTaskProducerConsumer`); mind that
+`producer-consumer` is the sequential variant, whereas `producer-consumer-chains` fuses.
+The `assembly*` compilers (`TaskGraphAssembly`) spawn the touch events as tasks and assemble
+the task graph while they traverse the mesh; with `concatenation`, task dependencies replace
+consumers, i.e. the task graph spans several mesh traversals.
 
 Do not drop a compiler from the integration test unless the user asks for it. `--compilers`
-restricts or extends the list, e.g. `--compilers assembly-fusion`. The sequential assembly
-variants are not part of the Euler studies, as the sequential compilers hang on benchmarks whose setup
-repeats a traversal until the grid is stationary (ADR 0001). Report one verdict per load balancing and compiler.
+restricts the list, e.g. `--compilers assembly-fusion`. Report one verdict per load balancing and compiler.
 If only the assembly compilers fail, the problem is in the assembly; if `fusion` fails, too,
 it is more likely in a part which all compilers share.
 
 Each combination has a subdirectory `<load balancing>/<compiler>` of its own in the work (and
-output) directory. The combinations (two load balancings times all compilers for the gauge
-wave, times three compilers for each Euler study) run one after another, i.e. multiply the
+output) directory. The combinations (two load balancings times all compilers) run one
+after another, i.e. multiply the
 runtimes given below, which refer to one combination (not measured yet), accordingly. The expected values below stem from `fusion` (the gauge wave
 with one tree, the Euler studies with `SpreadOutOnceGridStagnates`); they have not been
 measured with the assembly compilers on all studies, nor with `SpreadOut`.
@@ -265,11 +260,10 @@ If it fails:
 - `new dt=inf` and NaN: see the symptoms of the entropy wave study. The point source run found that
   the roll over of the faces of the explicit Finite Volume scheme was a task of its own, which the
   producer-consumer compiler fused into a later traversal than the projection (ADR 0003 in
-  `src/exahype2/api/fv/adrs`). The benchmark itself uses `FuseSteps` rather than the
-  producer-consumer compiler.
+  `src/exahype2/api/fv/adrs`).
 - A run that makes no progress and burns CPU time on all threads: in `tarch::multicore::waitForTasks()`,
   the producer-consumer compiler deadlocked on large meshes (all threads wait for the read lock of the
-  dependency tracking). Attach `gdb -p` to see it. Not an issue of the benchmark.
+  dependency tracking). Attach `gdb -p` to see it.
 - "The mesh never coarsened": check the thresholds `--refine-threshold` and `--erase-threshold`
   of `point-source.py`, and that `min_volume_size` and `max_volume_size` of the scheme allow
   coarsening.

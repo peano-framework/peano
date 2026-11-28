@@ -53,9 +53,8 @@ For each load balancing, the study repeats all runs with each task graph compile
 the registry @ref peano4.api.taskgraph.compiler.Compilers, i.e. a new compiler is
 studied without any change to this script. All of them have to reach the same orders.
 The compilers are studied one after another. --compilers restricts the list.
-The script has no timeout: If a run hangs (the sequential compilers can, see ADR 0001
-of the task graph compilers), terminate its executable with kill (SIGTERM), so the
-study records a failure and continues.
+The script has no timeout: If a run hangs, terminate its executable with kill
+(SIGTERM), so the study records a failure and continues.
 
 
 ## Scheduling

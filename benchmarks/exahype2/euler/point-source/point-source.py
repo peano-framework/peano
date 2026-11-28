@@ -94,11 +94,6 @@ generates, builds and compiles the code in the current directory; run ./point-so
 afterwards. The plots are written as Peano patch files. The default end time is short
 (0.01), as the memory-filling mesh takes minutes per time step.
 
-The script uses peano4.api.taskgraph.compiler.FuseSteps rather than the producer-consumer
-task compiler: On meshes of this size, the latter deadlocks in
-tarch::multicore::waitForTasks(), which waits for tasks while it holds the read lock of
-the dependency tracking.
-
 """
 import argparse
 import os
@@ -427,9 +422,6 @@ if args.load_balancing != "none":
         LOAD_BALANCING_STRATEGIES[args.load_balancing],
         "new ::exahype2::LoadBalancingConfiguration()",
     )
-# The default compiler spawns no background tasks: On meshes that fill the main
-# memory, the producer-consumer compiler deadlocks in tarch::multicore::waitForTasks(),
-# which waits for tasks while holding the read lock of the dependency tracking.
 project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 project.set_Peano4_installation(

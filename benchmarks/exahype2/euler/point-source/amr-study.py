@@ -17,10 +17,8 @@ Generates, builds and runs the point source benchmark
 Prints a table of the mesh over time, the differences and PASSED or FAILED, and exits
 non-zero on FAILED. Finished runs in the work directory are reused.
 
-The check is repeated for each task graph compiler in COMPILERS: the default one
-(fusion) and the task graph assembly
-(@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
-graph while it traverses the mesh, without and with concatenation. Each compiler
+The check is repeated for each task graph compiler of the registry
+@ref peano4.api.taskgraph.compiler.Compilers. Each compiler
 is compared against its own run on the regular grid; its runs live in
 <work directory>/<load balancing>/<compiler>.
 
@@ -46,6 +44,7 @@ import sys
 
 import numpy as np
 
+import peano4.api.taskgraph.compiler.Compilers
 from tarch.plotter.api.input.PatchFileParser import PatchFileParser
 from tarch.plotter.api.notebook import read_snapshots
 
@@ -56,8 +55,8 @@ VOLUMES_PER_PATCH_AXIS = 9
 ## a single tree, then several trees, so errors which stem from the load balancing
 ## show up as such
 LOAD_BALANCINGS = ["none", "spread-out"]
-## Task graph compilers the check covers, see point-source.py
-COMPILERS = ["fusion", "assembly-fusion", "assembly-concatenation-fusion"]
+## Task graph compilers the check covers, i.e. all of them, see point-source.py
+COMPILERS = list(peano4.api.taskgraph.compiler.Compilers.COMPILERS)
 
 
 def run(work_directory: str, levels: int, arguments):
