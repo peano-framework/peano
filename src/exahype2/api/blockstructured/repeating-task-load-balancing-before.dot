@@ -1,0 +1,28 @@
+digraph before {
+  rankdir=TB; nodesep=0.5; ranksep=0.55;
+  fontname="Helvetica"; fontsize=16; labelloc=t;
+  label="Before the fix: finishStep() sits in a task of its own";
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#eef3fb"];
+  edge [fontname="Helvetica", fontsize=11];
+
+  state   [label="State of the load balancing", shape=cylinder, style=filled, fillcolor="#fff3cd"];
+
+  subgraph cluster_graph {
+    label="Task graph"; fontsize=13; style=dashed;
+    refine  [label="Refine mesh / Adapt mesh  (cell task)\nmesh action sets\n\nrepeats while it waits for the load balancing:\nsetup: not hasStagnated()  or  not hasMeshBeenStationary()\nmesh adaptation: hasSplitRecently()"];
+    balance [label="Balance load  (global task)\nLoadBalancing: finishStep()"];
+    refine -> balance [label="  is followed by (dependency)"];
+  }
+  balance -> state  [label="  only finishStep() updates it"];
+  state -> refine   [label="  repeat condition reads it", style=dashed, constraint=false];
+
+  question [label="The compiler decides whether\nboth tasks share a mesh sweep", shape=diamond, style=filled, fillcolor="#ffffff"];
+  balance -> question [style=invis];
+  state -> question [style=invis];
+
+  fused [label="Fused, e.g. fusion\nOne step: mesh action sets, then finishStep()\nEvery sweep updates the state\nThe repetition terminates", fillcolor="#d8f0d8"];
+  apart [label="Kept apart, e.g. sequential\nStep 1 repeats without finishStep()\nStep 2 would only follow after the repetition\nWhile the condition holds, nothing changes it:\nendless mesh sweeps", fillcolor="#f8d7da"];
+  question -> fused [label="  yes"];
+  question -> apart [label="  no"];
+  apart -> apart [label="  repeat"];
+}

@@ -198,6 +198,7 @@ import time
 import numpy as np
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 import exagrype.api
 
@@ -236,9 +237,9 @@ parser.add_argument(
 )
 parser.add_argument(
     "--compiler",
-    choices=["sequential", "fusion"],
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
-    help="Task graph compiler: one mesh traversal per task (sequential) or fused traversals (fusion)",
+    help="Task graph compiler: one mesh traversal per task (sequential), fused traversals (fusion), or the other compilers of peano4.api.taskgraph.compiler.Compilers",
 )
 parser.add_argument("--end-time", type=float, default=0.1, help="Simulation end time")
 parser.add_argument(
@@ -298,14 +299,16 @@ def build(scheme, formulation, cells):
         directory=directory,
         executable=executable,
     )
-    initial_condition = exagrype.api.initialvalues.gauge_wave()
     if formulation == "FO":
         solver = exagrype.api.FOCCZ4Solver(name)
-        solver.add_pde_term(initial_condition)
+        solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
         scheme_owner = solver
     else:
         # The pair of CCZ4 and reconstruction solver. The pair holds the scheme.
-        pair = exagrype.api.FOSOSolver(name, initial_condition=initial_condition)
+        pair = exagrype.api.FOSOSolver(
+            name,
+            initial_condition=exagrype.api.initialvalues.gauge_wave_evolved_variables(),
+        )
         solver = pair.ccz4
         scheme_owner = pair
     # The grid cells have to be strictly smaller than volume_size times the patch size
@@ -356,11 +359,7 @@ def build(scheme, formulation, cells):
     else:
         project.add_solver(pair)
 
-    project.compiler = (
-        peano4.api.taskgraph.compiler.Sequential.translate
-        if arguments.compiler == "sequential"
-        else peano4.api.taskgraph.compiler.FuseSteps.translate
-    )
+    project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[arguments.compiler]
     project.set_global_simulation_parameters(
         dimensions=3,
         offset=[0.0, 0.0, 0.0],

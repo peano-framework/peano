@@ -71,7 +71,6 @@ InitPointWiselyWithLogo = """
   Q[Variables::h]  = depth + 0.1 * std::exp(-100.0 * (x[0] * x[0] + x[1] * x[1]));
   Q[Variables::hu] = 0.0;
   Q[Variables::hv] = 0.0;
-  bathymetry[Bathymetry::b] = -depth;
 """
 
 FluxEta = """
@@ -108,7 +107,12 @@ InitPointWiselyEta = """
   Q[Variables::eta] = 0.1 * std::exp(-100.0 * (x[0] * x[0] + x[1] * x[1]));
   Q[Variables::hu]  = 0.0;
   Q[Variables::hv]  = 0.0;
-  bathymetry[Bathymetry::b] = -depth;
+"""
+
+InitSeaFloor = """
+  const int column = std::clamp(static_cast<int>((x[0] + 1.0) / 2.0 * DurhamLogoSize), 0, DurhamLogoSize - 1);
+  const int row    = std::clamp(static_cast<int>((1.0 - x[1]) / 2.0 * DurhamLogoSize), 0, DurhamLogoSize - 1);
+  bathymetry[Bathymetry::b] = DurhamLogo[row][column] == '1' ? -4.0 : -1.0;
 """
 
 Bathymetry = os.path.join(Here, "..", "bathymetry")
@@ -164,6 +168,10 @@ def build_and_run(
     solver.add_pde_term(
         exahype2.api.InitPointWisely(implementation=init, stateless=False)
     )
+    if with_logo:
+        solver.add_pde_term(
+            exahype2.api.InitAuxiliaryVariablesPointWisely(implementation=InitSeaFloor)
+        )
     solver.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(solver, 9)
     solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
         solver, volume_size=0.01

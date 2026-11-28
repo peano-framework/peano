@@ -111,11 +111,16 @@ def build_and_run(directory):
         )
         solver.add_pde_term(
             exahype2.api.InitPointWisely(
-                implementation=InitialWater.format(centre=centre)
-                + (InitialSeaFloor if owns_sea_floor else ""),
+                implementation=InitialWater.format(centre=centre),
                 stateless=False,
             )
         )
+        if owns_sea_floor:
+            solver.add_pde_term(
+                exahype2.api.InitAuxiliaryVariablesPointWisely(
+                    implementation=InitialSeaFloor
+                )
+            )
         solver.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(solver, 9)
         solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
             solver, volume_size=0.01

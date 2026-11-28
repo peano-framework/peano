@@ -61,6 +61,11 @@ bool toolbox::loadbalancing::AbstractLoadBalancing::hasSplitRecently() const {
 }
 
 
+bool toolbox::loadbalancing::AbstractLoadBalancing::hasMeshBeenStationary() const {
+  return _statistics.getNumberOfStateUpdatesWithoutAnySplit() >= NumberOfMeshSweepsAfterSplitToMakeMeshConsistentAgain + 1 and _statistics.getLocalNumberOfSplits() == 0;
+}
+
+
 void toolbox::loadbalancing::AbstractLoadBalancing::enable(bool value) {
   if (value and _state == State::SwitchedOff) {
     _state = State::InterRankBalancing;

@@ -278,6 +278,14 @@ class Solver(abc.ABC):
 
         """
 
+        PROJECT_ON_FACES_TASK_NAME = "Project on faces"
+        """!
+        Name, without solver prefix, of the setup task which projects the
+        initial condition of a solver onto the faces. Whoever needs the
+        halos of the initial condition hooks in behind it
+        (@ref exagrype.api.FOSOSolver).
+        """
+
         def __init__(self, solver: "Solver"):
             self._solver = solver
 
@@ -811,7 +819,7 @@ class Solver(abc.ABC):
         Any number of sets can be attached. They have to be attached before
         the code is generated. Each set is held by its own cell data object.
         The first solver which a set is attached to owns it and initialises
-        it. Further solvers can attach the same set object and thereby share
+        it (@ref exahype2.api.InitAuxiliaryVariablesPointWisely). Further solvers can attach the same set object and thereby share
         the data. @ref exahype2.api.AuxiliaryVariables explains the impact
         on the C++ signatures.
 
@@ -841,10 +849,8 @@ class Solver(abc.ABC):
         self._auxiliary_variables.append(auxiliary)
 
     def signature_of(self, term: PDETerm) -> str:
-        """! The signature of a PDE term including the pointers to the auxiliary variables"""
-        from .AuxiliaryVariables import extend_signature
-
-        return extend_signature(term.SIGNATURE, self)
+        """! The signature of a PDE term, including the pointers to the auxiliary variables if the term receives them"""
+        return term.generator_for(self).signature
 
     @property
     def user_solver_includes(self) -> str:

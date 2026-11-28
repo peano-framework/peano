@@ -7,6 +7,9 @@ import toolbox.loadbalancing.api.actionsets
 from ..InitPointWisely import InitPointWisely
 from ..Solver import Solver
 from ..AuxiliaryVariables import add_auxiliary_variables_to_setup
+from ..blockstructured.InitialiseAuxiliaryVariables import (
+    InitialiseAuxiliaryVariables,
+)
 from .actionsets import InitialCondition
 from .actionsets import ProjectPatchOntoFaces
 from .actionsets import RollOverUpdatedFace
@@ -36,6 +39,28 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
     the data the numerical scheme assigns to the solver: solver._patch,
     solver._patch_overlap_update and solver._patch_overlap_current_time_step,
     plus the numerical scheme's patch_size.
+
+    ## Why the refinement task informs the load balancing itself
+
+    The task Refine mesh repeats until the load balancing has stagnated and
+    reports that the mesh has been stationary
+    (@ref toolbox::loadbalancing::AbstractLoadBalancing::hasMeshBeenStationary()
+    explains why it must not terminate as soon as the load balancing has not
+    split recently anymore). Only finishStep() updates both, i.e. the action
+    set toolbox.loadbalancing.api.actionsets.LoadBalancing which calls it has
+    to be part of this very task. It used to sit in a task of its own which
+    depended on the refinement. The setup then terminated only if the task
+    graph compiler happened to fuse both tasks. With load balancing, the
+    compilers sequential, producer-consumer,
+    producer-consumer-chains-sequential, assembly and assembly-concatenation
+    kept them apart and repeated the mesh sweep forever. A single tree without
+    load balancing does not show the problem.
+
+    @image html repeating-task-load-balancing-before.png
+    @image html repeating-task-load-balancing-after.png
+
+    The sources of the graphs are the .dot files next to the images in
+    src/exahype2/api/blockstructured.
 
     """
 
@@ -90,7 +115,7 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
                 "not peano4::grid::isGridStationary( peano4::parallel::SpacetreeSet::getInstance().getGridStatistics() )"
                 " or ( ::toolbox::loadbalancing::LoadBalancingService::getInstance().hasLoadBalancing()"
                 " and ( not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasStagnated()"
-                " or ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasSplitRecently() ) )"
+                " or not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasMeshBeenStationary() ) )"
             ),
         )
         consolidate_load_balancing_task = peano4.api.taskgraph.Task(
@@ -128,10 +153,13 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
 """,
             )
         )
-        # Inform the load balancing after every mesh refinement sweep
-        balance_load_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Balance load after refinement", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL)
-        balance_load_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
-        balance_load_task.add_dependency(refine_task)
+        # Inform the load balancing after every mesh refinement sweep. The
+        # action set has to be part of the refinement task: The task repeats
+        # until the load balancing has stagnated, which only finishStep()
+        # tells. In a task of its own, it runs within the repetition only if
+        # the task graph compiler happens to fuse both tasks. If it does not,
+        # the setup never terminates.
+        refine_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
         # Once the mesh is constructed, switch the load balancing off and let
         # the mesh consolidate: we keep on running mesh sweeps until the
         # mesh is stationary and the most recent splits have been carried out.
@@ -149,7 +177,7 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
             entity=peano4.api.taskgraph.Task.GridEntity.CELL,
         )
         project_on_faces_task = peano4.api.taskgraph.Task(
-            name=f"{self._solver.name} Project on faces",
+            name=f"{self._solver.name} {Solver.GridConstruction.PROJECT_ON_FACES_TASK_NAME}",
             entity=peano4.api.taskgraph.Task.GridEntity.CELL,
         )
 
@@ -183,15 +211,28 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
             )
         )
 
-        add_auxiliary_variables_to_setup(
-            self._solver, initial_condition_task, project_on_faces_task, ProjectPatchOntoFaces, RollOverUpdatedFace
+        initialise_auxiliary_variables_task = add_auxiliary_variables_to_setup(
+            self._solver,
+            initial_condition_task,
+            project_on_faces_task,
+            ProjectPatchOntoFaces,
+            RollOverUpdatedFace,
+            lambda: InitialiseAuxiliaryVariables(
+                self._solver,
+                "::exahype2::fd::getGridCellCentre",
+                includes='#include "exahype2/fd/PatchUtils.h"\n'
+                + self._solver._get_default_includes()
+                + self._solver.user_solver_includes,
+                guard=self._solver.grid_selector.createCellGuard(),
+            ),
         )
 
         setup_simulation.add_task(refine_task)
         setup_simulation.add_task(consolidate_load_balancing_task)
-        setup_simulation.add_task(balance_load_task)
         setup_simulation.add_task(consolidate_balance_task)
         setup_simulation.add_task(initial_condition_task)
+        if initialise_auxiliary_variables_task is not None:
+            setup_simulation.add_task(initialise_auxiliary_variables_task)
         setup_simulation.add_task(project_on_faces_task)
 
         initial_condition_task.use_cell(

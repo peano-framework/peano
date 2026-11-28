@@ -2,6 +2,7 @@
  use, please see the copyright notice at www.peano-framework.org
 """
 
+import re
 from typing import Dict, List, Tuple, Union
 
 import exahype2.api
@@ -27,6 +28,14 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     pointer, the 33 auxiliary variables to the very same kernels as the
     first-order solver exagrype.api.FOCCZ4Solver. The second-order kernels set the time derivative of the 33
     derivatives to zero, and the solver does not even ask for it.
+
+    ## Initial condition
+
+    The initial condition sets the 25 evolved unknowns only, e.g. via
+    exagrype.api.initialvalues.gauge_wave_evolved_variables(). It never sees
+    the derivatives: exagrype.api.FOSOSolver reconstructs them in setup tasks
+    which follow the initial condition
+    (src/exagrype/ccz4/adrs/0007-the-setup-reconstructs-the-derivatives.md).
 
     ## Ping-pong with the reconstruction solver
 
@@ -145,21 +154,24 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
           rejected, as they most likely are typos.
 
         @param initial_condition: exahype2.api.InitPointWisely
-          Initial condition. It fills the 58 entries of the first-order
-          formulation, i.e. it can be any routine from
-          exagrype.api.initialvalues. The solver takes the first 25 as its
-          unknowns, and uses the other 33 as the initial value of the
-          derivatives. Defaults to exagrype.api.initialvalues.gauge_wave().
+          Initial condition. It fills the 25 unknowns (@ref Unknowns), and
+          nothing else: Q has 25 entries, i.e. an implementation which writes
+          all 58 entries of the first-order formulation writes beyond the end
+          of Q. Use the routines of exagrype.api.initialvalues with the
+          suffix _evolved_variables. The solver rejects the 58-entry routines
+          of exagrype.api.initialvalues, but it cannot check C++ of your
+          own. Defaults to
+          exagrype.api.initialvalues.gauge_wave_evolved_variables().
+
+        @exception ValueError if the initial condition calls one of the
+          routines which fill all 58 entries.
 
         """
         super().__init__(name, self.Unknowns, parameters)
-        self.add_pde_term(
-            self._adapt_initial_condition(
-                initial_condition
-                if initial_condition is not None
-                else initialvalues.gauge_wave()
-            )
-        )
+        if initial_condition is None:
+            initial_condition = initialvalues.gauge_wave_evolved_variables()
+        self._check_initial_condition(initial_condition)
+        self.add_pde_term(initial_condition)
         self.derivatives = exahype2.api.AuxiliaryVariables(
             "Derivatives",
             self.DerivativeUnknowns,
@@ -356,33 +368,17 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
   );
 """
 
-    def _adapt_initial_condition(
-        self, initial_condition: exahype2.api.InitPointWisely
-    ) -> exahype2.api.InitPointWisely:
-        """!
-
-        The initial condition fills 58 entries; we split them up
-
-        The routine wraps the user's implementation. It runs the
-        implementation on a local array of 58 entries (the implementation
-        sees it as Q) and then copies the first 25 entries onto Q and the
-        other 33 onto the derivatives.
-
-        """
-        if initial_condition.implementation is None:
-            raise ValueError(
-                f"Solver {self.name}: the initial condition needs an implementation "
-                "which fills the 58 entries of the first-order formulation"
-            )
-        evolved = self._number_of_evolved_entries()
-        return exahype2.api.InitPointWisely(
-            implementation=f"""
-  double initialValues[{self.NUMBER_OF_CCZ4_ENTRIES}];
-  {{
-    double* __restrict__ Q = initialValues;
-{initial_condition.implementation}
-  }}
-  for (int i = 0; i < {evolved}; i++) Q[i] = initialValues[i];
-  for (int i = 0; i < {self._number_of_derivatives()}; i++) derivatives[i] = initialValues[{evolved} + i];
-"""
-        )
+    def _check_initial_condition(self, initial_condition: exahype2.api.InitPointWisely):
+        """! Reject the routines which write all 58 entries, as Q has 25 only"""
+        for function in initialvalues.FIRST_ORDER_FUNCTIONS:
+            if re.search(
+                rf"initialvalues::{function}\s*\(",
+                initial_condition.implementation or "",
+            ):
+                raise ValueError(
+                    f"Solver {self.name}: the initial condition calls "
+                    f"exagrype::initialvalues::{function}(), which fills all "
+                    f"{self.NUMBER_OF_CCZ4_ENTRIES} entries of first-order CCZ4, but Q holds "
+                    f"{self._number_of_evolved_entries()} entries. Use a routine of "
+                    "exagrype.api.initialvalues with the suffix _evolved_variables."
+                )

@@ -138,4 +138,8 @@ class SetupSimulationWithUserCodedRefinementCriterion(SetupSimulationOverRegular
         adapt_mesh_task.use_cell(
             self._solver._patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE
         )
+        for auxiliary in self._solver.auxiliary_variables:
+            adapt_mesh_task.use_cell(
+                auxiliary.patch, peano4.api.taskgraph.Task.DataAccess.READ_AND_WRITE
+            )
         return adapt_mesh_task

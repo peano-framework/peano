@@ -50,6 +50,25 @@ class AdaptMeshAndBalanceLoad(Solver.MeshAdaptation):
        zero, i.e. they keep them. Ghost volumes of faces along the boundary
        which the refinement has created are hence not set properly.
 
+    ## Why the adaptation task informs the load balancing itself
+
+    The task Adapt mesh and balance load repeats, amongst others, while the
+    load balancing has split recently. Only finishStep() updates this
+    information, i.e. the action set
+    toolbox.loadbalancing.api.actionsets.LoadBalancing which calls it has to
+    be part of this very task. In a task of its own, it runs within the
+    repetition only if the task graph compiler happens to fuse both tasks. If
+    it does not, nothing can end a repetition which waits for a recent split.
+    We have observed this endless repetition with the setup over a regular
+    grid (@ref exahype2.api.fv.SetupSimulationOverRegularGrid), which followed
+    the same pattern. We have not observed it within the mesh adaptation.
+
+    @image html repeating-task-load-balancing-before.png
+    @image html repeating-task-load-balancing-after.png
+
+    The sources of the graphs are the .dot files next to the images in
+    src/exahype2/api/blockstructured.
+
     """
 
     ## Repeat condition of the task which adapts the mesh and balances the load
@@ -117,9 +136,11 @@ class AdaptMeshAndBalanceLoad(Solver.MeshAdaptation):
                 additional_includes=includes,
             )
         )
-        balance_load_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Balance load", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL)
-        balance_load_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
-        balance_load_task.add_dependency(adapt_task)
+        # The task repeats while the load balancing has split recently, which
+        # only finishStep() updates. The action set hence has to be part of
+        # this task. In a task of its own, it runs within the repetition only
+        # if the task graph compiler happens to fuse both tasks.
+        adapt_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
 
         project_on_faces_task = peano4.api.taskgraph.Task(
             name=f"{self._solver.name}_Project on faces",
@@ -139,7 +160,6 @@ class AdaptMeshAndBalanceLoad(Solver.MeshAdaptation):
         self._add_projection_action_sets(project_on_faces_task, exahype2_project)
 
         mesh_adaptation.add_task(adapt_task)
-        mesh_adaptation.add_task(balance_load_task)
         mesh_adaptation.add_task(project_on_faces_task)
 
         if peano4.api.Logger().is_visualisation:

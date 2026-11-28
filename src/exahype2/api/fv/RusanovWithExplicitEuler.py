@@ -535,17 +535,30 @@ Patch overlap data
 
 
 class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGenerator):
-    def __init__(self, solver: Solver, configurations: list[KernelConfiguration]):
-        super().__init__(solver, configurations)
-        initial_conditions_configurations = []
-        accelerator_enabled = [any([target == Target.Accelerator for (target, _,_,_,_) in configurations])]
-        for pde_term in solver.pde_terms:
+    def _initial_conditions_configurations(self) -> list[KernelConfiguration]:
+        """!
+
+        The versions of the initial condition kernel which are to be generated
+
+        The routine has to be called during the code generation, not before:
+        users may add PDE terms to a solver after they have created its
+        numerical scheme, and may alter the kernel configurations. The grid
+        construction calls the kernel in any case, i.e. a term which the
+        routine does not see yields code which does not compile.
+
+        @return list[KernelConfiguration]
+          One configuration per InitPointWisely term of the solver.
+
+        """
+        result = []
+        accelerator_enabled = [any([target == Target.Accelerator for (target, _,_,_,_) in self._configurations])]
+        for pde_term in self._solver.pde_terms:
             if isinstance(pde_term, InitPointWisely):
                 if pde_term.stateless and accelerator_enabled:
-                    initial_conditions_configurations.append((Target.Accelerator, True, OutputLanguage.CPP, MemoryLayout.AoS_AllFlattened, []))
+                    result.append((Target.Accelerator, True, OutputLanguage.CPP, MemoryLayout.AoS_AllFlattened, []))
                 else:
-                    initial_conditions_configurations.append((Target.Serial, False, OutputLanguage.CPP, MemoryLayout.AoS_AllFlattened, []))
-        self._initialConditionsGenerator = InitialConditionsGenerator(solver, initial_conditions_configurations)
+                    result.append((Target.Serial, False, OutputLanguage.CPP, MemoryLayout.AoS_AllFlattened, []))
+        return result
 
     def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
         # The kernels are stateless only if all PDE terms they call are. Otherwise
@@ -572,7 +585,9 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
             function_name=self._solver.numerical_scheme.max_eigenvalue_kernel_function_name,
         )
 
-        self._initialConditionsGenerator.construct_output(exahype2_project, peano_project, time_step, add_global_tasks)
+        InitialConditionsGenerator(self._solver, self._initial_conditions_configurations()).construct_output(
+            exahype2_project, peano_project, time_step, add_global_tasks
+        )
         self.__create_time_step_functions(exahype2_project, peano_project)
         
         reconstruction_task         = peano4.api.taskgraph.Task(name=f"{self._solver.name}_{Solver.NumericalScheme.RECONSTRUCTION_TASK_NAME}", entity=peano4.api.taskgraph.Task.GridEntity.CELL)

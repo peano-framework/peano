@@ -48,18 +48,17 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "..", "src")))
 
-Compilers = [
-    "sequential",
-    "fusion-only",
-    "producer-consumer-sequential",
-    "producer-consumer-fusion",
-    "producer-consumer-chains",
-]
+import peano4.api.taskgraph.compiler.Compilers
+
+## Task graph compilers of the performance study, i.e. all of them
+Compilers = list(peano4.api.taskgraph.compiler.Compilers.COMPILERS)
 
 # Name and arguments of single-black-hole.py for each configuration
 SchemeStudy = {

@@ -111,10 +111,17 @@ entries live:
   entries, it passes a nullptr for the secondary part of the result, and the
   kernels skip it.
 
-The same holds for the initial condition: any routine from
-exagrype.api.initialvalues fills 58 entries; the SO solver wraps it, runs it on a
-local array and splits the outcome over Q and the derivatives. Therefore, the
-initial conditions are not duplicated either.
+The initial condition of the SO solver sets the 25 evolved unknowns only, e.g. via
+exagrype.api.initialvalues.gauge_wave_evolved_variables(). Each analytical solution in
+exagrype::initialvalues comes in two variants: The one with the suffix
+EvolvedVariables fills the 25 unknowns, and the one for the first-order formulation
+calls it and adds the 33 analytical derivatives, so the formulae are not duplicated.
+The SO solver never takes derivatives from the initial condition. The setup
+reconstructs them: Behind the projection of the unknowns onto the faces, the host
+appends three tasks, which reconstruct the halos of the unknowns, apply the stencil
+of the scheme, and project the derivatives onto the faces
+(src/exagrype/ccz4/adrs/0007-the-setup-reconstructs-the-derivatives.md). The
+derivatives of the initial condition hence are the discrete ones, as in any time step.
 The constraint enforcement of the SO solver uses
 exagrype::ccz4::enforceCCZ4constraintsOfEvolvedVariables(), which is the first
 part of exagrype::ccz4::enforceCCZ4constraints() (it is called by the latter, i.e.

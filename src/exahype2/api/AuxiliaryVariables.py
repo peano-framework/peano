@@ -35,7 +35,8 @@ class AuxiliaryVariables:
 
     ## Impact on the C++ signatures
 
-    Every PDE term of a solver with auxiliary variables receives, directly
+    Every PDE term of a solver with auxiliary variables, with the exception
+    of the initial condition (see below), receives, directly
     behind each Q (and each deltaQ), one pointer per attached set. The
     pointers come in the order in which the sets have been attached. The
     pointer is named after the set (first letter in lower case), the pointers
@@ -52,11 +53,28 @@ class AuxiliaryVariables:
 
     ## Ownership and sharing
 
-    The first solver a set is attached to owns it. Only the owner's
-    initPointWisely() receives the set as writable argument and initialises
-    it. Further solvers can attach the same set object. They share the data,
-    i.e. they do not hold an additional copy, and initPointWisely() sees the
-    set as const.
+    The first solver a set is attached to owns it. Further solvers can attach
+    the same set object. They share the data, i.e. they do not hold an
+    additional copy.
+
+    ## Initialisation
+
+    exahype2.api.InitPointWisely sets the unknowns only: initPointWisely(x, Q)
+    receives no auxiliary variables. The owner of a set initialises it in one
+    of two ways:
+
+    - It has an exahype2.api.InitAuxiliaryVariablesPointWisely term. The
+      setup then calls initAuxiliaryVariablesPointWisely() in a task which
+      follows the initial condition, and projects the owner's sets onto the
+      faces. Of all solvers, only the owner receives writable pointers.
+    - It computes the values in setup tasks of its own, such as
+      exagrype.api.FOSOSolver, which reconstructs derivatives from the
+      neighbouring unknowns. These tasks also have to project the values onto
+      the faces.
+
+    A set whose owner does neither holds no defined values after the setup,
+    which is fine if somebody writes it before anybody reads it, such as the
+    preamble of a coupling.
 
     @remark Naming
       These quantities used to be called material parameters. "Material"
@@ -353,7 +371,7 @@ def split_signature(signature: str) -> List[str]:
     ]
 
 
-def extend_signature(signature: str, solver) -> str:
+def extend_signature(signature: str, solver, writes_owned_sets: bool = False) -> str:
     """!
 
     Add the pointers to the auxiliary variables of a solver to a PDE term's
@@ -361,13 +379,17 @@ def extend_signature(signature: str, solver) -> str:
 
     Each argument named Q is followed by one pointer per set, each argument
     named deltaQ is followed by one pointer to the jump of each set. The
-    pointers are non-const iff Q is non-const (the initial condition) and the
-    solver owns the set.
+    pointers are const, unless writes_owned_sets holds and the solver owns
+    the set.
 
     @param signature: str
       The signature without auxiliary variables
 
     @param solver: exahype2.api.Solver
+
+    @param writes_owned_sets: bool
+      The term initialises the sets which the solver owns
+      (@ref exahype2.api.InitAuxiliaryVariablesPointWisely).
 
     """
     sets = solver.auxiliary_variables
@@ -378,9 +400,10 @@ def extend_signature(signature: str, solver) -> str:
         result.append(parameter)
         name = parameter.split()[-1]
         if name == "Q":
-            writable = not parameter.startswith("const")
             for auxiliary in sets:
-                qualifier = "" if writable and auxiliary.owner is solver else "const "
+                qualifier = (
+                    "" if writes_owned_sets and auxiliary.owner is solver else "const "
+                )
                 result.append(
                     f"{qualifier}double* __restrict__ {auxiliary.argument_name}"
                 )
@@ -530,9 +553,7 @@ def add_reconstruction_tasks_of_auxiliary_variables(
     """
     Entity = peano4.api.taskgraph.Task.GridEntity
     reconstructions = []
-    for auxiliary in (
-        solver.auxiliary_variables if auxiliaries is None else auxiliaries
-    ):
+    for auxiliary in solver.auxiliary_variables if auxiliaries is None else auxiliaries:
         reconstruction = peano4.api.taskgraph.Task(
             name=f"{solver.name}_{AuxiliaryVariables.RECONSTRUCTION_TASK_NAME.format(auxiliary.name)}{name_suffix}",
             entity=Entity.CELL,
@@ -661,21 +682,71 @@ def code_to_copy_back_kernel_output(solver, buffer: str, unknowns: str) -> str:
 """
 
 
+def code_to_initialise_auxiliary_variables(solver, cell_centre_function: str) -> str:
+    """!
+
+    C++ which calls initAuxiliaryVariablesPointWisely() for each volume or
+    grid cell of a patch
+
+    @param solver: exahype2.api.Solver
+      Has an exahype2.api.InitAuxiliaryVariablesPointWisely term.
+
+    @param cell_centre_function: str
+      C++ function which yields the centre of a volume or grid cell of a
+      patch, such as ::exahype2::fv::getVolumeCentre.
+
+    """
+    n = solver.numerical_scheme.patch_size
+    arguments = "".join(
+        f",\n      fineGridCell{auxiliary.patch.name}.value + index * {auxiliary.size}"
+        for auxiliary in solver.auxiliary_variables
+    )
+    return f"""
+  parallelDfor( volume, {n} ) {{
+    const int index = peano4::utils::dLinearised(volume,{n});
+    repositories::{solver.get_name_of_global_instance()}.initAuxiliaryVariablesPointWisely(
+      {cell_centre_function}( marker.x(), marker.h(), {n}, volume),
+      fineGridCell{solver._unknown_identifier()}.value + index * {solver.unknowns}{arguments}
+    );
+  }} endParallelDfor
+"""
+
+
+INIT_AUXILIARY_VARIABLES_TASK_NAME = "Initialise auxiliary variables"
+"""!
+Name of the setup task which calls initAuxiliaryVariablesPointWisely(),
+without solver prefix
+"""
+
+
 def add_auxiliary_variables_to_setup(
     solver,
     initial_condition_task,
     project_on_faces_task,
     project_patch_onto_faces,
     roll_over_updated_face,
+    initialise_auxiliary_variables,
 ):
     """!
 
-    Let the setup of a solver write its auxiliary variables
+    Add the auxiliary variables of a solver to its setup tasks
 
-    Auxiliary variables are written once, by their owner: the owner
-    initialises them in its initial condition task and projects them onto the
-    faces, so the halos can be reconstructed later on. A solver that merely
-    shares a set reads it after the owner has written it.
+    The initial condition sets the unknowns only. The owner of a set with an
+    exahype2.api.InitAuxiliaryVariablesPointWisely term gets a task of its
+    own which follows the initial condition, calls
+    initAuxiliaryVariablesPointWisely(), and which the projection onto the
+    faces waits for. The projection then covers the sets the solver owns, so
+    the halos can be reconstructed later on. Without the term, the setup
+    neither initialises nor projects the sets, and whoever computes their
+    values has to project them, too (@ref exahype2.api.AuxiliaryVariables).
+    The initial condition task declares the data in either case, so it
+    exists from the start.
+
+    A solver that merely shares a set runs after the owner has written it.
+
+    If the new task follows the initial condition, it takes over the tags of
+    the initial condition task. Tasks which are inserted behind the tagged
+    task, such as the mesh adaptation, then see the auxiliary variables.
 
     @param project_patch_onto_faces: class
       The action set that projects a patch onto the faces
@@ -685,9 +756,46 @@ def add_auxiliary_variables_to_setup(
       The action set that rolls the projection over
       (exahype2.api.fv.actionsets.RollOverUpdatedFace).
 
+    @param initialise_auxiliary_variables: Callable[[], peano4.api.solversteps.ActionSet]
+      Creates the action set which calls initAuxiliaryVariablesPointWisely().
+
+    @return peano4.api.taskgraph.Task
+      The new task, which the caller has to add to the setup graph, or None
+      if the solver has no InitAuxiliaryVariablesPointWisely term.
+
+    @exception ValueError if the solver has an
+      InitAuxiliaryVariablesPointWisely term but owns no set, or if it shares
+      a set whose owner has not been set up yet.
+
     """
+    from .InitAuxiliaryVariablesPointWisely import InitAuxiliaryVariablesPointWisely
+
     Access = peano4.api.taskgraph.Task.DataAccess
     includes = solver._get_default_includes() + solver.user_solver_includes
+
+    has_term = any(
+        isinstance(term, InitAuxiliaryVariablesPointWisely) for term in solver.pde_terms
+    )
+    if has_term and not any(
+        auxiliary.owner is solver for auxiliary in solver.auxiliary_variables
+    ):
+        raise ValueError(
+            f"Solver {solver.name} has the term {InitAuxiliaryVariablesPointWisely.NAME}, "
+            "but owns no auxiliary variables which it could initialise"
+        )
+    initialisation_task = None
+    if has_term:
+        initialisation_task = peano4.api.taskgraph.Task(
+            name=f"{solver.name} {INIT_AUXILIARY_VARIABLES_TASK_NAME}",
+            entity=peano4.api.taskgraph.Task.GridEntity.CELL,
+        )
+        initialisation_task.add_dependency(initial_condition_task)
+        project_on_faces_task.add_dependency(initialisation_task)
+        initialisation_task.add_action_set(initialise_auxiliary_variables())
+        initialisation_task.use_cell(solver._patch, Access.READ_AND_WRITE)
+        initialisation_task.tags.update(initial_condition_task.tags)
+        initial_condition_task.tags.clear()
+
     for auxiliary in solver.auxiliary_variables:
         # The setup is created before the numerical scheme adds the data to the project
         auxiliary.create_data_structures(
@@ -697,38 +805,44 @@ def add_auxiliary_variables_to_setup(
         )
         if auxiliary.owner is solver:
             initial_condition_task.use_cell(auxiliary.patch, Access.WRITE)
-            project_on_faces_task.use_cell(auxiliary.patch, Access.READ_AND_WRITE)
-            project_on_faces_task.use_face(
-                auxiliary.patch_overlap_update, Access.TEMPORARY
-            )
-            project_on_faces_task.use_face(
-                auxiliary.patch_overlap_current_time_step, Access.WRITE
-            )
-            project_on_faces_task.add_action_set(
-                project_patch_onto_faces(
-                    auxiliary.patch,
-                    auxiliary.patch_overlap_update,
-                    guard=solver.grid_selector.createCellGuard(),
-                    includes=includes,
+            auxiliary._setup_writer_task = initial_condition_task
+            if has_term:
+                initialisation_task.use_cell(auxiliary.patch, Access.READ_AND_WRITE)
+                auxiliary._setup_writer_task = initialisation_task
+                project_on_faces_task.use_cell(auxiliary.patch, Access.READ_AND_WRITE)
+                project_on_faces_task.use_face(
+                    auxiliary.patch_overlap_update, Access.TEMPORARY
                 )
-            )
-            project_on_faces_task.add_action_set(
-                roll_over_updated_face(
-                    auxiliary.patch_overlap_current_time_step,
-                    auxiliary.patch_overlap_update,
-                    guard=solver.grid_selector.createFaceGuard(),
-                    includes=includes,
+                project_on_faces_task.use_face(
+                    auxiliary.patch_overlap_current_time_step, Access.WRITE
                 )
-            )
-            auxiliary._setup_initial_condition_task = initial_condition_task
+                project_on_faces_task.add_action_set(
+                    project_patch_onto_faces(
+                        auxiliary.patch,
+                        auxiliary.patch_overlap_update,
+                        guard=solver.grid_selector.createCellGuard(),
+                        includes=includes,
+                    )
+                )
+                project_on_faces_task.add_action_set(
+                    roll_over_updated_face(
+                        auxiliary.patch_overlap_current_time_step,
+                        auxiliary.patch_overlap_update,
+                        guard=solver.grid_selector.createFaceGuard(),
+                        includes=includes,
+                    )
+                )
         else:
-            owners_task = getattr(auxiliary, "_setup_initial_condition_task", None)
-            if owners_task is None:
+            writer_task = getattr(auxiliary, "_setup_writer_task", None)
+            if writer_task is None:
                 raise ValueError(
                     f"Solver {solver.name} shares the auxiliary variables {auxiliary.name} with "
                     f"{auxiliary.owner.name}, but the setup of {auxiliary.owner.name} has not been created yet. "
                     f"Add {auxiliary.owner.name} to the project before {solver.name}."
                 )
-            initial_condition_task.add_dependency(owners_task)
+            initial_condition_task.add_dependency(writer_task)
             initial_condition_task.use_cell(auxiliary.patch, Access.READ_AND_DISCARD)
+            if has_term:
+                initialisation_task.use_cell(auxiliary.patch, Access.READ_AND_WRITE)
             project_on_faces_task.use_cell(auxiliary.patch, Access.READ_AND_WRITE)
+    return initialisation_task

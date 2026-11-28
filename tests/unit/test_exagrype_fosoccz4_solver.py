@@ -133,14 +133,86 @@ def test_so_solver_calls_the_second_order_kernels():
     assert "[58]" not in ncp + source
 
 
-def test_so_solver_splits_the_initial_condition():
-    implementation = (
-        exagrype.api.FOSOCCZ4Solver("SO").get_pde_term("initPointWisely").implementation
+def test_so_solver_initialises_the_evolved_unknowns_only():
+    solver = exagrype.api.FOSOCCZ4Solver("SO")
+    term = solver.get_pde_term("initPointWisely")
+    assert "gaugeWaveEvolvedVariables(Q, x, 0.0);" in term.implementation
+    assert "derivatives" not in term.implementation
+    assert "derivatives" not in solver.signature_of(term)
+
+
+@pytest.mark.parametrize(
+    "initial_condition",
+    [
+        exagrype.api.initialvalues.gauge_wave,
+        exagrype.api.initialvalues.diagonal_gauge_wave,
+        exagrype.api.initialvalues.linear_wave,
+        exagrype.api.initialvalues.flat,
+        exagrype.api.initialvalues.single_black_hole,
+    ],
+)
+def test_so_solver_rejects_initial_conditions_which_fill_all_58_entries(
+    initial_condition,
+):
+    with pytest.raises(ValueError, match="_evolved_variables"):
+        exagrype.api.FOSOCCZ4Solver("SO", initial_condition=initial_condition())
+
+
+@pytest.mark.parametrize(
+    "name", ["gauge_wave", "diagonal_gauge_wave", "linear_wave", "flat"]
+)
+def test_so_solver_accepts_the_initial_conditions_of_the_evolved_unknowns(name):
+    initial_condition = getattr(
+        exagrype.api.initialvalues, name + "_evolved_variables"
+    )()
+    solver = exagrype.api.FOSOCCZ4Solver("SO", initial_condition=initial_condition)
+    assert solver.get_pde_term("initPointWisely") is initial_condition
+
+
+@pytest.mark.parametrize("finite_volumes", [True, False])
+def test_setup_reconstructs_the_derivatives_behind_the_projection_of_the_unknowns(
+    tmp_path, finite_volumes
+):
+    pair = exagrype.api.FOSOSolver("SO")
+    solver = pair.ccz4
+    if finite_volumes:
+        pair.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(solver, 9)
+        solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
+            solver, volume_size=1.0 / 27.0
+        )
+    else:
+        _configure(pair)
+    exahype2_project, peano_project = _project(tmp_path)
+    graphs = [peano4.api.taskgraph.Graph() for _ in range(4)]
+    pair.generate_solver_realisation(exahype2_project, peano_project, *graphs)
+    setup = {task.name: task for task in graphs[0].tasks}
+
+    project_name = (
+        f"SO {exahype2.api.Solver.GridConstruction.PROJECT_ON_FACES_TASK_NAME}"
     )
-    assert "gaugeWave" in implementation
-    assert "initialValues[58]" in implementation
-    assert "Q[i] = initialValues[i]" in implementation
-    assert "derivatives[i] = initialValues[25 + i]" in implementation
+    project_unknowns = setup[project_name]
+    # Three tasks: the halo of the unknowns, the stencil and the projection
+    chain = [
+        task for task in graphs[0].tasks if task.name.startswith("SOReconstruction_")
+    ]
+    assert len(chain) == 3
+    halo, stencil, project_derivatives = chain
+    assert project_unknowns in halo.dependencies
+    assert stencil.dependencies == [halo]
+    assert project_derivatives.dependencies == [stencil]
+    # Only the last task writes the face data of the derivatives
+    faces = solver.derivatives.patch_overlap_current_time_step.name
+
+    def uses_derivative_faces(task):
+        return any(data.name == faces for data in task.face_data)
+
+    assert uses_derivative_faces(project_derivatives)
+    assert not any(
+        uses_derivative_faces(task)
+        for task in graphs[0].tasks
+        if task is not project_derivatives
+    )
+    assert not any("Initialise auxiliary variables" in name for name in setup)
 
 
 def test_so_solver_advects_all_evolved_unknowns_with_lopsided_stencils():

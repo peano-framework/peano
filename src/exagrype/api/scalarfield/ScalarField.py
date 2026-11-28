@@ -74,6 +74,11 @@ class ScalarField(exahype2.api.Solver):
         )
         self.add_pde_term(
             exahype2.api.InitPointWisely(
-                implementation=f"::exagrype::scalarfield::initialValues(Q, {fields}, x);"
+                implementation="::exagrype::scalarfield::initialValues(Q, x);"
+            )
+        )
+        self.add_pde_term(
+            exahype2.api.InitAuxiliaryVariablesPointWisely(
+                implementation=f"::exagrype::scalarfield::initialAuxiliaryValues({fields});"
             )
         )

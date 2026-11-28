@@ -36,8 +36,9 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
       solvers is the one of the CCZ4 solver.
     - It does neither add lopsided advection nor enforce constraints.
     - It has no grid construction of its own, no plotter and no mesh
-      adaptation. The CCZ4 solver builds the mesh and initialises the
-      derivatives.
+      adaptation. The CCZ4 solver builds the mesh and sets the initial
+      condition of its unknowns. The host adds the reconstruction of the
+      derivatives to the setup (create_setup_task_graph()).
 
     Users do not create the solver themselves: exagrype.api.FOSOSolver
     creates it and realises it right after the CCZ4 solver. The solver has no
@@ -87,6 +88,12 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
     is part of its projection, too
     (src/exahype2/api/rkfd4/adrs/0004-roll-over-is-part-of-the-projection.md).
 
+    The setup needs the derivatives of the initial condition, too, as the
+    initial condition sets the unknowns of the CCZ4 solver only. The solver
+    therefore builds one more chain for the setup (create_setup_task_graph()).
+    It lacks the reconstruction of the derivative variables, as there are no
+    previous derivatives yet, and the stencil does not read them.
+
     The graph has no dependencies between stages. The host concatenates the graph with the
     one of the CCZ4 solver (exagrype.api.FOSOSolver._couple()): The first tasks of
     a stage wait for what the CCZ4 solver's reconstructions of the unknowns and
@@ -122,8 +129,9 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
 
         The reconstruction solver builds no mesh
 
-        The CCZ4 solver constructs the mesh, and initialises the derivatives
-        which are the unknowns of the reconstruction solver.
+        The CCZ4 solver constructs the mesh. The derivatives, which are the
+        unknowns of the reconstruction solver, are reconstructed by
+        exagrype.api.FOSOReconstructionSolver.FOSOReconstructionSolver.create_setup_task_graph().
 
         """
 
@@ -321,7 +329,52 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
         @return peano4.api.taskgraph.Graph
 
         """
-        reconstruction = self
+        per_stage = self._layout()[4]
+        return self._create_chain(
+            peano_project,
+            stage_input=(self.ccz4._patch if stage == 0 else self.ccz4._stage_input),
+            suffix=f" stage {stage}" if per_stage else "",
+            reconstruct_derivative_halo=True,
+        )
+
+    def create_setup_task_graph(self, exahype2_project, peano_project):
+        """!
+
+        Create the chain which reconstructs the derivatives of the initial condition
+
+        The chain is the one of a stage (create_task_graph()) applied to the
+        unknowns of the CCZ4 solver, yet without the task which reconstructs
+        the halo of the derivative variables. Its source is the
+        reconstruction of the primary variables, which reads the face data of
+        the unknowns, i.e. the chain has to follow their projection onto the
+        faces. Its sink projects the derivatives onto the faces, restricts
+        and rolls over. The host (exagrype.api.FOSOSolver) wires the chain
+        into the setup.
+
+        @param exahype2_project: exahype2.api.Project
+          The project that hosts the solvers (unused).
+
+        @param peano_project: peano4.api.Project
+          The Peano project that the exahype2 project assembles.
+
+        @return peano4.api.taskgraph.Graph
+
+        """
+        return self._create_chain(
+            peano_project,
+            stage_input=self.ccz4._patch,
+            suffix="",
+            reconstruct_derivative_halo=False,
+        )
+
+    def _create_chain(
+        self, peano_project, stage_input, suffix: str, reconstruct_derivative_halo: bool
+    ):
+        """!
+
+        The chain of tasks behind create_task_graph() and create_setup_task_graph()
+
+        """
         ccz4 = self.ccz4
         name = self.name
         scheme, actionsets, reconstruction_function, stages, per_stage = self._layout()
@@ -365,9 +418,6 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
 
         functor = self._reconstruction_call(reconstruction_function, n, h)
 
-        stage_input = ccz4._patch if stage == 0 else ccz4._stage_input
-        suffix = f" stage {stage}" if per_stage else ""
-
         def create_task(task_name):
             task = peano4.api.taskgraph.Task(
                 name=f"{name}_{task_name}{suffix}", entity=Entity.CELL
@@ -402,47 +452,53 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                 additional_includes=includes,
             )
         )
-        reconstruct_derivatives = create_task("Reconstruct derivative variables")
-        reconstruct_derivatives.use_cell(derivatives.patch, Access.READ_AND_WRITE)
-        reconstruct_derivatives.use_cell(derivative_halo, Access.WRITE)
-        reconstruct_derivatives.use_face(
-            derivatives.patch_overlap_current_time_step, Access.READ_AND_WRITE
-        )
-        reconstruct_derivatives.add_action_set(
-            toolbox.blockstructured.api.InterpolateHangingFaces(
-                derivatives.patch_overlap_current_time_step,
-                scheme=scheme.interpolation,
-                additional_includes=includes,
+        reconstructions = [reconstruct_primary]
+        if reconstruct_derivative_halo:
+            reconstruct_derivatives = create_task("Reconstruct derivative variables")
+            reconstruct_derivatives.use_cell(derivatives.patch, Access.READ_AND_WRITE)
+            reconstruct_derivatives.use_cell(derivative_halo, Access.WRITE)
+            reconstruct_derivatives.use_face(
+                derivatives.patch_overlap_current_time_step, Access.READ_AND_WRITE
             )
-        )
-        reconstruct_derivatives.add_action_set(
-            toolbox.blockstructured.api.ReconstructPatchWithHalo(
-                patch=derivatives.patch,
-                patch_overlap=derivatives.patch_overlap_current_time_step,
-                reconstructed_patch=derivative_halo,
-                guard=cell_guard,
-                add_assertions_to_halo_exchange=False,
-                additional_includes=includes,
+            reconstruct_derivatives.add_action_set(
+                toolbox.blockstructured.api.InterpolateHangingFaces(
+                    derivatives.patch_overlap_current_time_step,
+                    scheme=scheme.interpolation,
+                    additional_includes=includes,
+                )
             )
-        )
+            reconstruct_derivatives.add_action_set(
+                toolbox.blockstructured.api.ReconstructPatchWithHalo(
+                    patch=derivatives.patch,
+                    patch_overlap=derivatives.patch_overlap_current_time_step,
+                    reconstructed_patch=derivative_halo,
+                    guard=cell_guard,
+                    add_assertions_to_halo_exchange=False,
+                    additional_includes=includes,
+                )
+            )
+            reconstructions.append(reconstruct_derivatives)
 
         ## The stencil
         apply_stencil = create_task("Reconstruct derivatives")
         apply_stencil.use_cell(primary_halo, Access.READ_AND_DISCARD)
-        apply_stencil.use_cell(derivative_halo, Access.READ_AND_DISCARD)
+        if reconstruct_derivative_halo:
+            apply_stencil.use_cell(derivative_halo, Access.READ_AND_DISCARD)
         apply_stencil.use_cell(derivatives.patch, Access.READ_AND_WRITE)
         apply_stencil.add_action_set(
             ApplyReconstructionFunctor(
                 patch=derivatives.patch,
                 primary_variables_with_halo=primary_halo,
-                derivative_variables_with_halo=derivative_halo,
+                derivative_variables_with_halo=(
+                    derivative_halo if reconstruct_derivative_halo else None
+                ),
                 functor_implementation=functor,
                 guard=cell_guard,
                 additional_includes=includes,
             )
         )
-        apply_stencil.add_dependency(reconstruct_primary)
-        apply_stencil.add_dependency(reconstruct_derivatives)
+        for reconstruction in reconstructions:
+            apply_stencil.add_dependency(reconstruction)
 
         ## Project the derivatives onto the faces
         project = create_task("Project derivative variables onto faces")

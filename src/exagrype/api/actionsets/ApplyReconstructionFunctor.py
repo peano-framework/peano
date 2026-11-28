@@ -17,7 +17,8 @@ class ApplyReconstructionFunctor(ActionSet):
 
     - oldQWithHalo: a double* to the reconstructed primary variables;
     - oldDerivativesWithHalo: a double* to the reconstructed derivative
-      variables (the previous values of newQ, with halo);
+      variables (the previous values of newQ, with halo), unless the action
+      set has been created without them;
     - newQ: a double* to the patch which the functor writes;
     - marker: the cell marker.
 
@@ -41,7 +42,8 @@ class ApplyReconstructionFunctor(ActionSet):
           The reconstructed patch behind oldQWithHalo.
 
         @param derivative_variables_with_halo: peano4.api.datamodel.Patch
-          The reconstructed patch behind oldDerivativesWithHalo.
+          The reconstructed patch behind oldDerivativesWithHalo, or None if
+          there are no previous values, as in the setup.
 
         @param functor_implementation: str
           C++ snippet.
@@ -79,9 +81,12 @@ class ApplyReconstructionFunctor(ActionSet):
     def get_body_of_operation(self, operation_name):
         if operation_name != ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
             return "\n"
+        old_derivatives = ""
+        if self._derivatives is not None:
+            old_derivatives = f"""
+  [[maybe_unused]] double* oldDerivativesWithHalo = fineGridCell{self._derivatives.name}.value;"""
         return f"""
-  [[maybe_unused]] double* oldQWithHalo = fineGridCell{self._primary.name}.value;
-  [[maybe_unused]] double* oldDerivativesWithHalo = fineGridCell{self._derivatives.name}.value;
+  [[maybe_unused]] double* oldQWithHalo = fineGridCell{self._primary.name}.value;{old_derivatives}
   double* newQ = fineGridCell{self._patch.name}.value;
   {self._functor}
 """
