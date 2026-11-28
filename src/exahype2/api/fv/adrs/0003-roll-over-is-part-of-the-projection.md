@@ -37,6 +37,5 @@ the projection and the restriction of the hanging faces, i.e. it copies the fina
   i.e. persist it between the traversals, or fuse both tasks reliably. Otherwise
   the roll over copies garbage and nothing detects it in a release build.
 - The explicit scheme has no task `Roll over faces` anymore.
-- Runge-Kutta Finite Differences model their roll over as a task of its own,
-  too, and are open to the same problem as soon as a compiler does not fuse
-  projection and roll over.
+- Runge-Kutta Finite Differences follow the same pattern
+  (`src/exahype2/api/rkfd4/adrs/0004-roll-over-is-part-of-the-projection.md`).

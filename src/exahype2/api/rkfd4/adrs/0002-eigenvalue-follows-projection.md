@@ -1,6 +1,9 @@
 # ADR 0002: The maximum eigenvalue is computed after the projection, not parallel to it
 
-Status: accepted
+Status: accepted. The reason for the decision is obsolete since ADR 0004: the
+roll over is no task of its own anymore. Context, decision and consequences
+describe the task graph of the time. The dependency has been kept; whether it can
+be relaxed has not been examined.
 Date: 2026-11-09
 
 ## Context
