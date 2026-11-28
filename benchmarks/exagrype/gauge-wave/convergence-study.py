@@ -75,6 +75,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+import tarch.plotter.api.merge
 import tarch.plotter.api.output
 
 EndTime = 0.1
@@ -259,24 +260,31 @@ def measure_error(directory, volumes_per_axis):
 
     Maximum error of the lapse along y=z=0.5 in the last snapshot
 
-    Peano's PointProbe samples the lapse in the centre of each volume.
+    A snapshot consists of one patch file per spacetree. We merge the files of
+    the last snapshot first (@ref tarch.plotter.api.merge). Peano's PointProbe
+    then samples the lapse in the centre of each volume.
 
     @return time stamp of the snapshot, error
 
     """
-    snapshots = len(
-        glob.glob(os.path.join(directory, "solution-CCZ4-*.peano-patch-file"))
+    meta_file = os.path.join(os.path.abspath(directory), PatchFile)
+    last_snapshot = tarch.plotter.api.merge.count_total_snapshot_number(meta_file) - 1
+    # The script writes the merged files next to the meta file
+    with contextlib.redirect_stdout(io.StringIO()):
+        tarch.plotter.api.merge.read_meta_file(meta_file, last_snapshot, last_snapshot)
+    merged_meta_file = os.path.join(
+        os.path.dirname(meta_file), "merged_meta_file.peano-patch-file"
     )
     x = (np.arange(volumes_per_axis) + 0.5) / volumes_per_axis
     lapse = []
     for i, x_i in enumerate(x):
         output_file = os.path.join(directory, f"probe-{i}.csv")
         point_probe = tarch.plotter.api.output.PointProbe(
-            file_name=os.path.join(directory, PatchFile),
+            file_name=merged_meta_file,
             point=[x_i, 0.5, 0.5],
             output_file=output_file,
-            start=snapshots - 1,
-            end=snapshots - 1,
+            start=0,
+            end=0,
         )
         with contextlib.redirect_stdout(io.StringIO()):
             point_probe.display()
