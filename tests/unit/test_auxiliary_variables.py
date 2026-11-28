@@ -1,5 +1,6 @@
 """Unit tests for sets of auxiliary variables (@ref exahype2.api.AuxiliaryVariables)."""
 
+import pathlib
 import types
 
 import peano4.api
@@ -474,3 +475,41 @@ def test_fd4_with_one_stage_discards_the_held_halo_right_away(tmp_path):
     halo = solver._auxiliary_variable_halos[auxiliary.name]
     rhs = tasks["Probe_Evaluate Runge-Kutta right hand side stage 0"]
     assert rhs.cell_data_access[halo] == Access.READ_AND_DISCARD
+
+
+@pytest.mark.parametrize("initial_condition_before_scheme", [True, False])
+def test_finite_volumes_generate_the_initial_condition_kernel_whenever_the_term_is_added(
+    tmp_path, initial_condition_before_scheme
+):
+    """! The setup calls the kernel, however late the term has been added"""
+    project = exahype2.api.Project(["probe"], "probe", "probe", directory=str(tmp_path))
+    project.set_global_simulation_parameters(
+        dimensions=3,
+        offset=[0.0] * 3,
+        size=[1.0] * 3,
+        min_end_time=1.0,
+        periodic_BC=[True] * 3,
+    )
+    peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
+    solver = exahype2.api.Solver("Probe", {"h": 1})
+    solver.add_pde_term(exahype2.api.MaxEigenvalue(implementation="", stateless=False))
+    term = exahype2.api.InitPointWisely(implementation="")
+    if initial_condition_before_scheme:
+        solver.add_pde_term(term)
+    solver.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(solver, 9)
+    if not initial_condition_before_scheme:
+        solver.add_pde_term(term)
+    solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
+        solver, volume_size=0.01
+    )
+    solver.generate_solver_realisation(
+        project, peano_project, *[peano4.api.taskgraph.Graph() for _ in range(4)]
+    )
+
+    kernels = "".join(
+        path.read_text()
+        for path in pathlib.Path(peano_project.temporary_directory, "kernels").glob(
+            "Probe_initialConditions3d.c*"
+        )
+    )
+    assert "Probe_initialiseCentreOfPatch(" in kernels
