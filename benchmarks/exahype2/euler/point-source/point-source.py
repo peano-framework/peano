@@ -104,6 +104,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 
 
@@ -124,6 +125,20 @@ parser.add_argument(
     "l>0, it starts from the same regular grid, but the gradient-based "
     "refinement criterion is on and coarsens the mesh by up to l levels (a "
     "factor of 3 each)",
+)
+parser.add_argument(
+    "--load-balancing",
+    choices=["none", "spread-out", "spread-out-once-grid-stagnates"],
+    default="spread-out-once-grid-stagnates",
+    help="Load balancing: none, i.e. a single tree, or "
+    "toolbox::loadbalancing::strategies::SpreadOut or SpreadOutOnceGridStagnates "
+    "(default: spread-out-once-grid-stagnates)",
+)
+parser.add_argument(
+    "--compiler",
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
+    default="fusion",
+    help="Task graph compiler (default: fusion)",
 )
 parser.add_argument(
     "--volume-size",
@@ -402,14 +417,20 @@ project.set_global_simulation_parameters(
     max_end_time=args.end_time,
     periodic_BC=[False] * 3,
 )
-project.set_load_balancing(
-    "toolbox::loadbalancing::strategies::SpreadOutOnceGridStagnates",
-    "new ::exahype2::LoadBalancingConfiguration()",
-)
-# No spawned background tasks: On meshes that fill the main memory, the
-# producer-consumer compiler deadlocks in tarch::multicore::waitForTasks(),
+LOAD_BALANCING_STRATEGIES = {
+    "spread-out": "toolbox::loadbalancing::strategies::SpreadOut",
+    "spread-out-once-grid-stagnates": "toolbox::loadbalancing::strategies::SpreadOutOnceGridStagnates",
+}
+# Without a load balancing, the domain is never split, i.e. there is one tree
+if args.load_balancing != "none":
+    project.set_load_balancing(
+        LOAD_BALANCING_STRATEGIES[args.load_balancing],
+        "new ::exahype2::LoadBalancingConfiguration()",
+    )
+# The default compiler spawns no background tasks: On meshes that fill the main
+# memory, the producer-consumer compiler deadlocks in tarch::multicore::waitForTasks(),
 # which waits for tasks while holding the read lock of the dependency tracking.
-project.compiler = peano4.api.taskgraph.compiler.FuseSteps.translate
+project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 project.set_Peano4_installation(
     args.peano_root,

@@ -9,6 +9,7 @@ from .NonconservativeProduct import NonconservativeProduct
 from .VolumetricSource import VolumetricSource
 from .PointSource import PointSource
 from .InitPointWisely import InitPointWisely
+from .InitAuxiliaryVariablesPointWisely import InitAuxiliaryVariablesPointWisely
 from .AdaptivityCriterion import AdaptivityCriterion
 from .RefineErasePointwisely import RefineErasePointwisely
 from .GradientRefinement import GradientRefinement

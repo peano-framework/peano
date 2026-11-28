@@ -4,6 +4,19 @@
 
 import exahype2.api
 
+FIRST_ORDER_FUNCTIONS = (
+    "gaugeWave",
+    "diagonal_gaugeWave",
+    "linearWave",
+    "flat",
+    "singleBlackHole",
+)
+"""!
+The routines in exagrype::initialvalues which fill all 58 entries of
+first-order CCZ4. exagrype.api.FOSOCCZ4Solver rejects initial conditions which
+call one of them, as it hands the initial condition 25 entries only.
+"""
+
 
 def _init_point_wisely(cpp_function: str) -> exahype2.api.InitPointWisely:
     return exahype2.api.InitPointWisely(
@@ -45,6 +58,58 @@ def flat() -> exahype2.api.InitPointWisely:
 
     """
     return _init_point_wisely("flat")
+
+
+def gauge_wave_evolved_variables() -> exahype2.api.InitPointWisely:
+    """!
+
+    Gauge wave along the x-axis, the 25 evolved unknowns only
+
+    For exagrype.api.FOSOCCZ4Solver
+    (@ref exagrype.api.initialvalues.gauge_wave(),
+    exagrype::initialvalues::gaugeWaveEvolvedVariables()).
+
+    """
+    return _init_point_wisely("gaugeWaveEvolvedVariables")
+
+
+def diagonal_gauge_wave_evolved_variables() -> exahype2.api.InitPointWisely:
+    """!
+
+    Gauge wave along the diagonal, the 25 evolved unknowns only
+
+    For exagrype.api.FOSOCCZ4Solver
+    (@ref exagrype.api.initialvalues.diagonal_gauge_wave(),
+    exagrype::initialvalues::diagonal_gaugeWaveEvolvedVariables()).
+
+    """
+    return _init_point_wisely("diagonal_gaugeWaveEvolvedVariables")
+
+
+def linear_wave_evolved_variables() -> exahype2.api.InitPointWisely:
+    """!
+
+    Linearised gravitational wave, the 25 evolved unknowns only
+
+    For exagrype.api.FOSOCCZ4Solver
+    (@ref exagrype.api.initialvalues.linear_wave(),
+    exagrype::initialvalues::linearWaveEvolvedVariables()).
+
+    """
+    return _init_point_wisely("linearWaveEvolvedVariables")
+
+
+def flat_evolved_variables() -> exahype2.api.InitPointWisely:
+    """!
+
+    Flat (Minkowski) spacetime, the 25 evolved unknowns only
+
+    For exagrype.api.FOSOCCZ4Solver
+    (@ref exagrype.api.initialvalues.flat(),
+    exagrype::initialvalues::flatEvolvedVariables()).
+
+    """
+    return _init_point_wisely("flatEvolvedVariables")
 
 
 def single_black_hole(mass: float = 1.0) -> exahype2.api.InitPointWisely:

@@ -14,11 +14,25 @@ By default, the study runs the Finite Difference schemes rk1fd4, rk2fd4, rk3fd4 
 rk4fd4 one after another (each in a subdirectory of the work directory) and fails
 if any of them misses its minimum order.
 
+All of this is repeated for each task graph compiler in COMPILERS: the default
+one (fusion) and the task graph assembly
+(@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
+graph while it traverses the mesh, without and with concatenation. The runs of a
+compiler live in <work directory>/<load balancing>/<compiler>/<scheme>. A failed
+build or run fails its combination, and the study continues with the others.
+
+The study first runs all of this with a single tree (none), and then again with
+the load balancing toolbox::loadbalancing::strategies::SpreadOut (spread-out),
+so that errors which the domain decomposition introduces show up as such. A run
+whose log does not report the expected trees fails: more than one tree without
+load balancing, or a single tree only with it.
+
 This is part of the ExaHyPE 2 integration test (skill exahype2:integration-test).
 
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -34,6 +48,12 @@ MINIMUM_ORDERS = {
 }
 VOLUME_SIZES = ["0.0075", "0.0025", "0.00083"]
 END_TIME = 0.05
+## Load balancing configurations, in the order in which they are studied: first
+## a single tree, then several trees, so errors which stem from the load balancing
+## show up as such
+LOAD_BALANCINGS = ["none", "spread-out"]
+## Task graph compilers the study checks, see smooth-convergence-test.py
+COMPILERS = ["fusion", "assembly-fusion", "assembly-concatenation-fusion"]
 
 parser = argparse.ArgumentParser(description=__doc__.strip().split("\n")[0])
 parser.add_argument(
@@ -62,9 +82,16 @@ parser.add_argument(
     help="Parallel make jobs per build; 0 or less uses all cores (default: all cores)",
 )
 parser.add_argument(
-    "--compiler",
-    default=None,
-    help="Task graph compiler, see smooth-convergence-test.py (default: the script's default)",
+    "--load-balancing",
+    nargs="+",
+    default=LOAD_BALANCINGS,
+    help=f"Load balancings in the order they are studied, see smooth-convergence-test.py (default: {' '.join(LOAD_BALANCINGS)})",
+)
+parser.add_argument(
+    "--compilers",
+    nargs="+",
+    default=COMPILERS,
+    help=f"Task graph compilers, see smooth-convergence-test.py (default: {' '.join(COMPILERS)})",
 )
 args = parser.parse_args()
 
@@ -72,12 +99,55 @@ work = os.path.abspath(args.work_directory)
 os.makedirs(work, exist_ok=True)
 
 
-def study(scheme):
-    minimum_order = args.minimum_order if args.minimum_order is not None else MINIMUM_ORDERS[scheme]
-    print(f"scheme {scheme}", flush=True)
+def number_of_trees(log_file):
+    """!
+    Maximum number of trees which a run reports
+
+    The load balancing statistics write lines such as "8 tree(s): ..." into the
+    log. Without load balancing, there are no such lines and there is one tree.
+
+    @param log_file: str
+      Log of the run.
+    @return int
+      Maximum number of trees.
+    """
+    with open(log_file, errors="ignore") as log:
+        return max(
+            (int(n) for line in log for n in re.findall(r"(\d+) tree\(s\):", line)),
+            default=1,
+        )
+
+
+def tree_failure(load_balancing, trees):
+    """!
+    Check that a run has used the trees which its load balancing stands for
+
+    A run with load balancing which never splits the domain tests nothing.
+
+    @param load_balancing: str
+      Name of the load balancing, "none" stands for a single tree.
+    @param trees: int
+      Number of trees of the run, see number_of_trees().
+    @return str
+      The failure, or None.
+    """
+    if load_balancing == "none" and trees != 1:
+        return f"{trees} trees although there is no load balancing"
+    if load_balancing != "none" and trees < 2:
+        return "the load balancing never split the domain"
+    return None
+
+
+def study(load_balancing, compiler, scheme):
+    minimum_order = (
+        args.minimum_order if args.minimum_order is not None else MINIMUM_ORDERS[scheme]
+    )
+    print(
+        f"scheme {scheme} with {compiler}, load balancing {load_balancing}", flush=True
+    )
     runs = []
     for volume_size in VOLUME_SIZES:
-        run = os.path.join(work, scheme, f"run-{volume_size}")
+        run = os.path.join(work, load_balancing, compiler, scheme, f"run-{volume_size}")
         runs.append(run)
         executable = os.path.join(run, "smooth-convergence-test")
         if not os.path.exists(
@@ -100,34 +170,73 @@ def study(scheme):
                     str(args.build_jobs),
                     "--verbosity",
                     "text",
-                ]
-                + (["--compiler", args.compiler] if args.compiler else []),
+                    "--compiler",
+                    compiler,
+                    "--load-balancing",
+                    load_balancing,
+                ],
                 check=True,
                 stdout=subprocess.DEVNULL,
             )
             with open(os.path.join(run, "run.log"), "w") as log:
                 # Wall-clock time [s] and peak memory [kB] of the run, see time.txt
                 subprocess.run(
-                    ["/usr/bin/time", "-f", "%e %M", "-o", os.path.join(run, "time.txt"), executable],
+                    [
+                        "/usr/bin/time",
+                        "-f",
+                        "%e %M",
+                        "-o",
+                        os.path.join(run, "time.txt"),
+                        executable,
+                    ],
                     cwd=run,
                     check=True,
                     stdout=log,
                     stderr=log,
                 )
-    return subprocess.run(
-        [
-            sys.executable,
-            os.path.join(HERE, "compute-errors.py"),
-            "--minimum-order",
-            str(minimum_order),
-            "--end-time",
-            str(END_TIME),
-        ]
-        + runs
-    ).returncode
+    trees_are_fine = True
+    for run in runs:
+        trees = number_of_trees(os.path.join(run, "run.log"))
+        print(f"{run}: {trees} tree(s)", flush=True)
+        failure = tree_failure(load_balancing, trees)
+        if failure:
+            print(f"{run}: {failure}", flush=True)
+            trees_are_fine = False
+    errors_are_fine = (
+        subprocess.run(
+            [
+                sys.executable,
+                os.path.join(HERE, "compute-errors.py"),
+                "--minimum-order",
+                str(minimum_order),
+                "--end-time",
+                str(END_TIME),
+            ]
+            + runs
+        ).returncode
+        == 0
+    )
+    return trees_are_fine and errors_are_fine
 
 
-failed = [scheme for scheme in args.schemes if study(scheme) != 0]
+def passes(load_balancing, compiler, scheme):
+    """! A failed build or run must not stop the study of the other combinations"""
+    try:
+        return study(load_balancing, compiler, scheme)
+    except (subprocess.CalledProcessError, OSError) as exception:
+        print(f"{load_balancing} {compiler} {scheme}: {exception}", flush=True)
+        return False
+
+
+failed = [
+    f"{load_balancing} {compiler} {scheme}"
+    for load_balancing in args.load_balancing
+    for compiler in args.compilers
+    for scheme in args.schemes
+    if not passes(load_balancing, compiler, scheme)
+]
 if failed:
     print(f"FAILED: {', '.join(failed)}")
+else:
+    print("PASSED")
 sys.exit(1 if failed else 0)

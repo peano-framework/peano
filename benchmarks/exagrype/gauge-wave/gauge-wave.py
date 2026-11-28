@@ -56,7 +56,8 @@ mesh cells with patches of 9x9x9 grid cells. The mesh is regular and refined by 
 three, i.e. h is rounded to patch size over 3^k (the patch size can be set via
 `--patch-size`, but the root cell is refined at least once). `--compiler` switches
 between the task graph compilers (sequential, fusion which is the default, and the
-producer-consumer variants of both), `--end-time`, `--threads` and `--directory` do what
+producer-consumer variants of both), `--load-balancing` splits the domain into several
+trees (default: none, i.e. one tree), and `--end-time`, `--threads` and `--directory` do what
 they say.
 
 The script generates the C++ code, the Makefile, and compiles the executable. Run the
@@ -80,7 +81,9 @@ estimates the convergence order p ~ log(e(3h)/e(h))/log(3), and exits with a non
 status if the order between the two finest meshes of a scheme falls below a threshold. It
 is run via the skill `exahype2:integration-test` (see
 documentation/exahype2/integration-test/SKILL.md). Whenever you change a numerical scheme, the
-task graph, the kernels or the code generation, this is the test to rerun.
+task graph, the kernels or the code generation, this is the test to rerun. It runs all
+setups with a single tree first and then with the load balancing SpreadOut, each with the
+task graph compilers fusion, assembly-fusion and assembly-concatenation-fusion.
 
 The study runs both formulations (--formulation fo and so). The picture, the table and the
 discussion below stem from the first-order formulation. We have no reference results for the
@@ -136,6 +139,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 import exagrype.api
 
@@ -205,29 +209,24 @@ parser.add_argument(
     "first derivatives instead of evolving them.",
 )
 parser.add_argument(
+    "--load-balancing",
+    choices=["none", "spread-out", "spread-out-once-grid-stagnates"],
+    default="none",
+    help="Load balancing: none, i.e. a single tree, or "
+    "toolbox::loadbalancing::strategies::SpreadOut or SpreadOutOnceGridStagnates "
+    "(default: none)",
+)
+parser.add_argument(
     "--compiler",
-    choices=[
-        "sequential",
-        "fusion",
-        "producer-consumer",
-        "producer-consumer-fusion",
-        "producer-consumer-chains",
-    ],
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
     help="Task graph compiler: one traversal per task (sequential), tasks fused "
-    "into as few traversals as possible (fusion, default), or the same two "
-    "variants with cell tasks spawned as producer-consumer tasks.",
+    "into as few traversals as possible (fusion, default), the same two "
+    "variants with cell tasks spawned as producer-consumer tasks, or the task graph assembly (assembly).",
 )
 args = parser.parse_args()
 
-compilers = peano4.api.taskgraph.compiler
-task_graph_compiler = {
-    "sequential": compilers.Sequential.translate,
-    "fusion": compilers.FuseSteps.translate,
-    "producer-consumer": compilers.CellTaskProducerConsumer.translate_with_sequential,
-    "producer-consumer-fusion": compilers.CellTaskProducerConsumer.translate_with_fusion,
-    "producer-consumer-chains": compilers.CellTaskProducerConsumer.translate_with_chains_and_fusion,
-}[args.compiler]
+task_graph_compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 ## The grid construction refines every cell whose edge length is greater than
 ## or equal to volume_size times the patch size, i.e. the grid cells end up
@@ -268,13 +267,17 @@ project = exahype2.api.Project(
 ## second-order formulation, it is the pair of CCZ4 and reconstruction solver.
 ## Both formulations call the CCZ4 solver CCZ4, i.e. their plot files have the
 ## same name.
-initial_condition = exagrype.api.initialvalues.gauge_wave()
 if args.formulation == "fo":
     solver = exagrype.api.FOCCZ4Solver("CCZ4")
-    solver.add_pde_term(initial_condition)
+    solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
     scheme_owner = solver
 else:
-    scheme_owner = exagrype.api.FOSOSolver("CCZ4", initial_condition=initial_condition)
+    # The initial condition sets the 25 evolved unknowns only; the setup
+    # reconstructs the derivatives
+    scheme_owner = exagrype.api.FOSOSolver(
+        "CCZ4",
+        initial_condition=exagrype.api.initialvalues.gauge_wave_evolved_variables(),
+    )
     solver = scheme_owner.ccz4
 
 if args.scheme in ["fv", "fv-optimistic"]:
@@ -332,6 +335,17 @@ project.set_global_simulation_parameters(
     max_end_time=end_time,
     periodic_BC=[True, True, True],
 )
+
+LOAD_BALANCING_STRATEGIES = {
+    "spread-out": "toolbox::loadbalancing::strategies::SpreadOut",
+    "spread-out-once-grid-stagnates": "toolbox::loadbalancing::strategies::SpreadOutOnceGridStagnates",
+}
+# Without a load balancing, the domain is never split, i.e. there is one tree
+if args.load_balancing != "none":
+    project.set_load_balancing(
+        LOAD_BALANCING_STRATEGIES[args.load_balancing],
+        "new ::exahype2::LoadBalancingConfiguration()",
+    )
 
 if args.threads is not None:
     project.set_number_of_threads(args.threads)

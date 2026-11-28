@@ -38,6 +38,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 import exagrype.api
 
@@ -57,6 +58,12 @@ parser.add_argument(
     help="Edge length of one mesh cell (default: 1/3). The mesh is regular and "
     "refined by factors of three from the root cell, i.e. the value is rounded "
     "to 3^-k (k>=1).",
+)
+parser.add_argument(
+    "--compiler",
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
+    default="fusion",
+    help="Task graph compiler (default: fusion)",
 )
 parser.add_argument(
     "--patch-size",
@@ -137,7 +144,7 @@ euler.plotter = exahype2.api.fv.PlotAsVTKFile(
 
 project.add_solver(coupled)
 
-project.compiler = peano4.api.taskgraph.compiler.FuseSteps.translate
+project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 project.set_global_simulation_parameters(
     dimensions=3,

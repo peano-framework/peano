@@ -20,15 +20,14 @@ class InitPointWisely(PDETerm):
     @code
     virtual void initPointWisely(
       const tarch::la::Vector<Dimensions, double>& x,
-      double* __restrict__                         Q // Q[{{NUMBER_OF_UNKNOWNS}}+{{NUMBER_OF_AUXILIARY_VARIABLES}}]
+      double* __restrict__                         Q // Q[{{NUMBER_OF_UNKNOWNS}}]
     );
     @endcode
 
-    Q holds the unknowns. If the solver has auxiliary variables, a pointer to
-    each set follows right behind Q (@ref exahype2.api.AuxiliaryVariables).
-    The solver that owns a set receives a non-const pointer and initialises the set
-    here, as this term has to set up everything a fresh degree of freedom
-    needs. Solvers which share a set receive a const pointer.
+    Q holds the unknowns. The term receives no auxiliary variables
+    (@ref exahype2.api.AuxiliaryVariables), even if the solver has some. Set
+    them via exahype2.api.InitAuxiliaryVariablesPointWisely, or in setup
+    tasks of your own.
 
     """
 
@@ -38,6 +37,8 @@ class InitPointWisely(PDETerm):
     )
 
     NAME = "initPointWisely"
+
+    RECEIVES_AUXILIARY_VARIABLES = False
 
     def __init__(
         self,

@@ -1,6 +1,8 @@
 # This file is part of the ExaHyPE2 project. For conditions of distribution and
 # use, please see the copyright notice at www.peano-framework.org
 from .InitialCondition import InitialCondition
+from ...AuxiliaryVariables import code_to_initialise_auxiliary_variables
+from ...InitAuxiliaryVariablesPointWisely import InitAuxiliaryVariablesPointWisely
 
 import peano4.api
 
@@ -11,7 +13,8 @@ class InitialiseNewCells(InitialCondition):
     Set the initial condition within cells which the mesh refinement creates
 
     Same as InitialCondition, i.e. the action set invokes the solver's
-    exahype2.api.InitPointWisely term per volume, but it plugs into
+    exahype2.api.InitPointWisely term per volume, followed by its
+    exahype2.api.InitAuxiliaryVariablesPointWisely term if it has one, but it plugs into
     createCell() instead of touchCellFirstTime(). It hence initialises
     exactly those cells which a mesh sweep adds to the mesh, while existing
     cells keep their data.
@@ -32,6 +35,14 @@ class InitialiseNewCells(InitialCondition):
 
     def get_body_of_operation(self, operation_name):
         if operation_name == peano4.api.solversteps.ActionSet.OPERATION_CREATE_CELL:
+            auxiliary_variables = ""
+            if any(
+                isinstance(term, InitAuxiliaryVariablesPointWisely)
+                for term in self._solver.pde_terms
+            ):
+                auxiliary_variables = code_to_initialise_auxiliary_variables(
+                    self._solver, "::exahype2::fv::getVolumeCentre"
+                )
             return (
                 super()
                 .get_body_of_operation(
@@ -41,6 +52,7 @@ class InitialiseNewCells(InitialCondition):
                     "touchCellFirstTime(...)---InitialCondition",
                     "createCell(...)---InitialiseNewCells",
                 )
+                + auxiliary_variables
             )
         return ""
 

@@ -64,6 +64,8 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
+import peano4.api.taskgraph.compiler.TaskGraphAssembly
 import exahype2.api
 import exagrype.api
 import toolbox.loadbalancing.api.input.RegularGridGenerator as RegularGridGenerator
@@ -79,6 +81,8 @@ Compilers = {
     "producer-consumer-fusion": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_fusion,
     "producer-consumer-chains": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_chains_and_fusion,
     "producer-consumer-chains-sequential": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_chains_and_sequential,
+    "assembly": peano4.api.taskgraph.compiler.TaskGraphAssembly.translate_with_sequential,
+    "assembly-fusion": peano4.api.taskgraph.compiler.TaskGraphAssembly.translate_with_fusion,
 }
 
 EnforceModes = {

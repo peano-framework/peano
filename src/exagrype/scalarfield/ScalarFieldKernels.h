@@ -70,18 +70,27 @@ namespace exagrype {
      *
      * Unknown m (m=0,...,3) is sin(2 pi x + m pi/4). The solution of the
      * advection equation on the gauge wave is known analytically (see
-     * benchmarks/exagrype/gauge-wave-with-scalar-field). The routine also
-     * sets the lapse of the auxiliary variables to one, so the first time
-     * step size is well-defined before any data has been exchanged with CCZ4.
+     * benchmarks/exagrype/gauge-wave-with-scalar-field).
      *
      * @param Q The four unknowns.
-     * @param ccz4Fields The 58 entries of first-order CCZ4 in this volume.
      * @param x Position of the volume.
      */
     void initialValues(
       double* const                               Q,
-      double* const                               ccz4Fields,
       const tarch::la::Vector<Dimensions, double>& x
+    );
+
+    /**
+     * Initial values of the auxiliary variables of the scalar field
+     *
+     * The routine sets the lapse of the auxiliary variables to one, so the
+     * first time step size is well-defined before any data has been
+     * exchanged with CCZ4.
+     *
+     * @param ccz4Fields The 58 entries of first-order CCZ4 in this volume.
+     */
+    void initialAuxiliaryValues(
+      double* const ccz4Fields
     );
   }
 }

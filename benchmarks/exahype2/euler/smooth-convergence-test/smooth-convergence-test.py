@@ -15,6 +15,7 @@ import argparse
 import os
 
 import peano4.api
+import peano4.api.taskgraph.compiler.Compilers
 import exahype2.api
 
 
@@ -43,14 +44,16 @@ parser.add_argument(
     "Runge-Kutta of order 1 to 4 (rk1fd4, ..., rk4fd4) (default: rk4fd4)",
 )
 parser.add_argument(
+    "--load-balancing",
+    choices=["none", "spread-out", "spread-out-once-grid-stagnates"],
+    default="spread-out-once-grid-stagnates",
+    help="Load balancing: none, i.e. a single tree, or "
+    "toolbox::loadbalancing::strategies::SpreadOut or SpreadOutOnceGridStagnates "
+    "(default: spread-out-once-grid-stagnates)",
+)
+parser.add_argument(
     "--compiler",
-    choices=[
-        "sequential",
-        "fusion",
-        "producer-consumer",
-        "producer-consumer-fusion",
-        "producer-consumer-chains",
-    ],
+    choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
     help="Task graph compiler (default: fusion)",
 )
@@ -86,7 +89,10 @@ parser.add_argument(
     help="Maximum grid cell size. 0.0075, 0.0025 and 0.00083 yield 27, 81 and 243 grid cells per axis (default: 0.0075)",
 )
 parser.add_argument(
-    "--patch-size", type=int, default=9, help="Grid cells per patch and axis (default: 9)"
+    "--patch-size",
+    type=int,
+    default=9,
+    help="Grid cells per patch and axis (default: 9)",
 )
 parser.add_argument(
     "--end-time", type=float, default=0.05, help="Simulated time (default: 0.05)"
@@ -146,14 +152,7 @@ if args.verbosity is None:
     args.verbosity = "text" if args.build_mode == "release" else "visualisation"
 plot_interval = args.plot_interval if args.plot_interval is not None else args.end_time
 
-compilers = peano4.api.taskgraph.compiler
-task_graph_compiler = {
-    "sequential": compilers.Sequential.translate,
-    "fusion": compilers.FuseSteps.translate,
-    "producer-consumer": compilers.CellTaskProducerConsumer.translate_with_sequential,
-    "producer-consumer-fusion": compilers.CellTaskProducerConsumer.translate_with_fusion,
-    "producer-consumer-chains": compilers.CellTaskProducerConsumer.translate_with_chains_and_fusion,
-}[args.compiler]
+task_graph_compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[args.compiler]
 
 
 project = exahype2.api.Project(
@@ -283,10 +282,16 @@ project.set_global_simulation_parameters(
     max_end_time=args.end_time,
     periodic_BC=[args.periodic] * 3,
 )
-project.set_load_balancing(
-    "toolbox::loadbalancing::strategies::SpreadOutOnceGridStagnates",
-    "new ::exahype2::LoadBalancingConfiguration()",
-)
+LOAD_BALANCING_STRATEGIES = {
+    "spread-out": "toolbox::loadbalancing::strategies::SpreadOut",
+    "spread-out-once-grid-stagnates": "toolbox::loadbalancing::strategies::SpreadOutOnceGridStagnates",
+}
+# Without a load balancing, the domain is never split, i.e. there is one tree
+if args.load_balancing != "none":
+    project.set_load_balancing(
+        LOAD_BALANCING_STRATEGIES[args.load_balancing],
+        "new ::exahype2::LoadBalancingConfiguration()",
+    )
 project.compiler = task_graph_compiler
 if args.threads is not None:
     project.set_number_of_threads(args.threads)
