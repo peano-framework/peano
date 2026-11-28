@@ -12,11 +12,13 @@ class WaitForCellTaskActionSet(ActionSet):
 
     The cousin realises the following events:
 
-    - touchCellFirstTime() checks if the cell's task label holds a valid
-      task number. If so, it waits for this task, returns the number to
-      the task enumerator, and resets the label to
-      tarch::multicore::TaskEnumerator::NoNumber.
-    - createCell() initialises the task label with NoNumber.
+    - touchCellFirstTime() checks if the cell's two task labels (first and
+      last task) hold valid task numbers. If so, it waits for the
+      tasks, returns the numbers to the task enumerator, and resets the
+      labels to tarch::multicore::TaskEnumerator::NoNumber. The last task
+      depends on the first task and on the last tasks of the children, i.e.
+      the cell waits for the whole subtree.
+    - createCell() initialises the task labels with NoNumber.
 
     All other events are empty. The task enumerator is a static attribute of
     the task labels, i.e. the cousin returns the number to the enumerator
@@ -40,11 +42,14 @@ class WaitForCellTaskActionSet(ActionSet):
         )
         self._producer_action_set = producer_action_set
 
-    def _task_label_accessor(self) -> tuple:
-        attribute_name = self._producer_action_set._task_number_attribute_name
+    def _task_label_accessors(self) -> tuple:
+        producer = self._producer_action_set
         return (
-            f"fineGridCell{self._producer_action_set._task_labels_name}",
-            attribute_name[0].capitalize() + attribute_name[1:],
+            f"fineGridCell{producer._task_labels_name}",
+            [
+                producer._accessor(producer._last_task_attribute_name),
+                producer._accessor(producer._first_task_attribute_name),
+            ],
         )
 
     def get_constructor_body(self):
@@ -67,17 +72,22 @@ class WaitForCellTaskActionSet(ActionSet):
         return ""
 
     def get_implementation_of_operation(self, operation_name):
-        task_label, accessor = self._task_label_accessor()
+        task_label, accessors = self._task_label_accessors()
         if operation_name == ActionSet.OPERATION_CREATE_CELL:
-            return f"\n  {task_label}.set{accessor}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+            return "\n" + "".join(
+                f"  {task_label}.set{accessor}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+                for accessor in accessors
+            )
         elif operation_name == ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
-            return f"""
-  if ( {task_label}.get{accessor}()>=0 ) {{
+            return "\n" + "".join(
+                f"""  if ( {task_label}.get{accessor}()>=0 ) {{
     tarch::multicore::waitForTask( {task_label}.get{accessor}() );
     {task_label}.getTaskEnumerator().releaseNumber( {task_label}.get{accessor}() );
     {task_label}.set{accessor}( tarch::multicore::TaskEnumerator::NoNumber );
   }}
 """
+                for accessor in accessors
+            )
         else:
             return ""
 

@@ -460,6 +460,7 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
                 includes=includes,
             )
         )
+
         ## Restrict from the hanging faces onto the coarse faces, but only
         ## if the derivatives are allowed to change, i.e. in the sense of the
         ## auxiliary variables' mode CHANGING_ON_FACES. Peano destroys a

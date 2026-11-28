@@ -39,17 +39,26 @@ def test_piecewise_constant_interpolation():
     assert "interpolateHaloLayer_AoS_piecewise_constant(" in body
 
 
-def test_averaging_restricts_in_destroy_hanging_face_and_clears_faces():
+def test_averaging_restricts_in_destroy_hanging_face_and_does_not_clear_faces():
     action_set = Restrict(_face_patch(), clear_guard="myClearGuard")
     body = action_set.get_body_of_operation(ActionSet.OPERATION_DESTROY_HANGING_FACE)
     assert "restrictInnerHalfOfHaloLayer_AoS_averaging(" in body
     assert "coarseGridFacesQFace(marker.getSelectedFaceNumber()).value" in body
+    assert action_set.get_body_of_operation(ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME) == ""
+
+
+def test_clearing_action_set_clears_faces_in_touch_face_first_time():
+    action_set = toolbox.blockstructured.api.ClearFaceProjections.ClearFaceProjections(
+        Restrict(_face_patch(), clear_guard="myClearGuard")
+    )
     clear = action_set.get_body_of_operation(ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME)
     assert "clearHaloLayerAoS(" in clear
+    assert "fineGridFaceQFace.value" in clear
     assert (
         action_set.get_guard_of_operation(ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME)
         == "myClearGuard"
     )
+    assert action_set.get_body_of_operation(ActionSet.OPERATION_DESTROY_HANGING_FACE) == ""
 
 
 def test_injection_does_not_clear_faces():
@@ -152,3 +161,38 @@ def test_projection_hosts_the_restriction_and_the_roll_over(tmp_path):
         "RestrictHangingFaces",
         "RollOverUpdatedFace",
     ]
+
+
+def _projection_graph(averaging=True):
+    import peano4.api.taskgraph
+
+    patch = _face_patch()
+    update = peano4.api.taskgraph.Task(name="Update", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+    other = peano4.api.taskgraph.Task(name="Other", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+    update.add_dependency(other)
+    projection = peano4.api.taskgraph.Task(name="Project", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+    projection.add_dependency(update)
+    projection.use_face(patch, peano4.api.taskgraph.Task.DataAccess.TEMPORARY)
+    scheme = None if averaging else Restrict.Scheme.Inject
+    projection.add_action_set(Restrict(patch, scheme))
+    graph = peano4.api.taskgraph.Graph()
+    for task in (other, update, projection):
+        graph.add_task(task)
+    return graph, other, update, projection, patch
+
+
+def test_clearing_task_waits_for_the_dependencies_of_the_projection_which_waits_for_it():
+    graph, other, update, projection, patch = _projection_graph()
+    [clearing] = toolbox.blockstructured.api.ClearFaceProjections.add_clearing_tasks(graph)
+    assert clearing in graph.tasks
+    assert clearing.dependencies == [update]
+    assert clearing in projection.dependencies and update in projection.dependencies
+    assert clearing.face_data == [patch]
+    assert clearing.face_data_access[patch] == peano4.api.taskgraph.Task.DataAccess.TEMPORARY
+    assert clearing.first_event == clearing.last_event == peano4.api.taskgraph.Task.TraversalEvent.FACE_FIRST
+    assert clearing.name == f"Project_{toolbox.blockstructured.api.ClearFaceProjections.TASK_NAME_SUFFIX}"
+
+
+def test_injection_needs_no_clearing_task():
+    graph, *_ = _projection_graph(averaging=False)
+    assert toolbox.blockstructured.api.ClearFaceProjections.add_clearing_tasks(graph) == []

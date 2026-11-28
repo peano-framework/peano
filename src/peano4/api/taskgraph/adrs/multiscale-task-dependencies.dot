@@ -1,0 +1,21 @@
+digraph multiscale {
+  rankdir=LR;
+  node [shape=box, style="rounded,filled", fillcolor="#eef3fb", fontname="Helvetica"];
+  edge [fontname="Helvetica", fontsize=10];
+
+  subgraph cluster_parent {
+    label="parent cell"; style=dashed;
+    pf [label="first task\n(touchCellFirstTime)"];
+    pl [label="last task\n(touchCellLastTime)"];
+  }
+  subgraph cluster_child {
+    label="each of the (up to 3^d) children"; style=dashed;
+    cf [label="first task"];
+    cl [label="last task"];
+  }
+
+  pf -> pl [label="same cell"];
+  cf -> cl [label="same cell"];
+  pf -> cf [label="child waits for\nthe parent's first task"];
+  cl -> pl [label="parent waits for\nthe children's last tasks\n(childrenTasks array)"];
+}
