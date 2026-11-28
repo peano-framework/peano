@@ -18,28 +18,17 @@ with autotools this looks like:
 SCOREP_WRAPPER=off ./configure CC=scorep-icx CXX=scorep-icpx ...
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-<<<<<<< HEAD
-
 ### Score-P variants
 
-If we use scripts alike scorep-icx, we implicitly assume that Score-P has been
-built against the Intel compiler. If you install it manually on your system, 
-this might not be the default, i.e. Score-P might be built again GNU. To toggle
-this behaviour, ensure you configure Score-P with 
+The instruction above assumes that Score-P's module files provide scripts alike
+scorep-icx, and that Score-P has been built with the Intel compiler. If such a
+script does not exist, or if you install Score-P manually on your system, it
+might have been built with GNU, which is the default. To use the Intel compiler,
+add the following flag to Score-P's configure call:
 
-        ./configure --with-nocross-compiler-suite=oneapi
-        
-=======
-The instruction above assumes that Score-P's module files are built such that 
-they provide scripts alike scorep-icx. If such a script does not exist, you 
-might have built Scalasca without the Intel compiler even though you want to 
-use the Intel compiler (default it GNU). If so, add
-
-
-           --with-nocross-compiler-suite=oneapi
-           
-to your configure call.
->>>>>>> refs/remotes/origin/infrastructure
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+./configure --with-nocross-compiler-suite=oneapi
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
 ### Logging against Score-P         

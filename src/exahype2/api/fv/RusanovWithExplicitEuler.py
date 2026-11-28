@@ -9,7 +9,7 @@ import peano4.api.dastgen2
 import toolbox.blockstructured.api
 import toolbox.loadbalancing.api.actionsets
 import exahype2.api
-from exahype2.api import Target, OutputLanguage, MemoryLayout
+from exahype2.api import Target, OutputLanguage, MemoryLayout, IncludeMLIRFunctions, KernelConfiguration
 from collections import OrderedDict
 
 # This solver is using the rewritten version
@@ -35,11 +35,13 @@ from .actionsets import ComputeGlobalCFLCondition
 from .actionsets import ComputeMaxEigenvalue
 from .actionsets import ReduceMaxEigenvalue
 from .MaxEigenvalueReduction import add_max_eigenvalue_reduction
+from .InitialConditionsKernel import InitialConditionsGenerator
 
 from ..VolumetricSource import VolumetricSource
 from ..Flux import Flux
 from ..NonconservativeProduct import NonconservativeProduct
 from ..MaxEigenvalue import MaxEigenvalue
+from ..InitPointWisely import InitPointWisely
 ## DSLHyPE time step kernels
 #
 # The two functions below are never executed as Python. DSLHyPE parses their
@@ -301,7 +303,7 @@ class RusanovWithExplicitEuler(Solver.NumericalScheme):
         self.kernel_namespace = None
         self.max_eigenvalue_kernel_call = None
         self.cfl_constant = cfl_constant
-        self._generator = RusanovWithExplicitEulerGenerator(solver, [(Target.Serial, False, OutputLanguage.CPP, MemoryLayout.AoS_AllNested)])
+        self._generator = RusanovWithExplicitEulerGenerator(solver, [(Target.Serial, False, OutputLanguage.CPP, MemoryLayout.AoS_AllNested, [])])
         self.__create_data_structures()
 
     @property
@@ -533,12 +535,30 @@ Patch overlap data
 
 
 class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGenerator):
+    def __init__(self, solver: Solver, configurations: list[KernelConfiguration]):
+        super().__init__(solver, configurations)
+        initial_conditions_configurations = []
+        accelerator_enabled = [any([target == Target.Accelerator for (target, _,_,_,_) in configurations])]
+        for pde_term in solver.pde_terms:
+            if isinstance(pde_term, InitPointWisely):
+                if pde_term.stateless and accelerator_enabled:
+                    initial_conditions_configurations.append((Target.Accelerator, True, OutputLanguage.CPP, MemoryLayout.AoS_AllFlattened, []))
+                else:
+                    initial_conditions_configurations.append((Target.Serial, False, OutputLanguage.CPP, MemoryLayout.AoS_AllFlattened, []))
+        self._initialConditionsGenerator = InitialConditionsGenerator(solver, initial_conditions_configurations)
+
     def construct_output(self, exahype2_project, peano_project, time_step, add_global_tasks=True):
         # The kernels are stateless only if all PDE terms they call are. Otherwise
         # they have to call the (virtual) member functions of the solver instance.
+        # They may have both stateless and non-stateless variants
         terms = [term for term in self._solver.pde_terms if term.NAME in ["flux", "nonconservativeProduct", "volumetricSource", "maxEigenvalue"]]
-        if terms and not all(term.stateless for term in terms):
-            self._configurations = [(target, False, language, layout) for (target, _, language, layout) in self._configurations]
+        pde_term_stateless_map = {}
+        for term in terms:
+            if term.NAME not in pde_term_stateless_map or pde_term_stateless_map[term.NAME] == False:
+                pde_term_stateless_map[term.NAME] = term.stateless
+
+        if terms and not all(pde_term_stateless_map.values()):
+            self._configurations = [(target, False, language, layout, passes) for (target, _, language, layout, passes) in self._configurations]
         # Construct the call first, as it validates the PDE terms' variants
         # Although we may generate multiple definitions for the purpose of benchmarking, we
         # only need one kernel call
@@ -552,9 +572,10 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
             function_name=self._solver.numerical_scheme.max_eigenvalue_kernel_function_name,
         )
 
+        self._initialConditionsGenerator.construct_output(exahype2_project, peano_project, time_step, add_global_tasks)
         self.__create_time_step_functions(exahype2_project, peano_project)
         
-        reconstruction_task         = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Reconstruct", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
+        reconstruction_task         = peano4.api.taskgraph.Task(name=f"{self._solver.name}_{Solver.NumericalScheme.RECONSTRUCTION_TASK_NAME}", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         update_cell_task            = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Update cell", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         project_on_faces_task       = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Project on faces", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
         compute_eigenvalue_task     = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Compute max eigenvalue", entity=peano4.api.taskgraph.Task.GridEntity.CELL)
@@ -762,7 +783,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         else:
             time_step_dsl_function = timeStepWithRusanov3D
         
-        output_directory = peano4_project.directory
+        #output_directory = peano4_project.directory
         temporary_output_directory = peano4_project.temporary_directory
 
         required_includes = f"""
@@ -780,7 +801,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         stateless_kernel_generated=False
         non_stateless_kernel_generated=False
         mlir_kernel_generated=False
-        for (_, stateless, language, _) in self._configurations:
+        for (_, stateless, language, _, _) in self._configurations:
             if stateless:
                 stateless_kernel_generated = True
             else:
@@ -789,7 +810,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
                 mlir_kernel_generated = True
         
         temporary_kernels_directory = os.path.join(temporary_output_directory, "kernels")
-        kernels_directory = os.path.join(output_directory, "kernels")
+        kernels_directory = "kernels"
         os.makedirs(temporary_kernels_directory, exist_ok=True)
         #file_name = 
         #for file_name in [f"{self._solver.name}_rusanov2d.h", f"{self._solver.name}_rusanov3d.h"]:
@@ -862,10 +883,12 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
                 output_file_name=f"{self._solver.name}_rusanov{dimensions}d",
                 output_directory=temporary_output_directory,)
 
-        for (target, stateless, language, memory_layout) in self._configurations:
+        for (target, stateless, language, memory_layout, _) in self._configurations:
+            cell_data_type = dslhype.construct_cell_data_type(dimensions, target, language, memory_layout)
             dslhype.translate_dslhype_function(
                 solver=self._solver,
                 function = time_step_dsl_function,
+                function_arguments=[dslhype.Argument(dslhype.Name("patchData"), cell_data_type)],
                 dimensions=dimensions,
                 function_map=function_map,
                 external_variables=external_variables,
@@ -879,10 +902,12 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
                 output_directory=temporary_output_directory,
             )
         # The maximum eigenvalue is a kernel of its own, which always runs on the host
-        for stateless in sorted({stateless for (_, stateless, _, _) in self._configurations}):
+        for stateless in sorted({stateless for (_, stateless, _, _, _) in self._configurations}):
+            cell_data_type = dslhype.construct_cell_data_type(dimensions, Target.Serial, OutputLanguage.CPP, MemoryLayout.AoS_AllNested)
             dslhype.translate_dslhype_function(
                 solver=self._solver,
                 function = maxEigenvalueOverPatch2D if dimensions == 2 else maxEigenvalueOverPatch3D,
+                function_arguments=[dslhype.Argument(dslhype.Name("patchData"), cell_data_type)],
                 dimensions=dimensions,
                 function_map=function_map,
                 external_variables=external_variables,
@@ -907,9 +932,17 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
         if non_stateless_kernel_generated or mlir_kernel_generated:
             peano4_project.output.makefile.add_cpp_file(os.path.join(kernels_directory, f"{self._solver.name}_rusanov{dimensions}d.cpp"), generated=True)
 
-        for (_, stateless, language, memory_layout) in self._configurations:
+        for (target, stateless, language, memory_layout, passes) in self._configurations:
             if language == OutputLanguage.MLIR:
-                peano4_project.output.makefile.add_mlir_file(os.path.join(kernels_directory, f"{self._solver.name}_rusanov{dimensions}d_{memory_layout.name.lower()}.mlir"), "mlir-opt --pass-pipeline=\"builtin.module(canonicalize,cse,loop-invariant-code-motion,canonicalize,cse,loop-invariant-code-motion,cse,canonicalize,expand-strided-metadata,fold-memref-alias-ops,lower-affine,finalize-memref-to-llvm,loop-invariant-code-motion,canonicalize,cse,finalize-memref-to-llvm,convert-scf-to-cf,convert-openmp-to-llvm,convert-math-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts,canonicalize,cse)\"")
+                include_pass_used = False
+                for optional_pass in passes:
+                    if isinstance(optional_pass, IncludeMLIRFunctions):
+                        peano4_project.output.makefile.add_mlir_file(os.path.join(kernels_directory, f"{self._solver.name}_rusanov{dimensions}d_{memory_layout.name.lower()}_{target.name.lower()}.mlir"), dslhype.construct_mlir_pipeline(target, passes), optional_pass.input_file)
+                        include_pass_used = True
+                        break
+                if not include_pass_used:
+                    peano4_project.output.makefile.add_mlir_file(os.path.join(kernels_directory, f"{self._solver.name}_rusanov{dimensions}d_{memory_layout.name.lower()}_{target.name.lower()}.mlir"), dslhype.construct_mlir_pipeline(target, passes))
+
 
         file = open(os.path.join(temporary_output_directory, "kernels", f"{self._solver.name}_rusanov.h"), "w")
         file.write(f"""#include "{self._solver.name}_rusanov{dimensions}d.h" """)
@@ -917,7 +950,7 @@ class RusanovWithExplicitEulerGenerator(Solver.NumericalScheme.NumericalSchemeGe
 
     def __construct_kernel_calls(self):
         kernel_calls = []
-        for (target, stateless, language, memory_layout) in self._configurations:
+        for (target, stateless, language, memory_layout, _) in self._configurations:
             kernel_calls.append(self.__construct_kernel_call(target, stateless, language, memory_layout))
         return kernel_calls
 

@@ -36,6 +36,10 @@
 # - The non-conservative product is handed deltaQ, i.e. the derivative of
 #   all unknowns and auxiliary variables times the mesh width, exactly like
 #   the Finite Volumes of exahype2.api.fv hand over the jump across a face.
+#   For auxiliary variables which are derivatives of unknowns, the scheme
+#   may overwrite rows of deltaQ by compact second derivatives
+#   (@ref exahype2.api.rkfd4.CompactSecondDerivatives). It relies on the
+#   assignments of delta_x, delta_y and delta_z below.
 # - The stencils reach two grid cells into the neighbouring patches, i.e.
 #   they need a halo H of at least two. The kernels are written for an
 #   arbitrary halo H, so subclasses of the numerical scheme can add wider

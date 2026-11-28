@@ -92,17 +92,20 @@ Finite Differences with classic Runge-Kutta 4 and lopsided advection, no dissipa
 adaptive time step size (CFL), end time 0.1 (about 33 time steps). Both solvers
 use the same numerical scheme. We compare the 25 evolved unknowns at the end of the
 run. The last column shows how far the first-order solution moved away from its
-initial condition, i.e. the scale of the dynamics.
+initial condition, i.e. the scale of the dynamics. The second-order solver computes the
+pure second derivatives with the compact stencil
+(src/exagrype/ccz4/adrs/0006-the-second-order-solver-uses-compact-second-derivatives.md);
+the numbers before this change are given in the next section.
 
 | unknown | max abs. difference SO vs. FO | relative L2 difference | max abs. change of FO in the run |
 |---|---|---|---|
-| G (xx, yy, zz) | 7.6e-6 / 4.1e-6 / 4.1e-6 | 3.4e-6 / 1.8e-6 / 1.8e-6 | 4.2e-2 / 2.1e-2 / 2.1e-2 |
-| K (xx, yy, zz) | 7.7e-5 / 4.1e-5 / 4.1e-5 | 2.3e-4 | 1.4e-1 / 7.9e-2 / 7.9e-2 |
-| lapse | 2.5e-6 | 1.0e-6 | 3.1e-2 |
-| phi | 2.0e-6 | 8.7e-7 | 1.1e-2 |
-| Kex | 1.3e-4 | 2.4e-4 | 2.3e-1 |
-| Z (x) | 5.0e-5 | 7.7e-5 | 3.1e-1 |
-| theta | 3.6e-5 | (not meaningful) | 1.9e-5 |
+| G (xx, yy, zz) | 7.0e-6 / 3.9e-6 / 3.9e-6 | 2.8e-6 / 1.5e-6 / 1.5e-6 | 4.2e-2 / 2.1e-2 / 2.1e-2 |
+| K (xx, yy, zz) | 8.4e-5 / 4.7e-5 / 4.7e-5 | 2.4e-4 / 2.5e-4 / 2.5e-4 | 1.4e-1 / 7.9e-2 / 7.9e-2 |
+| lapse | 2.3e-6 | 9.3e-7 | 3.1e-2 |
+| phi | 2.0e-6 | 7.7e-7 | 1.1e-2 |
+| Kex | 1.4e-4 | 2.6e-4 | 2.3e-1 |
+| Z (x) | 5.1e-5 | 7.9e-5 | 3.1e-1 |
+| theta | 4.1e-5 | (not meaningful) | 1.9e-5 |
 | all others (off-diagonals, shift, b, Z_y, Z_z) | 0 | 0 | 0 |
 
 **Reading the table.** The two solvers agree to 1e-6 to 1e-4 in absolute terms,
@@ -149,14 +152,20 @@ both solvers against the analytical lapse
 
 | scheme | grid | t | max abs. diff. SO vs. FO (25 unknowns) | max abs. diff. of the lapse | rel. L2 lapse error FO | rel. L2 lapse error SO | wall time FO | wall time SO |
 |---|---|---|---|---|---|---|---|---|
-| RK4FD4 | 27^3 | 0.102 | 1.3e-4 | 2.5e-6 | 1.1e-6 | 1.6e-6 | 4.8 s | 5.6 s |
-| RK4FD4 | 81^3 | 0.101 | 1.6e-6 | 3.1e-8 | 1.4e-8 | 2.2e-8 | 300 s | 377 s |
+| RK4FD4 | 27^3 | 0.102 | 1.4e-4 | 2.3e-6 | 1.1e-6 | 2.8e-7 | 4.8 s | 5.6 s |
+| RK4FD4 | 81^3 | 0.101 | 1.8e-6 | 2.8e-8 | 1.4e-8 | 7.8e-9 | 300 s | 377 s |
+
+The wall times were measured before the compact second derivatives. Before them, the SO
+solver had the lapse errors 1.6e-6 (27^3) and 2.2e-8 (81^3), and the largest differences
+1.3e-4 and 1.6e-6.
 
 **Reading the table.** The 27^3 row reproduces the numbers of the first table
 (the largest difference is the one of Kex). Refining the grid by a factor of three reduces the
-difference between the two solvers by a factor of about 80, and the error of each solver against the analytical lapse
-by about 80 (FO) and 75 (SO), i.e. \f$ 3^4 \f$: both formulations converge with fourth order, and the SO solver stays within a factor of
-1.5 of the first-order solver's error. On the finer grid, SO is about 25% slower than FO per run (about 15% on the 27^3 grid, where setup and plots matter more).
+difference between the two solvers by a factor of about 80, and the error of FO against the analytical lapse
+by about 80, i.e. \f$ 3^4 \f$. The SO error is smaller than the FO error on both grids. It shrinks by 36 only, as it is
+the sum of the FO error and the difference, whose leading terms partly cancel, more so on the coarse grid. Without the
+compact second derivatives, SO had 1.5 times the FO error and converged with a factor of 75. On the finer grid, SO is
+about 25% slower than FO per run (about 15% on the 27^3 grid, where setup and plots matter more).
 
 ### Finite Volumes
 
@@ -315,6 +324,11 @@ def build(scheme, formulation, cells):
                     right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
                     advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
                     advected_quantities=solver.advected_quantities(),
+                    # The second-order solver computes the pure second derivatives
+                    # with the compact stencil
+                    auxiliary_derivatives=(
+                        solver.auxiliary_derivatives() if formulation == "SO" else None
+                    ),
                 )
             )
             solver.grid_construction = exahype2.api.rkfd4.SetupSimulationOverRegularGrid(

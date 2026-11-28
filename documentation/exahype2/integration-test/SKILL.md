@@ -12,11 +12,14 @@ entropy wave (ExaHyPE 2, see the last section). Run both.
 ## Gauge wave convergence study
 
 The gauge wave has a known exact solution. `benchmarks/exagrype/gauge-wave/convergence-study.py`
-builds and runs `gauge-wave.py` for every scheme and mesh, measures the maximum error of the
-lapse along the line y=z=0.5 at the end time against the exact solution, estimates the
-convergence orders, writes a plot and a table, and exits non-zero if the order of any scheme
-between its two finest meshes falls below `ExpectedOrders` in the script. The results of the
-last reference run are documented in the page on top of `gauge-wave.py`.
+builds and runs `gauge-wave.py` for every scheme, both CCZ4 formulations and every mesh. The
+formulations are first-order (`fo`, `FOCCZ4Solver`) and first-order second-order (`so`,
+`FOSOSolver`); both have to pass, with the same minimum order per scheme. The study measures
+the maximum error of the lapse along the line y=z=0.5 at the end time against the exact
+solution, estimates the convergence orders, writes a plot and a table, and exits non-zero if
+the order of any scheme between its two finest meshes falls below `ExpectedOrders` in the
+script, or if any build or run fails (the other runs continue). The results of the last
+reference run are documented in the page on top of `gauge-wave.py`.
 
 ## Prerequisites
 
@@ -31,16 +34,18 @@ last reference run are documented in the page on top of `gauge-wave.py`.
 ## Steps
 
 1. Pick a work directory outside the repository (builds and outputs take a few GB) and run
-   the study in the background (about an hour on an eight-core workstation):
+   the study in the background (about an hour per formulation on an eight-core
+   workstation; the duration with both has not been measured yet):
    ```sh
    python3 benchmarks/exagrype/gauge-wave/convergence-study.py \
        --work-directory <work> --output-directory <work>/out
    ```
-   Useful options: `--schemes fv rk4fd4` and `--meshes 9 27` restrict the study (the latter is
-   a quick smoke test of a few minutes); `--cores N` limits the cores. The default meshes
+   Useful options: `--schemes fv rk4fd4`, `--formulations so` and `--meshes 9 27` restrict the
+   study (the latter is a quick smoke test); `--cores N` limits the cores. The default meshes
    are `9 27 81`; `243` fits only into a machine with far more than 64 GB of memory.
    Completed runs in the work directory are reused (`results.json`), so an interrupted study
-   continues where it stopped, and runs that were skipped for lack of memory are retried.
+   continues where it stopped, and runs that failed or were skipped for lack of memory are
+   retried.
    Delete the run's entry in `results.json` to force a rerun (a rerun starts from a clean
    directory). Do not kill the study with `pkill -f` from the same shell that runs it.
 2. Watch the log (`build ...`, `run ...`, `skip ...`) with the Monitor tool instead of
@@ -103,6 +108,12 @@ python3 benchmarks/exahype2/euler/smooth-convergence-test/convergence-study.py \
 ```
 
 Finished runs in the work directory are reused; delete `<work2>/<scheme>/run-<size>` to rerun one.
+The study also fails a scheme if the last snapshot of any run is older than the end time:
+a run whose time step size collapses terminates with exit code zero, and its remaining initial
+snapshot yields a meaningless, huge order. As of 2026-11-28, rk1fd4 fails for this reason on 243
+grid cells per axis (time step size collapses at t=0.045; not analysed yet), on both parents of
+the merge of `peano` into `peano-generalised-producer-consumer`, i.e. the study reports `FAILED: rk1fd4`.
+
 Expected for rk4fd4: 64, 190 and 566 time steps, max errors 3.8e-05, 4.8e-07 and 5.9e-09, orders 3.99 and
 4.00 (documented in `README.dox` next to the script), and `PASSED`.
 

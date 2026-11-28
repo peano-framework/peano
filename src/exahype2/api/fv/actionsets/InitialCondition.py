@@ -68,6 +68,7 @@ class InitialCondition(AbstractFVActionSet):
                 ),
                 "UNKNOWN_IDENTIFIER": self._solver._unknown_identifier(),
                 "SOLVER_INSTANCE": self._solver.get_name_of_global_instance(),
+                "SOLVER_NAME": self._solver.name,
             }
             result = jinja2.Template(self.TemplateInitialCondition).render(**d)
 
@@ -82,16 +83,34 @@ class InitialCondition(AbstractFVActionSet):
         return __name__.replace(".py", "").replace(".", "_")
 
     TemplateInitialCondition = """
-  logTraceIn( "touchCellFirstTime(...)---InitialCondition" );
-  // @todo Tim does it make sense to retire these loops and replace them with your compiler?
-  //           It is only a minor thing, but maybe we can get rid of all of these dfor macros?
-  parallelDfor( volume, {{NUMBER_OF_VOLUMES_PER_AXIS}} ) {
-    int index = peano4::utils::dLinearised(volume,{{NUMBER_OF_VOLUMES_PER_AXIS}}) * {{NUMBER_OF_UNKNOWNS}};
-    repositories::{{SOLVER_INSTANCE}}.initPointWisely(
-      ::exahype2::fv::getVolumeCentre( marker.x(), marker.h(), {{NUMBER_OF_VOLUMES_PER_AXIS}}, volume),
-      fineGridCell{{UNKNOWN_IDENTIFIER}}.value + index{{PARAMETERS}}
-    );
-  } endParallelDfor
+//  logTraceIn( "touchCellFirstTime(...)---InitialCondition" );
+//  // @todo Tim does it make sense to retire these loops and replace them with your compiler?
+//  //           It is only a minor thing, but maybe we can get rid of all of these dfor macros?
+//  parallelDfor( volume, {{NUMBER_OF_VOLUMES_PER_AXIS}} ) {
+//    int index = peano4::utils::dLinearised(volume,{{NUMBER_OF_VOLUMES_PER_AXIS}}) * {{NUMBER_OF_UNKNOWNS}};
+//    repositories::{{SOLVER_INSTANCE}}.initPointWisely(
+//      ::exahype2::fv::getVolumeCentre( marker.x(), marker.h(), {{NUMBER_OF_VOLUMES_PER_AXIS}}, volume),
+//      fineGridCell{{UNKNOWN_IDENTIFIER}}.value + index{{PARAMETERS}}
+//    );
+//  } endParallelDfor
+
+  #if defined (OMPUnifiedSharedMemory)
+    if (device != tarch::accelerator::Device::HostDevice){
+      cpp::flattened::{{SOLVER_NAME}}_initialiseCentreOfPatchStateless<Abstract{{SOLVER_NAME}}>(device, fineGridCell{{UNKNOWN_IDENTIFIER}}.value, marker.x());
+    else{
+      std::function<void(const tarch::la::Vector<Dimensions, double>&, double* __restrict__)> initFunction =
+      [&](const tarch::la::Vector<Dimensions, double>& x, double* __restrict__ I) -> void {
+          repositories::{{SOLVER_INSTANCE}}.initPointWisely(x, I);
+      };
+      cpp::flattened::{{SOLVER_NAME}}_initialiseCentreOfPatch(fineGridCell{{UNKNOWN_IDENTIFIER}}.value, marker.x(), marker.h(), initFunction);
+    }
+  #else
+    std::function<void(const tarch::la::Vector<Dimensions, double>&, double* __restrict__)> initFunction =
+    [&](const tarch::la::Vector<Dimensions, double>& x, double* __restrict__ I) -> void {
+        repositories::{{SOLVER_INSTANCE}}.initPointWisely(x, I);
+    };
+    cpp::flattened::{{SOLVER_NAME}}_initialiseCentreOfPatch(fineGridCell{{UNKNOWN_IDENTIFIER}}.value, marker.x(), marker.h(), initFunction);
+  #endif
 
   logTraceOut( "touchCellFirstTime(...)---InitialCondition" );
 """

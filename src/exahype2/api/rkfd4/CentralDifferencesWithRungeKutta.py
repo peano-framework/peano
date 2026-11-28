@@ -25,6 +25,8 @@ from ..rungekutta.LinearCombination import generate_linear_combination_kernel
 from ..rungekutta.LinearCombination import include_implementation_into_header
 from . import FD4Kernels
 from .Quantities import resolve_quantities
+from ..Quantities import resolve_auxiliary_derivatives
+from . import CompactSecondDerivatives
 from .actionsets import AddLopsidedAdvection
 from .actionsets import ApplyDirichletBoundaryConditions
 from ..blockstructured.BoundaryConditions import get_access_to_persistent_face_data
@@ -171,6 +173,14 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
       three grid cells into the neighbouring patches, the halo is three
       grid cells wide.
 
+    Independent of the kernel, auxiliary variables which are derivatives of
+    unknowns (argument auxiliary_derivatives) get compact second
+    derivatives along their own axis: The kernels hand the
+    non-conservative product the compact five-point second derivative of the
+    unknown instead of the first derivative of the derivative
+    (@ref exahype2.api.rkfd4.CompactSecondDerivatives,
+    src/exahype2/api/rkfd4/adrs/0003-compact-second-derivatives-of-auxiliary-derivatives.md).
+
     ## Data flow
 
     __create_data_structures() documents the data per mesh cell and
@@ -218,6 +228,13 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
     ## Width of the halo. Subclasses with wider stencils override it.
     HALO_SIZE = 2
 
+    ## Name of the task that projects the outcome of a stage onto the faces,
+    ## restricts the hanging faces and rolls the faces over, without the
+    ## solver's name as prefix. The placeholder is "stage k" for the outcome
+    ## of an intermediate stage and "solution" after the last stage. Coupled
+    ## solvers (exagrype.api.scalarfield) look the task up by this name.
+    PROJECTION_TASK_NAME = "Project {} onto faces"
+
     @property
     def halo_size(self) -> int:
         """! Width of the halo. Alias of HALO_SIZE, as the generic parts of exahype2.api expect this name."""
@@ -241,6 +258,7 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
         right_hand_side_kernel: "CentralDifferencesWithRungeKutta.RightHandSideKernel" = RightHandSideKernel.CentralDifferences,
         advection_velocity=None,
         advected_quantities=None,
+        auxiliary_derivatives=None,
         min_volume_size: float = None,
         max_volume_size: float = None,
         interpolation: "toolbox.blockstructured.api.InterpolateHangingFaces.Scheme" = toolbox.blockstructured.api.InterpolateHangingFaces.Scheme.Linear,
@@ -294,6 +312,16 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
           Only for CentralDifferencesWithLopsidedAdvection: the unknowns
           which are advected, as names of variables or indices of entries,
           @see exahype2.api.rkfd4.Quantities.resolve_quantities().
+
+        @param auxiliary_derivatives: List[Tuple[str, str, int, float]] or None
+          Auxiliary variables which are derivatives of unknowns, as rows
+          (derivative, unknown, axis, factor), @see
+          exahype2.api.Quantities.resolve_auxiliary_derivatives(). For these
+          entries, the right-hand side hands the non-conservative product the
+          compact second derivative of the unknown along the row's axis instead
+          of the first derivative of the derivative
+          (@ref exahype2.api.rkfd4.CompactSecondDerivatives). None (the
+          default) leaves the kernels unchanged.
 
         @param min_volume_size: float
           The time step asks for a refinement of a cell only if its grid
@@ -382,6 +410,11 @@ class CentralDifferencesWithRungeKutta(Solver.NumericalScheme):
                 )
             self.advection_velocity = None
             self.advected_quantities = None
+        self.auxiliary_derivatives = (
+            None
+            if auxiliary_derivatives is None
+            else resolve_auxiliary_derivatives(solver, auxiliary_derivatives)
+        )
         self.patch_size = patch_size
         assert (
             min_volume_size is None
@@ -764,14 +797,29 @@ Patch overlap data
             ),
         ]
 
+        ## With auxiliary derivatives, DSLHyPE translates the source of the
+        ## right-hand side with the compact second derivatives inserted
+        right_hand_side = {
+            dimensions: (
+                function
+                if self.auxiliary_derivatives is None
+                else CompactSecondDerivatives.right_hand_side_source(
+                    function, self.auxiliary_derivatives, dimensions
+                )
+            )
+            for dimensions, function in [
+                (2, FD4Kernels.rightHandSideWithFD42D),
+                (3, FD4Kernels.rightHandSideWithFD43D),
+            ]
+        }
         kernels = [
             (
-                FD4Kernels.rightHandSideWithFD42D,
+                right_hand_side[2],
                 "_fd4_2d",
                 self.right_hand_side_kernel_name,
             ),
             (
-                FD4Kernels.rightHandSideWithFD43D,
+                right_hand_side[3],
                 "_fd4_3d",
                 self.right_hand_side_kernel_name,
             ),
@@ -792,7 +840,7 @@ Patch overlap data
 
         output_directory = peano4_project.directory
         temporary_output_directory = peano4_project.temporary_directory
-            
+
         for function, file_suffix, function_name in kernels:
             dslhype.translate_dslhype_function(
                 function=function,
@@ -824,7 +872,10 @@ Patch overlap data
             if file_suffix.endswith("3d")
         )
         with open(
-            os.path.join(temporary_output_directory, "kernels", f"{self._solver.name}_fd4.h"), "w"
+            os.path.join(
+                temporary_output_directory, "kernels", f"{self._solver.name}_fd4.h"
+            ),
+            "w",
         ) as file:
             file.write(
                 f"""#pragma once
@@ -999,7 +1050,8 @@ Patch overlap data
         task holds one action set (@ref peano4.api.taskgraph.compiler.FuseSteps).
         Where the scheme needs several action sets in a row, it hence creates
         a chain of tasks. If several solvers share a task graph, their chains
-        overlap.
+        overlap. The exception is the projection onto the faces, whose action
+        sets have to share one mesh traversal.
 
         - {SolverName}_Disable load balancing: switches the load balancing
           off throughout the time step. Added last by
@@ -1036,15 +1088,16 @@ Patch overlap data
           eigenvalue of the new solution. Exists after the last stage for
           adaptive time stepping only.
         - {SolverName}_Project stage k+1 onto faces, or {SolverName}_Project
-          solution onto faces after the last stage: projects the outcome of
-          the linear combination onto the faces and restricts the hanging
-          faces onto the coarse faces. The task also rolls over the faces,
-          i.e. copies the projected data into the face data of the
-          current time step. Projection, restriction and roll over share the
-          update patch, which is temporary and hence lives within one mesh
-          traversal only: They are action sets of one task, as a task of its
-          own for the roll over would run in a later traversal and copy
-          uninitialised data (observed as `dt=inf` right after the first step).
+          solution onto faces after the last stage
+          (PROJECTION_TASK_NAME): projects the outcome of the linear
+          combination onto the faces, restricts the hanging faces onto the
+          coarse faces and rolls the face data over. The roll over is part
+          of the task, as it copies the update patch, which is temporary,
+          i.e. lives within one mesh traversal only
+          (see adrs/0004-roll-over-is-part-of-the-projection.md). The task
+          declares that it writes the face data of the current time step.
+          The reconstruction reads these faces, so the compiler does not
+          fuse the task into the traversal of the reconstruction.
 
         After the last stage, {SolverName}_Compute time step size determines
         the time step size of the next time step and advances the solver's
@@ -1140,7 +1193,8 @@ Patch overlap data
 
             ## Reconstruct the stage's input with its halo
             reconstruction_task = peano4.api.taskgraph.Task(
-                name=f"{name}_Reconstruct stage {stage}", entity=Entity.CELL
+                name=f"{name}_{self.RECONSTRUCTION_TASK_NAME} stage {stage}",
+                entity=Entity.CELL,
             )
             time_step.add_task(reconstruction_task)
             if previous_stage_task is not None:
@@ -1316,11 +1370,8 @@ Patch overlap data
 
             ## Project the outcome onto the faces, restrict it on hanging faces and
             ## roll the faces over. After the last stage, we determine the maximum
-            ## eigenvalue of the new solution right after the projection, i.e. in
-            ## parallel to the roll over (see adrs/0002-eigenvalue-follows-projection.md
-            ## for why not in parallel to the projection). All tasks share the
-            ## update patch, which is temporary, i.e. they rely on the task graph
-            ## compiler to fuse them into one mesh traversal.
+            ## eigenvalue of the new solution once this task has finished
+            ## (see adrs/0002-eigenvalue-follows-projection.md).
             eigenvalue_task = None
             if is_last_stage and self.has_adaptive_time_step_size:
                 eigenvalue_task = peano4.api.taskgraph.Task(
@@ -1348,9 +1399,7 @@ Patch overlap data
                 time_step.add_task(reduction_task)
 
             projection_task = peano4.api.taskgraph.Task(
-                name=f"{name}_Project {suffix} onto faces"
-                if not is_last_stage
-                else f"{name}_Project solution onto faces",
+                name=f"{name}_{self.PROJECTION_TASK_NAME.format(suffix)}",
                 entity=Entity.CELL,
             )
             projection_task.add_dependency(combination_task)
@@ -1358,7 +1407,7 @@ Patch overlap data
             projection_task.use_face(
                 self._solver._patch_overlap_update, Access.TEMPORARY
             )
-            ## See construct_output() for why the projection declares these faces
+            ## The roll over writes these faces
             projection_task.use_face(
                 self._solver._patch_overlap_current_time_step,
                 get_access_to_persistent_face_data(
@@ -1384,12 +1433,10 @@ Patch overlap data
             if eigenvalue_task is not None:
                 eigenvalue_task.add_dependency(projection_task)
 
-            ## The roll over is part of the projection. The face data of the
-            ## projection (the update) is TEMPORARY, i.e. it lives within one
-            ## mesh traversal only, and the roll over copies it: a task of its
-            ## own would run in a later traversal as soon as the compiler
-            ## respects its events (touchFaceLastTime) and copies uninitialised memory
-            ## (see src/exahype2/api/fv/adrs/0003-roll-over-is-part-of-the-projection.md).
+            ## The roll over is part of the projection: The update of the face
+            ## data is temporary, i.e. it lives within one mesh traversal only
+            ## (see adrs/0004-roll-over-is-part-of-the-projection.md). It
+            ## follows the restriction, as it has to copy the restricted data.
             ## Sommerfeld boundary conditions advance the ghost grid cells
             ## within the roll over, from the time stamp of this stage to the
             ## one of the next stage (@ref exahype2.api.blockstructured.BoundaryConditions)
@@ -1445,10 +1492,6 @@ Patch overlap data
             self.wrap_task_graph_in_load_balancing_and_amr_tasks(time_step)
 
         if peano4.api.Logger().is_visualisation:
-            time_step.visualise(
-                title="Time stepping task graph for {}".format(name)
-            )
+            time_step.visualise(title="Time stepping task graph for {}".format(name))
         if peano4.api.Logger().is_text:
-            time_step.log_as_text(
-                title="Time stepping task graph for {}".format(name)
-            )
+            time_step.log_as_text(title="Time stepping task graph for {}".format(name))

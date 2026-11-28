@@ -22,7 +22,7 @@ class _HostedScheme(exahype2.api.Solver.NumericalScheme):
     forwards all such queries to the scheme of the CCZ4 solver. Its
     construct_output() asks the reconstruction solver for its task graph once
     per Runge-Kutta stage of CCZ4
-    (@ref exahype2.api.Solver.Solver.create_task_graph()) and puts the graphs
+    (@ref exagrype.api.FOSOReconstructionSolver.FOSOReconstructionSolver.create_task_graph()) and puts the graphs
     into the time stepping graph. The graphs are not connected: wiring them is
     the job of FOSOSolver._couple(). The scheme remembers the graphs in
     stage_graphs.
@@ -91,7 +91,10 @@ class FOSOSolver:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     solver = exagrype.api.FOSOSolver("SO")
-    solver.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(solver.ccz4, patch_size, rk_order=4, ...)
+    solver.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
+      solver.ccz4, patch_size, rk_order=4,
+      auxiliary_derivatives=solver.ccz4.auxiliary_derivatives(), ...
+    )
     ...
     project.add_solver(solver)
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -104,9 +107,9 @@ class FOSOSolver:
     solver's graph is a chain per stage (see @ref exagrype.api.FOSOReconstructionSolver),
     and the chains of different stages are not connected.
     The host concatenates the graphs and wires them (_couple()): The first tasks of
-    each stage's chain take over the dependencies of the CCZ4 solver's reconstruction
-    of this stage, and the latter depends on the last task of the chain. The host
-    reports the outcome.
+    each stage's chain take over the dependencies of the CCZ4 solver's two
+    reconstructions of this stage (unknowns and derivatives), and both depend on
+    the last task of the chain. The host reports the outcome.
 
     """
 
@@ -225,17 +228,19 @@ class FOSOSolver:
 
         Let each stage of the CCZ4 solver use the freshly reconstructed derivatives
 
-        In each stage, the CCZ4 solver reconstructs the halo of its unknowns
-        and the halo of the derivatives (both tasks interpolate the hanging
-        faces themselves, see
-        src/exahype2/api/adrs/0001-interpolation-and-restriction-ride-along-with-face-users.md),
-        and then evaluates the right-hand side. The reconstruction solver
-        recomputes the derivatives from the unknowns in between, i.e.
+        In each stage, the CCZ4 solver reconstructs the halos of the unknowns
+        and of the derivatives (two tasks, which also interpolate onto the
+        hanging faces) and evaluates the right-hand side. The reconstruction
+        solver recomputes the derivatives from the unknowns in front of
+        these two tasks
+        (@ref exagrype.api.FOSOReconstructionSolver.FOSOReconstructionSolver.partner_task_names()), i.e.
 
         - the first reconstruction tasks of the stage wait for whatever the
-          CCZ4 solver's reconstruction of the derivatives waits for, and
-        - the CCZ4 solver's reconstruction of the derivatives and its
-          reconstruction of the unknowns wait for the last reconstruction task.
+          two tasks wait for, e.g. the previous stage or the Dirichlet
+          boundary conditions on the faces that the chain reads, and
+        - the two tasks wait for the last reconstruction task, as the chain
+          writes the derivatives and their faces, and it writes the hanging
+          faces of the unknowns.
 
         The chain is hence a block within the stage: The maximum concurrency of
         the merged graph does not exceed the one of the two graphs.
@@ -266,14 +271,17 @@ class FOSOSolver:
         ):
             first_tasks = graph.source_tasks()
             (last_task,) = graph.sink_tasks()
-            (
-                unknowns_reconstruction_name,
-                derivatives_reconstruction_name,
-            ) = self.reconstruction.partner_task_names(stage)
-            unknowns_reconstruction = find(unknowns_reconstruction_name, stage)
-            derivatives_reconstruction = find(derivatives_reconstruction_name, stage)
-            for dependency in derivatives_reconstruction.dependencies:
-                for first_task in first_tasks:
+            partners = [
+                find(task_name, stage)
+                for task_name in self.reconstruction.partner_task_names(stage)
+            ]
+            predecessors = []
+            for partner in partners:
+                for dependency in partner.dependencies:
+                    if all(dependency is not known for known in predecessors):
+                        predecessors.append(dependency)
+            for first_task in first_tasks:
+                for dependency in predecessors:
                     first_task.add_dependency(dependency)
-            derivatives_reconstruction.add_dependency(last_task)
-            unknowns_reconstruction.add_dependency(last_task)
+            for partner in partners:
+                partner.add_dependency(last_task)

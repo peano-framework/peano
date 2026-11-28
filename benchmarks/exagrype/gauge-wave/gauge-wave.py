@@ -46,6 +46,7 @@ The script has to be told what to do. It requires a build mode and a scheme:
 ~~~~~~~~~~~~~~~~~~~~~~~
 python3 gauge-wave.py --mode release --scheme rk4fd4
 python3 gauge-wave.py --mode debug --scheme fv --mesh-size 0.1
+python3 gauge-wave.py --mode release --scheme rk4fd4 --formulation so
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Use `--help` to see all options. `--mode release` builds an optimised executable
@@ -80,6 +81,10 @@ status if the order between the two finest meshes of a scheme falls below a thre
 is run via the skill `exahype2:integration-test` (see
 documentation/exahype2/integration-test/SKILL.md). Whenever you change a numerical scheme, the
 task graph, the kernels or the code generation, this is the test to rerun.
+
+The study runs both formulations (--formulation fo and so). The picture, the table and the
+discussion below stem from the first-order formulation. We have no reference results for the
+second-order one yet.
 
 | scheme | h = 1/9 | h = 1/27 | order | h = 1/81 | order |
 |---|---|---|---|---|---|
@@ -193,6 +198,14 @@ parser.add_argument(
     "Differences with Runge-Kutta of order 1 to 4 (rk1fd4, ..., rk4fd4).",
 )
 parser.add_argument(
+    "--formulation",
+    choices=["fo", "so"],
+    default="fo",
+    help="CCZ4 formulation: first-order (fo, exagrype.api.FOCCZ4Solver, default) or "
+    "first-order second-order (so, exagrype.api.FOSOSolver), which reconstructs the "
+    "first derivatives instead of evolving them.",
+)
+parser.add_argument(
     "--compiler",
     choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
@@ -239,15 +252,25 @@ project = exahype2.api.Project(
     executable="gauge-wave",
 )
 
-solver = exagrype.api.FOCCZ4Solver("CCZ4")
-solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
+## scheme_owner holds the numerical scheme and is added to the project. For the
+## second-order formulation, it is the pair of CCZ4 and reconstruction solver.
+## Both formulations call the CCZ4 solver CCZ4, i.e. their plot files have the
+## same name.
+initial_condition = exagrype.api.initialvalues.gauge_wave()
+if args.formulation == "fo":
+    solver = exagrype.api.FOCCZ4Solver("CCZ4")
+    solver.add_pde_term(initial_condition)
+    scheme_owner = solver
+else:
+    scheme_owner = exagrype.api.FOSOSolver("CCZ4", initial_condition=initial_condition)
+    solver = scheme_owner.ccz4
 
 if args.scheme in ["fv", "fv-optimistic"]:
     if args.scheme == "fv":
         scheme_class = exahype2.api.fv.RusanovWithExplicitEuler
     else:
         scheme_class = exahype2.api.fv.RusanovWithOptimisticExplicitEuler
-    solver.numerical_scheme = scheme_class(solver, patch_size)
+    scheme_owner.numerical_scheme = scheme_class(solver, patch_size)
     solver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
         solver, volume_size=volume_size
     )
@@ -261,13 +284,18 @@ if args.scheme in ["fv", "fv-optimistic"]:
         solver.plotter.add_plot_filter([0.0, 0.49, 0.49], [1.0, 0.02, 0.02])
 else:
     Kernel = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.RightHandSideKernel
-    solver.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
+    scheme_owner.numerical_scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
         solver,
         patch_size,
         rk_order=int(args.scheme[2]),
         right_hand_side_kernel=Kernel.CentralDifferencesWithLopsidedAdvection,
         advection_velocity=exagrype.api.FOCCZ4Solver.ADVECTION_VELOCITY,
         advected_quantities=solver.advected_quantities(),
+        # The second-order solver computes the pure second derivatives with the
+        # compact stencil
+        auxiliary_derivatives=(
+            solver.auxiliary_derivatives() if args.formulation == "so" else None
+        ),
     )
     solver.grid_construction = exahype2.api.rkfd4.SetupSimulationOverRegularGrid(
         solver, volume_size=volume_size
@@ -281,7 +309,7 @@ else:
     if args.plot_along_x_axis:
         solver.plotter.add_plot_filter([0.0, 0.49, 0.49], [1.0, 0.02, 0.02])
 
-project.add_solver(solver)
+project.add_solver(scheme_owner)
 project.compiler = task_graph_compiler
 
 project.set_global_simulation_parameters(
