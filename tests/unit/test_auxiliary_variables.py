@@ -102,19 +102,105 @@ def test_pointers_follow_each_q_and_delta_q():
     )
 
 
-def test_only_the_owner_writes_the_set_in_the_initial_condition():
+def test_initial_condition_receives_no_auxiliary_variables():
+    solver = _solver()
+    for auxiliary in _two_sets():
+        solver.add_auxiliary_variables(auxiliary)
+    term = solver.get_pde_term("initPointWisely")
+    assert solver.signature_of(term) == term.SIGNATURE
+    declaration = term.generator_for(solver).generate_declaration()
+    assert "bathymetry" not in declaration and "distortion" not in declaration
+
+
+def test_only_the_owner_writes_the_set_in_its_initialisation():
     owner, other = _solver("Owner"), _solver("Other")
     bathymetry, _ = _two_sets()
     owner.add_auxiliary_variables(bathymetry)
     other.add_auxiliary_variables(bathymetry)
+    term = exahype2.api.InitAuxiliaryVariablesPointWisely(implementation="")
     assert (
-        "double* __restrict__ Q, double* __restrict__ bathymetry"
-        in owner.signature_of(owner.get_pde_term("initPointWisely"))
+        "const double* __restrict__ Q, double* __restrict__ bathymetry"
+        in owner.signature_of(term)
     )
     assert (
-        "double* __restrict__ Q, const double* __restrict__ bathymetry"
-        in other.signature_of(other.get_pde_term("initPointWisely"))
+        "const double* __restrict__ Q, const double* __restrict__ bathymetry"
+        in other.signature_of(term)
     )
+
+
+def _setup_graph(*solvers):
+    """! Realise Finite Volume setups of the solvers into one graph"""
+    graph = peano4.api.taskgraph.Graph()
+    for solver in solvers:
+        solver.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(solver, 9)
+        exahype2.api.fv.SetupSimulationOverRegularGrid(
+            solver, volume_size=0.01
+        ).construct_output(unittest.mock.MagicMock(), unittest.mock.MagicMock(), graph)
+    return {task.name: task for task in graph.tasks}
+
+
+def _initialisation_name(solver):
+    from exahype2.api.AuxiliaryVariables import INIT_AUXILIARY_VARIABLES_TASK_NAME
+
+    return f"{solver.name} {INIT_AUXILIARY_VARIABLES_TASK_NAME}"
+
+
+def _project_name(solver):
+    return f"{solver.name} {exahype2.api.Solver.GridConstruction.PROJECT_ON_FACES_TASK_NAME}"
+
+
+def _face_data(task):
+    return {data.name for data in task.face_data}
+
+
+def test_setup_initialises_the_auxiliary_variables_behind_the_initial_condition():
+    owner, other = _solver("Owner"), _solver("Other")
+    bathymetry, _ = _two_sets()
+    owner.add_auxiliary_variables(bathymetry)
+    other.add_auxiliary_variables(bathymetry)
+    owner.add_pde_term(
+        exahype2.api.InitAuxiliaryVariablesPointWisely(implementation="")
+    )
+    tasks = _setup_graph(owner, other)
+
+    initial_condition = tasks["Owner Initial condition"]
+    initialisation = tasks[_initialisation_name(owner)]
+    assert initialisation.dependencies == [initial_condition]
+    assert initialisation in tasks[_project_name(owner)].dependencies
+    # The mesh adaptation of the setup hooks in behind the tagged task
+    tag = exahype2.api.fv.SetupSimulationOverRegularGrid.FinishedInitialRegularMeshSetup
+    assert tag in initialisation.tags and tag not in initial_condition.tags
+    assert bathymetry.patch_overlap_current_time_step.name in _face_data(
+        tasks[_project_name(owner)]
+    )
+    # The sharer waits until the owner has written the set
+    assert initialisation in tasks["Other Initial condition"].dependencies
+    assert _initialisation_name(other) not in tasks
+
+
+def test_setup_leaves_sets_without_initialisation_to_whoever_computes_them():
+    solver = _solver()
+    bathymetry, _ = _two_sets()
+    solver.add_auxiliary_variables(bathymetry)
+    tasks = _setup_graph(solver)
+
+    assert _initialisation_name(solver) not in tasks
+    assert bathymetry.patch_overlap_current_time_step.name not in _face_data(
+        tasks[_project_name(solver)]
+    )
+    # The data exists from the start nevertheless
+    assert any(
+        data is bathymetry.patch for data in tasks["Probe Initial condition"].cell_data
+    )
+
+
+def test_initialisation_term_needs_a_set_which_the_solver_owns():
+    solver = _solver()
+    solver.add_pde_term(
+        exahype2.api.InitAuxiliaryVariablesPointWisely(implementation="")
+    )
+    with pytest.raises(ValueError, match="owns no auxiliary variables"):
+        _setup_graph(solver)
 
 
 def test_abstract_solver_declares_structs_and_kernel_adapters(tmp_path):
@@ -364,8 +450,7 @@ def test_fd4_reconstructs_halos_that_are_stationary_through_the_time_step_once(
     assert _reconstruction_name(auxiliary, 1) not in tasks
     assert _reconstruction_name(auxiliary, 2) not in tasks
     assert (
-        tasks[_reconstruction_name(auxiliary, 0)].cell_data_access[halo]
-        == Access.WRITE
+        tasks[_reconstruction_name(auxiliary, 0)].cell_data_access[halo] == Access.WRITE
     )
     # The halo survives all stages but the last, which discards it
     for stage, expected in [

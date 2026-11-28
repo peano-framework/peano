@@ -299,14 +299,16 @@ def build(scheme, formulation, cells):
         directory=directory,
         executable=executable,
     )
-    initial_condition = exagrype.api.initialvalues.gauge_wave()
     if formulation == "FO":
         solver = exagrype.api.FOCCZ4Solver(name)
-        solver.add_pde_term(initial_condition)
+        solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
         scheme_owner = solver
     else:
         # The pair of CCZ4 and reconstruction solver. The pair holds the scheme.
-        pair = exagrype.api.FOSOSolver(name, initial_condition=initial_condition)
+        pair = exagrype.api.FOSOSolver(
+            name,
+            initial_condition=exagrype.api.initialvalues.gauge_wave_evolved_variables(),
+        )
         solver = pair.ccz4
         scheme_owner = pair
     # The grid cells have to be strictly smaller than volume_size times the patch size

@@ -29,11 +29,16 @@ double exagrype::scalarfield::maxEigenvalue(const double* const ccz4Fields, cons
 
 void exagrype::scalarfield::initialValues(
   double* const                               Q,
-  double* const                               ccz4Fields,
   const tarch::la::Vector<Dimensions, double>& x
 ) {
   for (int i = 0; i < NumberOfUnknowns; i++) {
     Q[i] = std::sin(2.0 * M_PI * x(0) + 0.25 * M_PI * i);
   }
+}
+
+
+void exagrype::scalarfield::initialAuxiliaryValues(
+  double* const ccz4Fields
+) {
   ccz4Fields[LapseIndex] = 1.0;
 }

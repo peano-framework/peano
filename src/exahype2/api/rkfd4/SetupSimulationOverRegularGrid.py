@@ -7,6 +7,9 @@ import toolbox.loadbalancing.api.actionsets
 from ..InitPointWisely import InitPointWisely
 from ..Solver import Solver
 from ..AuxiliaryVariables import add_auxiliary_variables_to_setup
+from ..blockstructured.InitialiseAuxiliaryVariables import (
+    InitialiseAuxiliaryVariables,
+)
 from .actionsets import InitialCondition
 from .actionsets import ProjectPatchOntoFaces
 from .actionsets import RollOverUpdatedFace
@@ -149,7 +152,7 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
             entity=peano4.api.taskgraph.Task.GridEntity.CELL,
         )
         project_on_faces_task = peano4.api.taskgraph.Task(
-            name=f"{self._solver.name} Project on faces",
+            name=f"{self._solver.name} {Solver.GridConstruction.PROJECT_ON_FACES_TASK_NAME}",
             entity=peano4.api.taskgraph.Task.GridEntity.CELL,
         )
 
@@ -183,8 +186,20 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
             )
         )
 
-        add_auxiliary_variables_to_setup(
-            self._solver, initial_condition_task, project_on_faces_task, ProjectPatchOntoFaces, RollOverUpdatedFace
+        initialise_auxiliary_variables_task = add_auxiliary_variables_to_setup(
+            self._solver,
+            initial_condition_task,
+            project_on_faces_task,
+            ProjectPatchOntoFaces,
+            RollOverUpdatedFace,
+            lambda: InitialiseAuxiliaryVariables(
+                self._solver,
+                "::exahype2::fd::getGridCellCentre",
+                includes='#include "exahype2/fd/PatchUtils.h"\n'
+                + self._solver._get_default_includes()
+                + self._solver.user_solver_includes,
+                guard=self._solver.grid_selector.createCellGuard(),
+            ),
         )
 
         setup_simulation.add_task(refine_task)
@@ -192,6 +207,8 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
         setup_simulation.add_task(balance_load_task)
         setup_simulation.add_task(consolidate_balance_task)
         setup_simulation.add_task(initial_condition_task)
+        if initialise_auxiliary_variables_task is not None:
+            setup_simulation.add_task(initialise_auxiliary_variables_task)
         setup_simulation.add_task(project_on_faces_task)
 
         initial_condition_task.use_cell(

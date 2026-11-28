@@ -256,13 +256,17 @@ project = exahype2.api.Project(
 ## second-order formulation, it is the pair of CCZ4 and reconstruction solver.
 ## Both formulations call the CCZ4 solver CCZ4, i.e. their plot files have the
 ## same name.
-initial_condition = exagrype.api.initialvalues.gauge_wave()
 if args.formulation == "fo":
     solver = exagrype.api.FOCCZ4Solver("CCZ4")
-    solver.add_pde_term(initial_condition)
+    solver.add_pde_term(exagrype.api.initialvalues.gauge_wave())
     scheme_owner = solver
 else:
-    scheme_owner = exagrype.api.FOSOSolver("CCZ4", initial_condition=initial_condition)
+    # The initial condition sets the 25 evolved unknowns only; the setup
+    # reconstructs the derivatives
+    scheme_owner = exagrype.api.FOSOSolver(
+        "CCZ4",
+        initial_condition=exagrype.api.initialvalues.gauge_wave_evolved_variables(),
+    )
     solver = scheme_owner.ccz4
 
 if args.scheme in ["fv", "fv-optimistic"]:

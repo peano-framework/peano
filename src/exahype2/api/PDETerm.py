@@ -43,6 +43,19 @@ class PDETerm:
 
     NAME: str
     SIGNATURE: str
+
+    RECEIVES_AUXILIARY_VARIABLES: bool = True
+    """!
+    Whether the generated signature holds pointers to the solver's auxiliary
+    variables (@ref exahype2.api.AuxiliaryVariables). False for
+    exahype2.api.InitPointWisely.
+    """
+
+    WRITES_OWNED_AUXILIARY_VARIABLES: bool = False
+    """!
+    Whether the term receives writable pointers to the sets which the solver
+    owns. True for exahype2.api.InitAuxiliaryVariablesPointWisely.
+    """
     
     def __init__(
         self,
@@ -111,14 +124,19 @@ class PDETerm:
             @param term: PDETerm
             @param solver: exahype2.api.Solver
               If the solver has auxiliary variables, the generated signature
-              contains pointers to them (@ref exahype2.api.AuxiliaryVariables).
+              contains pointers to them (@ref exahype2.api.AuxiliaryVariables),
+              unless the term's RECEIVES_AUXILIARY_VARIABLES is False.
             """
             self.term = term
             self.solver = solver
 
         @property
         def _has_auxiliary_variables(self) -> bool:
-            return self.solver is not None and len(self.solver.auxiliary_variables) > 0
+            return (
+                self.term.RECEIVES_AUXILIARY_VARIABLES
+                and self.solver is not None
+                and len(self.solver.auxiliary_variables) > 0
+            )
 
         @property
         def kernel_signature(self) -> str:
@@ -145,7 +163,11 @@ class PDETerm:
             if self._has_auxiliary_variables:
                 from .AuxiliaryVariables import extend_signature
 
-                return extend_signature(signature, self.solver)
+                return extend_signature(
+                    signature,
+                    self.solver,
+                    self.term.WRITES_OWNED_AUXILIARY_VARIABLES,
+                )
             return signature
 
         def _needs_kernel_adapter(self) -> bool:

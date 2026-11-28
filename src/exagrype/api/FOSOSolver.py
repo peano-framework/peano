@@ -82,6 +82,15 @@ class FOSOSolver:
       derivatives, i.e. it recomputes them from the primary unknowns in
       front of each Runge-Kutta stage of ccz4.
 
+    ## Setup
+
+    The initial condition sets the unknowns of the CCZ4 solver only. The host
+    hence appends the reconstruction of the derivatives to the setup
+    (_reconstruct_derivatives_in_setup()): It follows the projection of the
+    unknowns onto the faces, and ends with the projection of the derivatives
+    onto the faces
+    (src/exagrype/ccz4/adrs/0007-the-setup-reconstructs-the-derivatives.md).
+
     The host holds the numerical scheme: Build it for ccz4 and assign it to
     the host. The reconstruction solver receives a scheme that forwards to it. Configure ccz4 otherwise as any other solver (grid
     construction, plotter, constraint enforcement, ...), and then add the
@@ -154,12 +163,12 @@ class FOSOSolver:
 
     @property
     def solvers(self):
-        """! The solvers in the order of their realisation: CCZ4 first, as the reconstruction needs its data """
+        """! The solvers in the order of their realisation: CCZ4 first, as the reconstruction needs its data"""
         return [self.ccz4, self.reconstruction]
 
     @property
     def numerical_scheme(self) -> exahype2.api.Solver.NumericalScheme:
-        """! The scheme of ccz4. Assigning it hands a forwarding scheme to the reconstruction solver """
+        """! The scheme of ccz4. Assigning it hands a forwarding scheme to the reconstruction solver"""
         return self._numerical_scheme
 
     @numerical_scheme.setter
@@ -184,7 +193,8 @@ class FOSOSolver:
         Realise both solvers, couple their time stepping graphs, and add the outcome to the project's graphs
 
         The arguments are those of exahype2.api.Solver.generate_solver_realisation().
-        Both solvers are realised without global tasks. The load balancing and the dynamic
+        The setup gets the reconstruction of the derivatives of the initial
+        condition (_reconstruct_derivatives_in_setup()). Both solvers are realised without global tasks. The load balancing and the dynamic
         mesh refinement wrap the coupled time step graph afterwards, through the scheme of CCZ4.
 
         """
@@ -206,6 +216,9 @@ class FOSOSolver:
                 add_global_tasks=False,
             )
             coupled_time_step.merge(own_time_step)
+        self._reconstruct_derivatives_in_setup(
+            exahype2_project, peano_project, setup_simulation
+        )
         self._couple(exahype2_project, peano_project, coupled_time_step)
 
         self.ccz4.numerical_scheme.wrap_task_graph_in_load_balancing_and_amr_tasks(
@@ -222,6 +235,52 @@ class FOSOSolver:
         if peano4.api.Logger().is_text:
             coupled_time_step.log_as_text(title=title)
         time_step.merge(coupled_time_step)
+
+    def _reconstruct_derivatives_in_setup(
+        self, exahype2_project, peano_project, setup_simulation
+    ):
+        """!
+
+        Append the reconstruction of the derivatives to the setup
+
+        The chain (@ref exagrype.api.FOSOReconstructionSolver.FOSOReconstructionSolver.create_setup_task_graph())
+        follows the task of the CCZ4 solver's grid construction which projects
+        the unknowns onto the faces, as it reconstructs their halos from the
+        faces.
+
+        @param exahype2_project: exahype2.api.Project
+          The project that hosts the pair.
+
+        @param peano_project: peano4.api.Project
+          The Peano project that the exahype2 project assembles.
+
+        @param setup_simulation: peano4.api.taskgraph.Graph
+          The setup graph, which holds the tasks of the CCZ4 solver.
+
+        @exception ValueError if the setup lacks the task of the CCZ4 solver
+          which projects onto the faces.
+
+        """
+        task_name = f"{self.ccz4.name} {exahype2.api.Solver.GridConstruction.PROJECT_ON_FACES_TASK_NAME}"
+        found = [t for t in setup_simulation.tasks if t.name == task_name]
+        if len(found) != 1:
+            raise ValueError(
+                f"Host {self.name}: cannot find the task {task_name} in the setup "
+                f"graph, so the derivatives of the initial condition cannot be "
+                f"reconstructed. Does the grid construction of {self.ccz4.name} create it?"
+            )
+        chain = self.reconstruction.create_setup_task_graph(
+            exahype2_project, peano_project
+        )
+        for source in chain.source_tasks():
+            source.add_dependency(found[0])
+        setup_simulation.merge(chain)
+
+        title = f"Setup task graph for host {self.name}"
+        if peano4.api.Logger().is_visualisation:
+            setup_simulation.visualise(title=title)
+        if peano4.api.Logger().is_text:
+            setup_simulation.log_as_text(title=title)
 
     def _couple(self, exahype2_project, peano_project, time_step):
         """!

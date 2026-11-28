@@ -20,7 +20,9 @@ class InitialCondition(AbstractFVActionSet):
     This variant instead loops over the patch's volumes itself and calls
     InitPointWisely's initPointWisely() once per volume, exactly like Flux
     and MaxEigenvalue are evaluated once per degree of freedom - @see
-    exahype2.api.InitPointWisely.
+    exahype2.api.InitPointWisely. The loop over the volumes is a generated
+    kernel (@ref exahype2.api.fv.InitialConditionsKernel). The action set
+    sets the unknowns only, i.e. no auxiliary variables.
 
     Checkpoint-restart support (restart_from_checkpoint/loading_scheme in
     the legacy version) has deliberately not been ported: it relies on
@@ -59,13 +61,6 @@ class InitialCondition(AbstractFVActionSet):
 
         if operation_name == peano4.api.solversteps.ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
             d = {
-                "NUMBER_OF_VOLUMES_PER_AXIS": self._solver.numerical_scheme.patch_size,
-                "NUMBER_OF_UNKNOWNS": self._solver.unknowns,
-                "PARAMETERS": "".join(
-                    f",\n      fineGridCell{auxiliary.patch.name}.value + "
-                    f"peano4::utils::dLinearised(volume,{self._solver.numerical_scheme.patch_size}) * {auxiliary.size}"
-                    for auxiliary in self._solver.auxiliary_variables
-                ),
                 "UNKNOWN_IDENTIFIER": self._solver._unknown_identifier(),
                 "SOLVER_INSTANCE": self._solver.get_name_of_global_instance(),
                 "SOLVER_NAME": self._solver.name,
@@ -83,17 +78,6 @@ class InitialCondition(AbstractFVActionSet):
         return __name__.replace(".py", "").replace(".", "_")
 
     TemplateInitialCondition = """
-//  logTraceIn( "touchCellFirstTime(...)---InitialCondition" );
-//  // @todo Tim does it make sense to retire these loops and replace them with your compiler?
-//  //           It is only a minor thing, but maybe we can get rid of all of these dfor macros?
-//  parallelDfor( volume, {{NUMBER_OF_VOLUMES_PER_AXIS}} ) {
-//    int index = peano4::utils::dLinearised(volume,{{NUMBER_OF_VOLUMES_PER_AXIS}}) * {{NUMBER_OF_UNKNOWNS}};
-//    repositories::{{SOLVER_INSTANCE}}.initPointWisely(
-//      ::exahype2::fv::getVolumeCentre( marker.x(), marker.h(), {{NUMBER_OF_VOLUMES_PER_AXIS}}, volume),
-//      fineGridCell{{UNKNOWN_IDENTIFIER}}.value + index{{PARAMETERS}}
-//    );
-//  } endParallelDfor
-
   #if defined (OMPUnifiedSharedMemory)
     if (device != tarch::accelerator::Device::HostDevice){
       cpp::flattened::{{SOLVER_NAME}}_initialiseCentreOfPatchStateless<Abstract{{SOLVER_NAME}}>(device, fineGridCell{{UNKNOWN_IDENTIFIER}}.value, marker.x());
