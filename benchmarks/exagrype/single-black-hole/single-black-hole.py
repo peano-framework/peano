@@ -65,7 +65,6 @@ import os
 
 import peano4.api
 import peano4.api.taskgraph.compiler.Compilers
-import peano4.api.taskgraph.compiler.TaskGraphAssembly
 import exahype2.api
 import exagrype.api
 import toolbox.loadbalancing.api.input.RegularGridGenerator as RegularGridGenerator
@@ -73,17 +72,6 @@ import toolbox.loadbalancing.api.strategies.SplitTrees as SplitTrees
 import toolbox.loadbalancing.api.strategies.Decomposition as Decomposition
 import toolbox.loadbalancing.api.output.Hardcoded as Hardcoded
 
-
-Compilers = {
-    "sequential": peano4.api.taskgraph.compiler.Sequential.translate,
-    "fusion-only": peano4.api.taskgraph.compiler.FuseSteps.translate,
-    "producer-consumer-sequential": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_sequential,
-    "producer-consumer-fusion": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_fusion,
-    "producer-consumer-chains": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_chains_and_fusion,
-    "producer-consumer-chains-sequential": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_chains_and_sequential,
-    "assembly": peano4.api.taskgraph.compiler.TaskGraphAssembly.translate_with_sequential,
-    "assembly-fusion": peano4.api.taskgraph.compiler.TaskGraphAssembly.translate_with_fusion,
-}
 
 EnforceModes = {
     mode.name.lower(): mode
@@ -264,7 +252,7 @@ def parse_arguments():
     build = parser.add_argument_group("build")
     build.add_argument(
         "--compiler",
-        choices=list(Compilers),
+        choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
         default="producer-consumer-fusion",
         help="Task graph compiler, i.e. how time step tasks are mapped onto mesh traversals.",
     )
@@ -507,7 +495,9 @@ def main():
     create_numerical_scheme(solver, arguments)
     project.add_solver(solver)
 
-    project.compiler = Compilers[arguments.compiler]
+    project.compiler = peano4.api.taskgraph.compiler.Compilers.COMPILERS[
+        arguments.compiler
+    ]
 
     half_size = arguments.domain_size / 2.0
     project.set_global_simulation_parameters(

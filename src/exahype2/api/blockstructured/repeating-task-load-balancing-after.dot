@@ -1,0 +1,19 @@
+digraph after {
+  rankdir=TB; nodesep=0.5; ranksep=0.9;
+  fontname="Helvetica"; fontsize=16; labelloc=t;
+  label="After the fix: finishStep() is part of the repeating task";
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#eef3fb"];
+  edge [fontname="Helvetica", fontsize=11];
+
+  subgraph cluster_graph {
+    label="Task graph"; fontsize=13; style=dashed; margin=16;
+    refine [label="Refine mesh / Adapt mesh  (cell task)\n1. mesh action sets\n2. LoadBalancing: finishStep()\n\nrepeats while it waits for the load balancing:\nsetup: not hasStagnated()  or  not hasMeshBeenStationary()\nmesh adaptation: hasSplitRecently()"];
+  }
+
+  state [label="State of the load balancing", shape=cylinder, style=filled, fillcolor="#fff3cd"];
+  all [label="Every compiler keeps the action sets of one task together\nEach repetition updates the state it waits for", fillcolor="#d8f0d8"];
+
+  refine -> state [label="  finishStep() updates it in every sweep  "];
+  refine -> state [label="  repeat condition reads it", style=dashed, dir=back];
+  state -> all [style=invis];
+}

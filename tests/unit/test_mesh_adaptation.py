@@ -72,11 +72,10 @@ def test_finite_volumes_adapt_mesh_and_balance_load_by_default(scheme, tmp_path)
     kinds = [type(action_set) for action_set in adapt.action_sets]
     assert exahype2.api.blockstructured.ConsumeRefinementRequests in kinds
     assert Cells in kinds
-    [balance] = [task for task in graph.tasks if task.entity.is_global]
-    assert balance.dependencies == [adapt]
-    assert [type(a) for a in balance.action_sets] == [
-        toolbox.loadbalancing.api.actionsets.LoadBalancing
-    ]
+    # The repeating task informs the load balancing itself, after its other
+    # action sets, i.e. there is no global task
+    assert not any(task.entity.is_global for task in graph.tasks)
+    assert kinds[-1] == toolbox.loadbalancing.api.actionsets.LoadBalancing
     discards = exahype2.api.fv.actionsets.DiscardPatchInterior in kinds
     assert discards == (scheme == "fv-optimistic")
 

@@ -235,6 +235,25 @@ class LoadCheckpoint(Solver.GridConstruction):
     several solvers has to load checkpoints of all of them, written at the
     same time.
 
+    ## Why the refinement task informs the load balancing itself
+
+    The refinement sweep repeats until the load balancing has stagnated and
+    reports that the mesh has been stationary
+    (@ref toolbox::loadbalancing::AbstractLoadBalancing::hasMeshBeenStationary()).
+    Only finishStep() updates both, i.e. the action
+    set toolbox.loadbalancing.api.actionsets.LoadBalancing which calls it has
+    to be part of this very task. In a task of its own, the setup terminates
+    only if the task graph compiler happens to fuse both tasks. We have
+    observed the endless repetition with the setup over a regular grid
+    (@ref exahype2.api.fv.SetupSimulationOverRegularGrid), which followed the
+    same pattern. We have not observed it with the setup from a checkpoint.
+
+    @image html repeating-task-load-balancing-before.png
+    @image html repeating-task-load-balancing-after.png
+
+    The sources of the graphs are the .dot files next to the images in
+    src/exahype2/api/blockstructured.
+
     """
 
     def __init__(
@@ -330,13 +349,14 @@ class LoadCheckpoint(Solver.GridConstruction):
                 "not peano4::grid::isGridStationary( peano4::parallel::SpacetreeSet::getInstance().getGridStatistics() )"
                 " or ( ::toolbox::loadbalancing::LoadBalancingService::getInstance().hasLoadBalancing()"
                 " and ( not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasStagnated()"
-                " or ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasSplitRecently() ) )"
+                " or not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasMeshBeenStationary() ) )"
             ),
         )
         refine_task.add_action_set(_RefineFromCheckpoint(reader, includes))
-        balance_load_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Balance load after refinement", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL)
-        balance_load_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
-        balance_load_task.add_dependency(refine_task)
+        # The task repeats until the load balancing has stagnated, which only
+        # finishStep() tells. The action set hence has to be part of this task,
+        # as in the setup over a regular grid.
+        refine_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
 
         consolidate_load_balancing_task = peano4.api.taskgraph.Task(
             name=f"{self._solver.name}_Consolidate mesh",
@@ -389,7 +409,6 @@ class LoadCheckpoint(Solver.GridConstruction):
 
         setup_simulation.add_task(refine_task)
         setup_simulation.add_task(consolidate_load_balancing_task)
-        setup_simulation.add_task(balance_load_task)
         setup_simulation.add_task(consolidate_balance_task)
         setup_simulation.add_task(load_task)
 
