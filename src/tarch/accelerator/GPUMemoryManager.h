@@ -137,6 +137,8 @@ class tarch::accelerator::GPUMemoryManager {
      * This operation is thread-safe.
      */
     void clear();
+
+    static void copyData(void* destination, void* source, size_t length, DeviceType destinationDevice, DeviceType sourceDevice);
 };
 
 #endif

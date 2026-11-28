@@ -2,9 +2,10 @@
  use, please see the copyright notice at www.peano-framework.org
 """
 
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
 
 import exahype2.api
+from exahype2.api.Quantities import resolve_auxiliary_derivatives
 
 from . import initialvalues
 from .CCZ4SolverBase import CCZ4SolverBase
@@ -45,13 +46,30 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
     exahype2.api.fv.RusanovWithExplicitEuler. The latter reconstructs the
     derivatives with second-order central differences.
 
-    For Finite Differences, the numerical scheme has to have a halo of at least three grid cells:
-    The solver needs the derivatives one layer outside of its cell (the
-    fluxes and non-conservative products on the cell's faces use the values
-    left and right of the face), and the stencil of the reconstruction
-    reaches two layers further out. The plain scheme has a halo of two;
-    lopsided advection or exagrype.api.FD4WithKODissipation widen it to
-    three. The reconstruction solver rejects a smaller halo.
+    For Finite Differences, the solver takes the halo of the numerical
+    scheme, as the first-order solver does: two grid cells for the plain
+    scheme, three for lopsided advection or exagrype.api.FD4WithKODissipation.
+    The reconstruction computes the derivatives of the cell's own grid cells
+    only, and its stencil reaches two layers out. The derivatives of the halo
+    are the ones which the neighbouring cells have computed, exchanged via the
+    faces
+    (src/exagrype/ccz4/adrs/0004-the-foso-reconstruction-takes-the-halo-of-the-scheme.md).
+
+    The second derivatives are first derivatives of the derivatives, except
+    for the pure ones: With Finite Differences, the scheme computes the
+    derivative of, e.g., dLapse[0] along x as the compact second derivative
+    of the lapse. Hand auxiliary_derivatives() to the scheme for this, i.e.
+
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    exahype2.api.rkfd4.CentralDifferencesWithRungeKutta(
+      solver, patch_size, rk_order=4,
+      auxiliary_derivatives = solver.auxiliary_derivatives(),
+      ...
+    )
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    The solver refuses a Finite Difference scheme without this table
+    (src/exagrype/ccz4/adrs/0006-the-second-order-solver-uses-compact-second-derivatives.md).
 
     @ref page_exagrype_fo_so_project_plan for the design and its status.
 
@@ -150,10 +168,6 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         )
         self.add_auxiliary_variables(self.derivatives)
 
-    @property
-    def task_graph_title_suffix(self) -> str:
-        return " (CCZ4 part)"
-
     def advected_quantities(self) -> List[str]:
         """!
 
@@ -190,6 +204,125 @@ class FOSOCCZ4Solver(CCZ4SolverBase):
         if self._parameters["CCZ4b"] == 0 or self._parameters["CCZ4s"] == 0:
             excluded |= {"shift", "b"}
         return [name for name in self.Unknowns if name not in excluded]
+
+    @classmethod
+    def auxiliary_derivatives(cls) -> List[Tuple[str, str, int, float]]:
+        """!
+
+        Which unknown each auxiliary variable differentiates
+
+        Each entry (derivative, unknown, axis, factor) states that the
+        auxiliary variable derivative equals factor times the derivative of
+        the unknown along axis, entry by entry: dxG holds
+        @f$ D_{xij} = \\frac{1}{2} \\partial _x \\tilde \\gamma _{ij} @f$, i.e. the
+        six entries of dxG belong to the six entries of G with the factor
+        one half. A name with an index (dLapse[0]) selects one entry of a
+        variable, a name without an index all of them.
+
+        The table is the only definition of the derivatives. The
+        reconstruction (exagrype.api.FOSOReconstructionSolver) hands it to
+        exagrype::ccz4::reconstructFirstDerivativesFD4(), and it must not be
+        repeated anywhere else
+        (src/exagrype/ccz4/adrs/0005-one-table-defines-the-auxiliary-derivatives.md).
+
+        @return List[Tuple[str, str, int, float]]
+          Names of a derivative (@ref DerivativeUnknowns) and of an unknown
+          (@ref Unknowns), the axis and the factor. Together, the entries
+          cover each of the 33 derivatives exactly once.
+
+        """
+        result = []
+        for axis, name in enumerate("xyz"):
+            result += [
+                (f"dLapse[{axis}]", "lapse", axis, 1.0),
+                (f"d{name}Shift", "shift", axis, 1.0),
+                (f"d{name}G", "G", axis, 0.5),
+                (f"P[{axis}]", "phi", axis, 1.0),
+            ]
+        return result
+
+    def derivative_table(self) -> Tuple[List[int], List[int], List[float]]:
+        """!
+
+        auxiliary_derivatives() per entry of the auxiliary variables
+
+        The names are resolved as for the compact second derivatives of the
+        Finite Differences (@ref exahype2.api.Quantities.resolve_auxiliary_derivatives()),
+        i.e. the reconstruction and the kernels read the same rows.
+
+        @return differentiated_unknown, axis, factor
+          Three lists with one element per entry of DerivativeUnknowns: the
+          index of the differentiated unknown, the axis and the factor.
+
+        @exception ValueError if auxiliary_derivatives() names an unknown
+          variable, pairs variables with different numbers of entries or does
+          not cover each derivative exactly once.
+
+        """
+        rows = resolve_auxiliary_derivatives(self, self.auxiliary_derivatives())
+        offset = self.auxiliary_variable_offset(self.derivatives)
+        size = self.derivatives.size
+        missing = sorted(
+            set(range(size)) - {derivative - offset for derivative, _, _, _ in rows}
+        )
+        if missing:
+            raise ValueError(
+                f"Solver {self.name}: auxiliary_derivatives() does not define the "
+                f"derivative entries {missing}"
+            )
+        rows = sorted(rows)
+        return (
+            [unknown for _, unknown, _, _ in rows],
+            [axis for _, _, axis, _ in rows],
+            [factor for _, _, _, factor in rows],
+        )
+
+    def generate_solver_realisation(
+        self,
+        exahype2_project,
+        peano_project,
+        setup_simulation,
+        time_step,
+        plot,
+        mesh_adaptation,
+        add_global_tasks=True,
+    ):
+        """!
+
+        Check the scheme, then realise the solver as any CCZ4 solver
+
+        The Finite Differences have to compute the pure second derivatives
+        with the compact stencil, i.e. the user has to hand
+        auxiliary_derivatives() to the scheme (strict:
+        src/exagrype/ccz4/adrs/0006-the-second-order-solver-uses-compact-second-derivatives.md).
+        The solver checks this here rather than filling the table into the
+        scheme itself, as it must not change the scheme which the user has
+        created, and as the script states what the kernels do.
+
+        @exception ValueError if the scheme is an
+          exahype2.api.rkfd4.CentralDifferencesWithRungeKutta without the table
+          of this solver.
+
+        """
+        scheme = self.numerical_scheme
+        if isinstance(scheme, exahype2.api.rkfd4.CentralDifferencesWithRungeKutta):
+            expected = resolve_auxiliary_derivatives(self, self.auxiliary_derivatives())
+            if scheme.auxiliary_derivatives != expected:
+                raise ValueError(
+                    f"Solver {self.name}: the scheme has to compute the pure second "
+                    "derivatives of the unknowns with the compact stencil. Pass "
+                    "auxiliary_derivatives=solver.auxiliary_derivatives() to "
+                    f"{type(scheme).__name__}."
+                )
+        super().generate_solver_realisation(
+            exahype2_project,
+            peano_project,
+            setup_simulation,
+            time_step,
+            plot,
+            mesh_adaptation,
+            add_global_tasks,
+        )
 
     def _enforcement_implementation(self) -> str:
         return "::exagrype::ccz4::enforceCCZ4constraintsOfEvolvedVariables(Q);"

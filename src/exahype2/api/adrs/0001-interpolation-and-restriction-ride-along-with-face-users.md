@@ -1,6 +1,6 @@
 # ADR 0001: Interpolation and restriction are combined with the tasks that use face data
 
-Status: accepted (implementation in progress: interpolation done, done for FV and Runge-Kutta; open for the ExaGRyPE FOSO coupling)
+Status: accepted (implemented for FV, Runge-Kutta and the ExaGRyPE FOSO solvers)
 Date: 2026-11-09
 
 ## Context
@@ -55,9 +55,10 @@ nuance, as auxiliary variables are not necessarily held by the faces:
   explicit FV time step needs two instead of three mesh traversals, and dependencies
   between interpolation and reconstruction vanish.
 - Finite Volumes and Runge-Kutta host the restriction in the projection task (done).
-- Open: the ExaGRyPE FOSO coupling (`exagrype.api.FOSOSolver._couple()`) still looks up
-  the interpolation tasks by name, and the FOSO reconstruction solver still has
-  stand-alone interpolation and restriction tasks.
+- The ExaGRyPE FOSO coupling (`exagrype.api.FOSOSolver._couple()`) runs the
+  reconstruction in front of the CCZ4 solver's reconstruction tasks, which interpolate
+  (done). The FOSO reconstruction solver interpolates within its reconstruction tasks
+  and restricts within its projection (done).
 - The interpolation scheme and the restriction scheme remain attributes of the
   numerical scheme and are handed to the action sets of the tasks.
 - A new scheme or task using face data does not decide on its own how hanging faces are

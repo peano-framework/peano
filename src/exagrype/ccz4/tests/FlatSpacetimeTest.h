@@ -27,9 +27,10 @@ namespace exagrype {
  * We also test two helpers of the second-order formulation here, as they do
  * not warrant a test case of their own: that
  * reconstructFirstDerivativesFD4() differentiates cubic polynomials exactly
- * (for a halo of three and four), that
+ * (for a halo of two, three and four), that
  * reconstructFirstDerivativesCentralDifferences() does the same for quadratic
- * polynomials (halo of one and two), and that
+ * polynomials (halo of one and two), both for each row of a table of
+ * variables, axes and factors, and that
  * enforceCCZ4constraintsOfEvolvedVariables() does the same to the first 25
  * entries as enforceCCZ4constraints().
  */

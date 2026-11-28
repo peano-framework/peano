@@ -8,26 +8,26 @@ allowed-tools: [Bash, Read]
 
 After every modification of a notebook, we execute it end to end with
 `jupyter nbconvert --execute` (this generates, compiles and runs the tutorial's
-code) and afterwards run Doxygen. Both steps live in
-`.claude/skills/run-notebook/run-notebook.sh`, which this skill and the hooks share.
+code) and afterwards rebuild the documentation. The execution lives in
+`documentation/run-Jupyter-notebook/run-notebook.sh`, which this skill and the
+hooks share.
 
 ## Steps
 
 1. Run the script for the notebook:
    ```sh
-   .claude/skills/run-notebook/run-notebook.sh tutorials/exahype2/13_euler-with-amr.ipynb
+   documentation/run-Jupyter-notebook/run-notebook.sh tutorials/exahype2/13_euler-with-amr.ipynb
    ```
    Run it in the background (Bash `run_in_background`) and wait for its completion
-   notification: the execution takes minutes, the Doxygen rebuild about 9 more.
+   notification: the execution takes minutes.
 2. The notebook is executed in its own directory. The source notebook is not
    modified. The executed copy and the log go to
    `<root>/.claude/notebook-runs/<name>.ipynb` and `<name>.log`. All cells are run,
    even if some fail (`--allow-errors`). The end of the log lists the failing
    cells: cells raising a Python error, and shell cells (`!make`, ...) whose output
    contains compiler or make errors. The last line reports nbconvert's exit code.
-3. Afterwards the script calls `.claude/skills/regen-docs/regen-docs.sh`, which
-   converts the notebooks into .dox files and runs Doxygen. Its output goes to
-   `<root>/.doxygen-rebuild.log`. Report warnings about the notebook's page.
+3. Afterwards rebuild the documentation with the skill `peano:regen-docs`. The
+   script does not do this. Report warnings about the notebook's page.
 4. Tell the user whether the notebook ran through and whether its page has warnings.
 
 ## Automatic runs
@@ -42,7 +42,8 @@ this way, so a notebook created or first changed via Bash needs one explicit run
 
 Runs for one root are serialised, and a notebook whose current version has
 already been run is skipped. Hence, a series of quick edits results in at most
-two runs. The Doxygen rebuild waits for a rebuild that is already running.
+two runs. The hooks only execute notebooks; they do not rebuild the
+documentation.
 
 Limitations:
 - The generated code has to be built against a configured Peano. In a tree

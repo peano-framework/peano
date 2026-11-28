@@ -214,10 +214,10 @@ namespace {"::".join(function.namespace)} {{
 
     def print_array_deallocation(self, array_deallocation: ArrayDeallocation, indent_level: int = 0):
         if array_deallocation.array.array_size == 1 or array_deallocation.array.flatten:
-            return array_deallocation.deallocation.print(self, indent_level)
+            array_deallocation.deallocation.print(self, indent_level)
         else:
-            return f"""{array_deallocation.inner_deallocation.print(self, indent_level)}
-{array_deallocation.outer_deallocation.print(self, indent_level)}"""
+            array_deallocation.inner_deallocation.print(self, indent_level)
+            array_deallocation.outer_deallocation.print(self, indent_level)
         
     def print_memory_allocation(self, memory_allocation: MemoryAllocation, indent_level: int = 0) -> SSAValue:
         type_print = memory_allocation.type.print(self)
@@ -254,17 +254,23 @@ namespace {"::".join(function.namespace)} {{
             self.builders[-1].insert(store_op)
 
         return allocation_op.memref
-        #if isinstance(memory_allocation.lhs, Variable):
-        #    return f"""{self.get_indent(indent_level)}{type_print}* {lhs_print} = new {type_print}[{size_print}];"""
-        #else:
-        #    # lhs is either a variable or a subscript, only variables require a type specifier
-        #    return f"""{self.get_indent(indent_level)}{lhs_print} = new {type_print}[{size_print}];"""
 
     def print_memory_deallocation(self, memory_deallocation: MemoryDeallocation, indent_level: int = 0) -> str:
         lhs_print = memory_deallocation.lhs.print(self)
-        return f"""{self.get_indent(indent_level)}delete[] {lhs_print};"""
+        assert(isinstance(lhs_print, SSAValue))
+        deallocation_op = memref.DeallocOp.get(lhs_print)
+        self.builders[-1].insert(deallocation_op)
     
-    def print_function_call(self, function_call: FunctionCall, indent_level: int = 0):
+    def print_function_call_statement(self, function_call: FunctionCallStatement, indent_level: int = 0):
+        argument_ssa_values: list[SSAValue] = []
+        for argument in function_call.arguments:
+            argument_ssa_values.append(argument.print(self))
+            assert(isinstance(argument_ssa_values[-1], SSAValue))
+
+        xdsl_function_call = func.CallOp(function_call.name.id + ("Stateless" if function_call.stateless else ""), argument_ssa_values, [])
+        self.builders[-1].insert(xdsl_function_call)
+    
+    def print_function_call_expression(self, function_call: FunctionCallStatement, indent_level: int = 0):
         argument_ssa_values: list[SSAValue] = []
         for argument in function_call.arguments:
             argument_ssa_values.append(argument.print(self))
@@ -290,25 +296,17 @@ namespace {"::".join(function.namespace)} {{
         
         body_block = Block(arg_types=[builtin.IndexType()])
         body_block.add_op(affine.YieldOp.get())
-        map_identity = AffineMap(1, 0, (AffineDimExpr(0),))
-        lower_bounds_map = builtin.AffineMapAttr(map_identity)
-        upper_bounds_map = builtin.AffineMapAttr(map_identity)
-        lower_bounds_groups = builtin.DenseIntElementsAttr.from_list(builtin.VectorType(builtin.IntegerType(32), [1]), [1])
-        upper_bounds_groups = builtin.DenseIntElementsAttr.from_list(builtin.VectorType(builtin.IntegerType(32), [1]), [1])
-        steps = builtin.ArrayAttr([builtin.IntegerAttr(1, builtin.IntegerType(64))])
 
-        parallel_op = affine.ParallelOp.build(
-            operands=[[lower_bound_ssa_value, upper_bound_ssa_value]],
-            result_types=[[]],
-            regions=[Region(body_block)],
-            properties={
-                "reductions": builtin.ArrayAttr([]),
-                "lowerBoundsMap": lower_bounds_map,
-                "lowerBoundsGroups": lower_bounds_groups,
-                "upperBoundsMap": upper_bounds_map,
-                "upperBoundsGroups": upper_bounds_groups,
-                "steps": steps
-            }
+        identity_map = builtin.AffineMapAttr(AffineMap(1, 0, (AffineDimExpr(0),)))
+        for_op = affine.ForOp.from_region(
+            [lower_bound_ssa_value],
+            [upper_bound_ssa_value],
+            [],
+            [],
+            identity_map,
+            identity_map,
+            Region(body_block),
+            1,
         )
         self.builders.append(Builder(insertion_point=InsertPoint.at_start(body_block)))
 
@@ -322,7 +320,7 @@ namespace {"::".join(function.namespace)} {{
         del self.affine_dimension_map[for_loop.iteration_variable.name]
         self.nested_affine_level = self.nested_affine_level - 1
         self.builders.pop()
-        self.builders[-1].insert(parallel_op)
+        self.builders[-1].insert(for_op)
 
     def print_construction(self, construction: Construction, indent_level: int = 0):
         assert(isinstance(construction.rhs, Integer) or isinstance(construction.rhs, Float))
@@ -803,6 +801,10 @@ namespace {"::".join(function.namespace)} {{
         self.builders[-1].insert(load_op)
         return load_op.result
 
+    def print_vector(self, vector: Vector, indent_level: int = 0):
+        value_print = ", ".join([value.print(self) for value in vector.values])
+        return f"""{self.get_indent(indent_level)}tarch::la::Vector<{len(vector.values)}, {vector.base_type.print(self)}>{{{value_print}}}"""
+        
     #################################
     # Type Prints
     #################################

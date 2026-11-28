@@ -45,7 +45,11 @@ class Printer(ABC):
         pass
 
     @abstractmethod
-    def print_function_call(self, function_call: FunctionCall, indent_level: int = 0):
+    def print_function_call_statement(self, function_call: FunctionCallStatement, indent_level: int = 0):
+        pass
+
+    @abstractmethod
+    def print_function_call_expression(self, function_call: FunctionCallExpression, indent_level: int = 0):
         pass
 
     @abstractmethod
@@ -121,6 +125,10 @@ class Printer(ABC):
 
     @abstractmethod
     def print_element_index(self, element_index: ElementIndex, indent_level: int = 0):
+        pass
+
+    @abstractmethod
+    def print_vector(self, vector: Vector, indent_level: int = 0):
         pass
 
     #################################
