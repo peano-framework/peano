@@ -13,6 +13,7 @@ from .ProjectPatchWithHaloOntoFaces   import ProjectPatchWithHaloOntoFaces
 from .ReconstructPatchAndApplyFunctor import ReconstructPatchAndApplyFunctor
 from .InterpolateHangingFaces         import InterpolateHangingFaces
 from .RestrictHangingFaces            import RestrictHangingFaces
+from . import ClearFaceProjections
 from .InterpolateAndRestrictCells     import InterpolateAndRestrictCells
 
 from .ApplyPointWiselyToPatch      import ApplyPointWiselyToPatch

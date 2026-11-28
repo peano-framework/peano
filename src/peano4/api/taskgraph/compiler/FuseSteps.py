@@ -9,6 +9,7 @@ import peano4.api.solversteps
 from ..Graph import Graph
 from ..Task import Task
 from .ReportCompiledStepSequence import report_compiled_step_sequence
+from .ValidateTaskGraph import validate
 
 
 def translate(
@@ -36,17 +37,20 @@ def translate(
     Two tasks end up in the same traversal if and only if all of the
     following constraints hold:
 
-    1. **Entity order.** Each grid sweep first does something with the
-       vertices, then with the faces, then with the cells (@ref
-       peano4.api.taskgraph.Task.Task.GridEntity, whose values follow exactly this order). A task that
-       works on a face can therefore be followed by a task working on a face
-       or a cell within the same traversal, but a task working on a vertex
-       has to go into the next traversal. In general, a node can be appended
-       to the traversal built up so far if and only if the lowest grid
-       entity it works on is not lower than the highest grid entity the
-       traversal works on so far. Tasks of one dependency layer (see
-       below) are independent of each other, so this constraint does not
-       apply among them.
+    1. **Event order.** A mesh traversal invokes the events in a fixed order:
+       prepareTraversal(), beginTraversal(), touchVertexFirstTime(),
+       touchFaceFirstTime(), touchCellFirstTime(), touchCellLastTime(),
+       touchFaceLastTime(), touchVertexLastTime(), endTraversal(),
+       unprepareTraversal() (@ref peano4.api.taskgraph.Task.Task.TraversalEvent). Creating something counts as
+       its first touch, destroying it as its last touch. A task's first
+       and last event follow from the events its action sets use (@ref peano4.api.taskgraph.Task.Task.event_label,
+       e.g. VERTEX_FIRST_CELL_LAST). A node can be appended to the traversal
+       built up so far if and only if its first event is not before the last event of each
+       task of the traversal which it depends on (directly or through other tasks). A task which acts in touchFaceLastTime() therefore never
+       shares a traversal with a subsequent task which depends on it and acts in touchCellFirstTime().
+       Tasks which do not depend on each other, i.e. which a numerical scheme models as parallel, are always
+       fusable as far as this constraint is concerned, whatever their events are. This
+       includes all tasks of one dependency layer (see below).
     2. **No conflicting face or vertex data.** A face or a vertex is shared
        between several cells. If one task of a traversal writes a face or
        vertex submodel (WRITE or READ_AND_WRITE) while another task of the
@@ -55,14 +59,14 @@ def translate(
        altered it, depending on the traversal order. Such tasks are never
        fused (@ref peano4.api.taskgraph.compiler.FuseSteps._have_conflicting_data()). Cell data are not shared
        between cells and hence do not constrain the fusion. TEMPORARY uses
-       are ignored. There is one exception which follows from the entity
+       are ignored. There is one exception which follows from the event
        order: Peano touches every vertex and face of a cell for the first
        time before it enters the cell, and every vertex of a face before the
-       face. A FACE task which reads or writes face data therefore has
+       face. A task which only acts in the face events has
        finished with a face before any subsequent face or cell task of the
-       same traversal sees this face. The same holds for a VERTEX task and
-       vertex data. A conflict on face (vertex) data hence is ignored if the
-       earlier of the two tasks is a FACE (VERTEX) task. Two FACE tasks with
+       same traversal sees this face. The same holds for a task which only
+       acts in the vertex events and vertex data. A conflict on face (vertex) data hence is ignored if the
+       earlier of the two tasks acts in face (vertex) events only. Two FACE tasks with
        conflicting face data thus can share one traversal, but they never
        run in parallel (constraint 2 of the algorithm below). Apart from
        this exception, the constraint is conservative: it relies only on
@@ -103,18 +107,6 @@ def translate(
        the compiler places the tasks into a traversal of their own in front
        of (behind) it, as they would otherwise run in every repetition.
 
-<br /><br />
-<div style="background-color: #fcc ; padding: 10px; border: 1px solid green;"> 
-A task does not tell the compiler if its action sets plug into touch-first or touch-last
-events. The compiler therefore assumes that a VERTEX (FACE) task works on its vertex
-(face) data within touchVertexFirstTime() (touchFaceFirstTime()), i.e. before any
-adjacent face or cell is entered. A VERTEX or FACE task which writes its data in
-touchVertexLastTime() or touchFaceLastTime() violates this assumption, and the
-compiler might fuse it with a subsequent task that then reads stale data. Conversely,
-a CELL task A might only write face data in touchFaceLastTime(), while its successor
-CELL task B reads this face data in touchCellFirstTime(). We could fuse A and B, but
-this option is hidden from the task compiler.
-</div>
 
 
     ## Algorithm
@@ -248,43 +240,94 @@ this option is hidden from the task compiler.
         non_fusable.add((second_task, first_task))
 
     def can_be_combined(
-        tasks: List[Task], further_tasks: List[Task], include_cell_data: bool = False, respect_entity_order: bool = False
+        tasks: List[Task],
+        further_tasks: List[Task],
+        include_cell_data: bool = False,
+        respect_entity_order: bool = False,
     ) -> bool:
         """Constraints 2 and 4 between two lists of tasks, optionally taking cell data and the entity order into account"""
-        return not _have_conflicting_data(tasks, further_tasks, include_cell_data, respect_entity_order) and not any(
-            (task, further_task) in non_fusable for task in tasks for further_task in further_tasks
+        return not _have_conflicting_data(
+            tasks, further_tasks, include_cell_data, respect_entity_order
+        ) and not any(
+            (task, further_task) in non_fusable
+            for task in tasks
+            for further_task in further_tasks
         )
 
     Entity = Task.GridEntity
+    validate(graph)
     all_tasks = graph.ordered_tasks()
-    start_tasks = [task for task in all_tasks if task.entity == Entity.GLOBAL_START_OF_STEP]
+    start_tasks = [
+        task for task in all_tasks if task.entity == Entity.GLOBAL_START_OF_STEP
+    ]
     anchored_end_tasks = graph.anchored_end_of_step_tasks()
     # Run at the very end of the step
     end_tasks = [
-        task for task in all_tasks if task.entity == Entity.GLOBAL_END_OF_STEP and task not in anchored_end_tasks
+        task
+        for task in all_tasks
+        if task.entity == Entity.GLOBAL_END_OF_STEP and task not in anchored_end_tasks
     ]
     # Run at the end of the traversal of their last dependency. Topological order.
     global_tasks = [
-        task for task in all_tasks if task.entity == Entity.GLOBAL or task in anchored_end_tasks
+        task
+        for task in all_tasks
+        if task.entity == Entity.GLOBAL or task in anchored_end_tasks
     ]
     order = [task for task in all_tasks if not task.entity.is_global]
     for task in start_tasks:
-        assert not task.dependencies, f"Task {task.name} is GLOBAL_START_OF_STEP and hence may not depend on any task"
+        assert (
+            not task.dependencies
+        ), f"Task {task.name} is GLOBAL_START_OF_STEP and hence may not depend on any task"
 
     def depends_on_traversal_of(global_task: Task, tasks: List[Task]) -> bool:
         """Does global_task end up in a traversal which holds one of the tasks, i.e. does it depend on one of them?"""
         return any(
-            dependency in tasks or (dependency in global_tasks and depends_on_traversal_of(dependency, tasks))
+            dependency in tasks
+            or (
+                dependency in global_tasks
+                and depends_on_traversal_of(dependency, tasks)
+            )
             for dependency in global_task.dependencies
+        )
+
+    ancestors_of_task = {}
+
+    def ancestors(task: Task) -> set:
+        """All tasks which task depends on, directly or through other tasks"""
+        if task not in ancestors_of_task:
+            result = set()
+            for dependency in task.dependencies:
+                result.add(dependency)
+                result |= ancestors(dependency)
+            ancestors_of_task[task] = result
+        return ancestors_of_task[task]
+
+    def events_are_in_order(tasks: List[Task], further_tasks: List[Task]) -> bool:
+        """Constraint 1: Every task in further_tasks which depends on a task in tasks acts only after the latter has finished"""
+        return not any(
+            task in ancestors(further_task)
+            and task.last_event is not None
+            and further_task.first_event is not None
+            and task.last_event > further_task.first_event
+            for task in tasks
+            for further_task in further_tasks
         )
 
     depth_of_task = {}
 
     def depth(task: Task) -> int:
         # A start task has run before everything else, i.e. it does not delay anybody
-        dependencies = [dependency for dependency in task.dependencies if dependency not in start_tasks]
+        dependencies = [
+            dependency
+            for dependency in task.dependencies
+            if dependency not in start_tasks
+        ]
         if task not in depth_of_task:
-            depth_of_task[task] = 0 if not dependencies else 1 + max(depth(dependency) for dependency in dependencies)
+            depth_of_task[task] = (
+                0
+                if not dependencies
+                else 1 + max(depth(dependency) for dependency in dependencies)
+            )
         return depth_of_task[task]
 
     layers = {}
@@ -302,7 +345,9 @@ this option is hidden from the task compiler.
         for task in tasks_in_layer:
             if task.has_to_repeat:
                 continue
-            if nodes_of_layer and can_be_combined(nodes_of_layer[-1], [task], include_cell_data=True):
+            if nodes_of_layer and can_be_combined(
+                nodes_of_layer[-1], [task], include_cell_data=True
+            ):
                 nodes_of_layer[-1].append(task)
             else:
                 nodes_of_layer.append([task])
@@ -315,12 +360,11 @@ this option is hidden from the task compiler.
     # Step 3: greedy fusion along the sequence of nodes
     groups = []
     current_group = None
-    highest_entity_of_current_group = None
     for node in nodes:
-        lowest_entity = min(task.entity.value for task in node)
-        highest_entity = max(task.entity.value for task in node)
         is_repeating = len(node) == 1 and node[0].has_to_repeat
-        tasks_of_current_group = [task for group_node in current_group or [] for task in group_node]
+        tasks_of_current_group = [
+            task for group_node in current_group or [] for task in group_node
+        ]
         # A task which depends on a global task runs after the traversal that holds the global task
         waits_for_current_group = any(
             depends_on_traversal_of(dependency, tasks_of_current_group)
@@ -332,14 +376,12 @@ this option is hidden from the task compiler.
             not is_repeating
             and current_group is not None
             and not waits_for_current_group
-            and lowest_entity >= highest_entity_of_current_group
+            and events_are_in_order(tasks_of_current_group, node)
             and can_be_combined(tasks_of_current_group, node, respect_entity_order=True)
         ):
             current_group.append(node)
-            highest_entity_of_current_group = max(highest_entity_of_current_group, highest_entity)
         else:
             current_group = [node]
-            highest_entity_of_current_group = highest_entity
             groups.append(current_group)
         if is_repeating:
             current_group = None
@@ -349,7 +391,11 @@ this option is hidden from the task compiler.
         groups_with_dependency = [
             index
             for index, group in enumerate(groups)
-            if any(dependency in node for node in group for dependency in global_task.dependencies)
+            if any(
+                dependency in node
+                for node in group
+                for dependency in global_task.dependencies
+            )
         ]
         if groups_with_dependency:
             groups[max(groups_with_dependency)].append([global_task])
@@ -411,26 +457,45 @@ def _have_conflicting_data(
 
     """
     writing_accesses = (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
-    using_accesses = (Task.DataAccess.READ_AND_DISCARD, Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
-    entity_of_kind = {"face": Task.GridEntity.FACE, "vertex": Task.GridEntity.VERTEX}
+    using_accesses = (
+        Task.DataAccess.READ_AND_DISCARD,
+        Task.DataAccess.WRITE,
+        Task.DataAccess.READ_AND_WRITE,
+    )
+    Event = Task.TraversalEvent
+    events_of_kind = {
+        "face": {Event.FACE_FIRST, Event.FACE_LAST},
+        "vertex": {Event.VERTEX_FIRST, Event.VERTEX_LAST},
+    }
 
     def submodels(task, accesses):
         return {
             (kind, submodel)
             for kind, access_of_submodel in (
                 (("cell", task.cell_data_access),) if include_cell_data else ()
-            ) + (("face", task.face_data_access), ("vertex", task.vertex_data_access))
+            )
+            + (("face", task.face_data_access), ("vertex", task.vertex_data_access))
             for submodel, access in access_of_submodel.items()
             if access in accesses
         }
 
     for task in tasks:
         for further_task in further_tasks:
-            conflicts = (submodels(task, writing_accesses) & submodels(further_task, using_accesses)) | (
-                submodels(further_task, writing_accesses) & submodels(task, using_accesses)
+            conflicts = (
+                submodels(task, writing_accesses)
+                & submodels(further_task, using_accesses)
+            ) | (
+                submodels(further_task, writing_accesses)
+                & submodels(task, using_accesses)
             )
             if respect_entity_order:
-                conflicts = {(kind, submodel) for kind, submodel in conflicts if entity_of_kind.get(kind) != task.entity}
+                conflicts = {
+                    (kind, submodel)
+                    for kind, submodel in conflicts
+                    if not (
+                        kind in events_of_kind and task.events <= events_of_kind[kind]
+                    )
+                }
             if conflicts:
                 return True
     return False
@@ -473,11 +538,19 @@ def _merge_data_access(accesses: List["Task.DataAccess"]) -> "Task.DataAccess":
     single access, the merged qualifier equals the access itself.
 
     """
-    relevant_accesses = [access for access in accesses if access != Task.DataAccess.TEMPORARY]
+    relevant_accesses = [
+        access for access in accesses if access != Task.DataAccess.TEMPORARY
+    ]
     if not relevant_accesses:
         return Task.DataAccess.TEMPORARY
-    load = relevant_accesses[0] in (Task.DataAccess.READ_AND_DISCARD, Task.DataAccess.READ_AND_WRITE)
-    store = relevant_accesses[-1] in (Task.DataAccess.WRITE, Task.DataAccess.READ_AND_WRITE)
+    load = relevant_accesses[0] in (
+        Task.DataAccess.READ_AND_DISCARD,
+        Task.DataAccess.READ_AND_WRITE,
+    )
+    store = relevant_accesses[-1] in (
+        Task.DataAccess.WRITE,
+        Task.DataAccess.READ_AND_WRITE,
+    )
     if load and store:
         return Task.DataAccess.READ_AND_WRITE
     if load:
@@ -487,7 +560,9 @@ def _merge_data_access(accesses: List["Task.DataAccess"]) -> "Task.DataAccess":
     return Task.DataAccess.TEMPORARY
 
 
-def _create_step(nodes: List[List[Task]], identifier: str) -> "peano4.api.solversteps.Step":
+def _create_step(
+    nodes: List[List[Task]], identifier: str
+) -> "peano4.api.solversteps.Step":
     """!
 
     Create one step from a group of fused nodes. @ref peano4.api.taskgraph.compiler.FuseSteps.translate()
@@ -520,7 +595,9 @@ def _create_step(nodes: List[List[Task]], identifier: str) -> "peano4.api.solver
         accesses_of_submodel = {}
         for task in tasks:
             for submodel in getattr(task, data_attribute):
-                accesses_of_submodel.setdefault(submodel, []).append(getattr(task, access_attribute)[submodel])
+                accesses_of_submodel.setdefault(submodel, []).append(
+                    getattr(task, access_attribute)[submodel]
+                )
         for submodel, accesses in accesses_of_submodel.items():
             use(submodel)
             step_access[submodel] = _merge_data_access(accesses)
@@ -531,7 +608,10 @@ def _create_step(nodes: List[List[Task]], identifier: str) -> "peano4.api.solver
         if node_is_parallel and previous_node_is_parallel:
             step.action_sets.append(peano4.api.solversteps.SynchroniseActionSets())
         for task in node:
-            for action_set in sorted(task.action_sets, key=lambda action_set: action_set.descend_invocation_order):
+            for action_set in sorted(
+                task.action_sets,
+                key=lambda action_set: action_set.descend_invocation_order,
+            ):
                 step.action_sets.append(action_set)
         previous_node_is_parallel = node_is_parallel
 

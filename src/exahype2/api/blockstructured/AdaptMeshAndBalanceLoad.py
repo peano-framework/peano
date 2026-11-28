@@ -117,7 +117,9 @@ class AdaptMeshAndBalanceLoad(Solver.MeshAdaptation):
                 additional_includes=includes,
             )
         )
-        adapt_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
+        balance_load_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Balance load", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL)
+        balance_load_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
+        balance_load_task.add_dependency(adapt_task)
 
         project_on_faces_task = peano4.api.taskgraph.Task(
             name=f"{self._solver.name}_Project on faces",
@@ -137,6 +139,7 @@ class AdaptMeshAndBalanceLoad(Solver.MeshAdaptation):
         self._add_projection_action_sets(project_on_faces_task, exahype2_project)
 
         mesh_adaptation.add_task(adapt_task)
+        mesh_adaptation.add_task(balance_load_task)
         mesh_adaptation.add_task(project_on_faces_task)
 
         if peano4.api.Logger().is_visualisation:

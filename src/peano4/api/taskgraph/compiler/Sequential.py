@@ -9,6 +9,7 @@ import peano4.api.solversteps
 from ..Graph import Graph
 from ..Task import Task
 from .ReportCompiledStepSequence import report_compiled_step_sequence
+from .ValidateTaskGraph import validate
 
 
 def translate(graph: Graph, identifier: str, peano_project: "peano4.api.Project") -> List["peano4.api.solversteps.Step"]:
@@ -74,6 +75,7 @@ def translate(graph: Graph, identifier: str, peano_project: "peano4.api.Project"
       about the generated Observer depends on it.
 
     """
+    validate(graph)
     order = graph.ordered_tasks()
 
     steps = []
