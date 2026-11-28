@@ -52,8 +52,14 @@ class _RungeKuttaFD4(InnerCouplingGenerator):
     def _end_of_stage(self, solver, graph, stage):
         if stage == self.rk_order - 1:
             return [task for task in graph.sink_tasks() if not task.entity.is_global]
-        name = f"{solver.name}_Roll over stage {stage + 1} faces"
-        return [task for task in graph.tasks if task.name == name]
+        # The projection rolls the faces over, i.e. it ends the stage
+        task_name = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta.PROJECTION_TASK_NAME.format(
+            f"stage {stage + 1}"
+        )
+        name = f"{solver.name}_{task_name}"
+        result = [task for task in graph.tasks if task.name == name]
+        assert len(result) == 1, f"Cannot find the task {name} which ends stage {stage}"
+        return result
 
 
 class RungeKuttaFD4InnerMultiplicative(_RungeKuttaFD4):

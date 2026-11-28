@@ -84,7 +84,8 @@ class FOSOReconstructionSolver(exahype2.api.Solver):
     derivatives reads neither the time stamp nor the time step size, i.e.
     src/exahype2/api/rkfd4/adrs/0001-time-step-size-after-roll-over.md does
     not constrain it. The CCZ4 solver's own roll over (of exahype2.api.rkfd4)
-    still is a task of its own.
+    is part of its projection, too
+    (src/exahype2/api/rkfd4/adrs/0004-roll-over-is-part-of-the-projection.md).
 
     The graph has no dependencies between stages. The host concatenates the graph with the
     one of the CCZ4 solver (exagrype.api.FOSOSolver._couple()): The first tasks of
