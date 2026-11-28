@@ -47,11 +47,10 @@ def test_setup_refines_consolidates_and_loads(tmp_path, scheme, halo):
     assert [task.name for task in graph.tasks] == [
         "Probe_Refine mesh from checkpoint",
         "Probe_Consolidate mesh",
-        "Probe_Balance load after refinement",
         "Probe_Consolidate load balancing",
         "Probe_Load checkpoint",
     ]
-    refine, _, _, _, load = graph.tasks
+    refine, _, _, load = graph.tasks
     assert refine.has_to_repeat is not None
     events = refine.action_sets[0].get_body_of_createGridControlEventsForNextTraversal()
     assert (

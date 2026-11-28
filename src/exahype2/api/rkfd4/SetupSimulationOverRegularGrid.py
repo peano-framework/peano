@@ -40,6 +40,25 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
     solver._patch_overlap_update and solver._patch_overlap_current_time_step,
     plus the numerical scheme's patch_size.
 
+    ## Why the refinement task informs the load balancing itself
+
+    The task Refine mesh repeats until the load balancing has stagnated and
+    has not split recently. Only finishStep() updates both, i.e. the action
+    set toolbox.loadbalancing.api.actionsets.LoadBalancing which calls it has
+    to be part of this very task. It used to sit in a task of its own which
+    depended on the refinement. The setup then terminated only if the task
+    graph compiler happened to fuse both tasks. With load balancing, the
+    compilers sequential, producer-consumer,
+    producer-consumer-chains-sequential, assembly and assembly-concatenation
+    kept them apart and repeated the mesh sweep forever. A single tree without
+    load balancing does not show the problem.
+
+    @image html repeating-task-load-balancing-before.png
+    @image html repeating-task-load-balancing-after.png
+
+    The sources of the graphs are the .dot files next to the images in
+    src/exahype2/api/blockstructured.
+
     """
 
     def __init__(self, solver: Solver, volume_size: float):
