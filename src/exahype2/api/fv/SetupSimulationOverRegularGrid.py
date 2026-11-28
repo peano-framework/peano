@@ -155,10 +155,13 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
 """,
             )
         )
-        # Inform the load balancing after every mesh refinement sweep
-        balance_load_task = peano4.api.taskgraph.Task(name=f"{self._solver.name}_Balance load after refinement", entity=peano4.api.taskgraph.Task.GridEntity.GLOBAL)
-        balance_load_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
-        balance_load_task.add_dependency(refine_task)
+        # Inform the load balancing after every mesh refinement sweep. The
+        # action set has to be part of the refinement task: The task repeats
+        # until the load balancing has stagnated, which only finishStep()
+        # tells. In a task of its own, it runs within the repetition only if
+        # the task graph compiler happens to fuse both tasks. If it does not,
+        # the setup never terminates.
+        refine_task.add_action_set(toolbox.loadbalancing.api.actionsets.LoadBalancing())
         # Once the mesh is constructed, switch the load balancing off and let
         # the mesh consolidate: we keep on running mesh sweeps until the
         # mesh is stationary and the most recent splits have been carried out.
@@ -226,7 +229,6 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
 
         setup_simulation.add_task(refine_task)
         setup_simulation.add_task(consolidate_load_balancing_task)
-        setup_simulation.add_task(balance_load_task)
         setup_simulation.add_task(consolidate_balance_task)
         setup_simulation.add_task(initial_condition_task)
         if initialise_auxiliary_variables_task is not None:
