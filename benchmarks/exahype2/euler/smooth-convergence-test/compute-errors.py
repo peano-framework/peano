@@ -9,6 +9,12 @@ with the exact solution, and prints the maximum and the root mean square
 error per run plus the convergence orders between subsequent runs. Pass the
 runs from the coarsest to the finest mesh.
 
+With --end-time, the script also fails if the last snapshot of any run is
+older than this time. A simulation whose time step size collapses terminates
+early, but with exit code zero. Its last snapshot may be the initial
+condition, which matches the exact solution up to round-off, i.e. yields a
+huge convergence order.
+
 The patch files hold the patches' offsets and sizes with seven significant
 digits only. Below an error of roughly 1e-7, this precision would dominate
 the error. The script hence snaps the offsets and sizes onto the regular
@@ -94,8 +100,15 @@ if __name__ == "__main__":
         default=None,
         help="Exit with a non-zero status if the order of the maximum error between the two finest runs is below this value or not finite",
     )
+    parser.add_argument(
+        "--end-time",
+        type=float,
+        default=None,
+        help="Exit with a non-zero status if the last snapshot of any run is older than this time",
+    )
     args = parser.parse_args()
 
+    incomplete = []
     print(
         f"{'run':40} {'t':>8} {'cells/axis':>10} {'max error':>12} {'rms error':>12} {'order (max)':>12} {'order (rms)':>12}"
     )
@@ -113,7 +126,17 @@ if __name__ == "__main__":
             f"{run_directory:40} {time_stamp:8.4f} {str(cells):>10} {max_error:12.4e} {rms_error:12.4e} {orders[0]:>12} {orders[1]:>12}"
         )
         previous = (cells, max_error, rms_error)
+        # The slack covers the precision of the time stamps in the plot files
+        if args.end_time is not None and not time_stamp >= args.end_time * (1 - 1e-6):
+            incomplete.append((run_directory, time_stamp))
         last_order = float(orders[0]) if orders[0] != "" else math.nan
+
+    for run_directory, time_stamp in incomplete:
+        print(
+            f"FAILED: last snapshot of {run_directory} is at t={time_stamp:g}, before the end time {args.end_time:g}"
+        )
+    if incomplete:
+        sys.exit(1)
 
     if args.minimum_order is not None:
         if not last_order >= args.minimum_order:
