@@ -68,6 +68,17 @@ namespace tarch {
  * There is a Python script peano4.postprocessing.plot-statistics.py which
  * helps you to extract the 4-tuple data.
  *
+ *
+ * ## Event logs
+ *
+ * The routine log() with a string value stores a time-stamped event under an
+ * identifier. All events of one identifier end up in one csv column. The task
+ * runtime uses this (with the additional flag -DTrackTaskDependencies)
+ * for the identifier "tarch::multicore::omp::task-event", see
+ * tarch::multicore::omp::internal::trackTaskEvent(). The events are held in
+ * memory until writeToCSV() is called, i.e. they are lost if the code hangs
+ * or crashes before.
+ *
  */
 class tarch::logging::Statistics {
   public:

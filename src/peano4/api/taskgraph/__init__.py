@@ -144,14 +144,13 @@ multiple ready tasks and can have multiple terminal tasks.
 ### Tasks and action sets
 
 Each task can hold an arbitrary number of Peano 4 action sets (@ref peano4.api.solversteps.ActionSet).
-Each action set can plug into all kinds of events. This seems to be a contradiction:
-The task is tied to a particular mesh entity, while the action set can define actions for multiple mesh entities. 
-The task association defines dependencies, the action set what is done.
+The task is tied to mesh entities. The task association defines dependencies,
+the action set what is done. The entity of a task is not chosen by the user: It is a
+combination of the marks vertex, face, cell and global, and the compiler synthesises it from the
+events which the task's action sets use (@ref peano4.api.taskgraph.Task.Task.entity).
 If task A depends on B and B is tied to vertices, any operation over a cell in 
 A will be executed after all operations over the cell's adjacent vertices in B 
 have completed.
-The action sets of A still might also do something on cells and faces as well, 
-but this is not subject to the dependency handling.
 
 ### Task repetition
 

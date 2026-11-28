@@ -77,6 +77,8 @@ Compilers = {
     "fusion-only": peano4.api.taskgraph.compiler.FuseSteps.translate,
     "producer-consumer-sequential": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_sequential,
     "producer-consumer-fusion": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_fusion,
+    "producer-consumer-chains": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_chains_and_fusion,
+    "producer-consumer-chains-sequential": peano4.api.taskgraph.compiler.CellTaskProducerConsumer.translate_with_chains_and_sequential,
 }
 
 EnforceModes = {

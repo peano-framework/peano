@@ -7,6 +7,22 @@ class OMPTargetPrinter(CPPPrinter):
         CPPPrinter.__init__(self, spaces_per_tab)
         self.nested_level = 0
 
+    def print_function_definition(self, function: Function, indent_level: int = 0) -> str:
+        argument_prints = [f"{argument.type.print(self)} {argument.name.print(self)}" for argument in function.arguments]
+        statement_prints = [statement.print(self, indent_level + 2) for statement in function.body]
+        return f"""
+#if defined(OMPUnifiedSharedMemory)
+#pragma omp requires unified_shared_memory
+#endif
+
+{self.get_indent(indent_level)}namespace {"::".join(function.namespace)} {{
+{self.get_indent(indent_level + 1)}{"template <class Solver>" if function.stateless else ""}
+{self.get_indent(indent_level + 1)}void {function.name.print(self)}({", ".join(argument_prints)}) {{
+{os.linesep.join(statement_prints)}
+{self.get_indent(indent_level + 1)}}}
+{self.get_indent(indent_level)}}}
+"""
+
     def print_data_block_assignment(self, data_block_assignment: DataBlockAssignment, indent_level: int = 0) -> str:
         return f"""{self.get_indent(indent_level)}#pragma omp target teams loop collapse(Dimensions + 1) device(deviceNumber)
 {data_block_assignment.assignment.print(self, indent_level)}"""
@@ -33,11 +49,11 @@ class OMPTargetPrinter(CPPPrinter):
         size_print = memory_allocation.allocation_size.print(self)
 
         if isinstance(memory_allocation.lhs, Variable):
-            return f"""{type_print}* {lhs_print} = tarch::accelerator::GPUMemoryManager::getInstance().allocate<{type_print}>({size_print}, deviceNumber);"""
+            return f"""{self.get_indent(indent_level)}{type_print}* {lhs_print} = tarch::accelerator::GPUMemoryManager::getInstance().allocate<{type_print}>({size_print}, deviceNumber);"""
         else:
             # lhs is either a variable or a subscript, only variables require a type specifier
             # In general a GPU code will always flatten the arrays, so this branch will not be reached
-            return f"""{lhs_print} = tarch::accelerator::GPUMemoryManager::getInstance().allocate<{type_print}>({size_print}, deviceNumber);"""
+            return f"""{self.get_indent(indent_level)}{lhs_print} = tarch::accelerator::GPUMemoryManager::getInstance().allocate<{type_print}>({size_print}, deviceNumber);"""
 
     def print_memory_deallocation(self, memory_deallocation: MemoryDeallocation, indent_level: int = 0) -> str:
         lhs_print = memory_deallocation.lhs.print(self)

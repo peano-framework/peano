@@ -204,7 +204,7 @@ class Project (object):
       for file in files:
         temporary_file_path = os.path.join(root, file)
         relative_path = os.path.relpath(temporary_file_path, self.temporary_directory)
-        target_file_path = os.path.join(self.directory, self.directory, relative_path)
+        target_file_path = os.path.join(self.directory, relative_path)
         # Check if the target file exists and is different from the temporary file
         if not os.path.exists(target_file_path) or not filecmp.cmp(temporary_file_path, target_file_path):
           # Create the target directory if it doesn't exist

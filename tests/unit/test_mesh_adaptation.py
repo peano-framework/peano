@@ -62,7 +62,9 @@ def test_finite_volumes_adapt_mesh_and_balance_load_by_default(scheme, tmp_path)
     solver = _solver(scheme)
     graph = _mesh_adaptation_graph(solver, tmp_path)
     assert isinstance(solver.mesh_adaptation, exahype2.api.fv.AdaptMeshAndBalanceLoad)
-    adapt, project = graph.ordered_tasks()
+    adapt, project = [
+        task for task in graph.ordered_tasks() if not task.entity.is_global
+    ]
     assert adapt.name == "Probe_Adapt mesh and balance load"
     assert adapt.has_to_repeat is not None
     assert project.name == "Probe_Project on faces"
@@ -70,7 +72,11 @@ def test_finite_volumes_adapt_mesh_and_balance_load_by_default(scheme, tmp_path)
     kinds = [type(action_set) for action_set in adapt.action_sets]
     assert exahype2.api.blockstructured.ConsumeRefinementRequests in kinds
     assert Cells in kinds
-    assert toolbox.loadbalancing.api.actionsets.LoadBalancing in kinds
+    [balance] = [task for task in graph.tasks if task.entity.is_global]
+    assert balance.dependencies == [adapt]
+    assert [type(a) for a in balance.action_sets] == [
+        toolbox.loadbalancing.api.actionsets.LoadBalancing
+    ]
     discards = exahype2.api.fv.actionsets.DiscardPatchInterior in kinds
     assert discards == (scheme == "fv-optimistic")
 
@@ -81,7 +87,9 @@ def test_finite_differences_adapt_mesh_and_balance_load_by_default(tmp_path):
     assert isinstance(
         solver.mesh_adaptation, exahype2.api.rkfd4.AdaptMeshAndBalanceLoad
     )
-    adapt, project = graph.ordered_tasks()
+    adapt, project = [
+        task for task in graph.ordered_tasks() if not task.entity.is_global
+    ]
     kinds = [type(action_set) for action_set in adapt.action_sets]
     assert Cells in kinds
     assert exahype2.api.fv.actionsets.DiscardPatchInterior not in kinds
@@ -119,17 +127,18 @@ def test_finite_differences_handle_hanging_faces_in_every_stage(tmp_path):
             toolbox.blockstructured.api.InterpolateHangingFaces,
             toolbox.blockstructured.api.ReconstructPatchWithHalo,
         ]
-    # The projection hosts the restriction, and the roll over has to copy the
-    # restricted data, i.e. it follows
+    # The projection hosts the restriction and the roll over, which has to copy
+    # the restricted data, i.e. it follows
+    Scheme = exahype2.api.rkfd4.CentralDifferencesWithRungeKutta
     for suffix in ["stage 1", "solution"]:
-        projection = tasks[f"Probe_Project {suffix} onto faces"]
-        roll_over = tasks[f"Probe_Roll over {suffix} faces"]
+        projection = tasks[f"Probe_{Scheme.PROJECTION_TASK_NAME.format(suffix)}"]
         assert f"Probe_Restrict {suffix} on hanging faces" not in tasks
+        assert f"Probe_Roll over {suffix} faces" not in tasks
         assert [type(a) for a in projection.action_sets] == [
             exahype2.api.rkfd4.actionsets.ProjectPatchOntoFaces,
             toolbox.blockstructured.api.RestrictHangingFaces,
+            exahype2.api.rkfd4.actionsets.RollOverUpdatedFace,
         ]
-        assert roll_over.dependencies == [projection]
 
 
 def test_user_defined_mesh_adaptation_is_kept(tmp_path):

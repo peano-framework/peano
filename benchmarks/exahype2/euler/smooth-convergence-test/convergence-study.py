@@ -8,7 +8,8 @@ Generates, builds and runs smooth-convergence-test.py for the three
 standard mesh widths (@ref benchmarks_exahype2_euler_smooth_setup), and
 hands the outcome to compute-errors.py. The script exits with a non-zero
 status if the order of the maximum error between the two finest meshes
-falls below the minimum order of the scheme (e.g. 3.5 for rk4fd4, which yields 4.0).
+falls below the minimum order of the scheme (e.g. 3.5 for rk4fd4, which yields 4.0),
+or if the last snapshot of any run does not reach the end time.
 By default, the study runs the Finite Difference schemes rk1fd4, rk2fd4, rk3fd4 and
 rk4fd4 one after another (each in a subdirectory of the work directory) and fails
 if any of them misses its minimum order.
@@ -32,6 +33,7 @@ MINIMUM_ORDERS = {
     "rk4fd4": 3.5,
 }
 VOLUME_SIZES = ["0.0075", "0.0025", "0.00083"]
+END_TIME = 0.05
 
 parser = argparse.ArgumentParser(description=__doc__.strip().split("\n")[0])
 parser.add_argument(
@@ -58,6 +60,11 @@ parser.add_argument(
     type=int,
     default=0,
     help="Parallel make jobs per build; 0 or less uses all cores (default: all cores)",
+)
+parser.add_argument(
+    "--compiler",
+    default=None,
+    help="Task graph compiler, see smooth-convergence-test.py (default: the script's default)",
 )
 args = parser.parse_args()
 
@@ -87,22 +94,34 @@ def study(scheme):
                     volume_size,
                     "--scheme",
                     scheme,
+                    "--end-time",
+                    str(END_TIME),
                     "--build-jobs",
                     str(args.build_jobs),
                     "--verbosity",
                     "text",
-                ],
+                ]
+                + (["--compiler", args.compiler] if args.compiler else []),
                 check=True,
                 stdout=subprocess.DEVNULL,
             )
             with open(os.path.join(run, "run.log"), "w") as log:
-                subprocess.run([executable], cwd=run, check=True, stdout=log, stderr=log)
+                # Wall-clock time [s] and peak memory [kB] of the run, see time.txt
+                subprocess.run(
+                    ["/usr/bin/time", "-f", "%e %M", "-o", os.path.join(run, "time.txt"), executable],
+                    cwd=run,
+                    check=True,
+                    stdout=log,
+                    stderr=log,
+                )
     return subprocess.run(
         [
             sys.executable,
             os.path.join(HERE, "compute-errors.py"),
             "--minimum-order",
             str(minimum_order),
+            "--end-time",
+            str(END_TIME),
         ]
         + runs
     ).returncode

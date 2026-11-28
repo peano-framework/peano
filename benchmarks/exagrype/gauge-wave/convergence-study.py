@@ -4,7 +4,8 @@
 
 Convergence study of the gauge wave benchmark
 
-The script builds and runs gauge-wave.py for several numerical schemes and
+The script builds and runs gauge-wave.py for several numerical schemes, both
+CCZ4 formulations (first-order, fo, and first-order second-order, so) and
 mesh sizes, measures the maximum error of the lapse along the line y=z=0.5
 at the end of the simulation against the exact solution, estimates the
 convergence orders, and writes
@@ -16,7 +17,8 @@ convergence orders, and writes
 into the output directory. The study is the integration test for the
 correctness of the numerical schemes behind the benchmark: The script exits
 with a non-zero status if the estimated convergence order of a scheme falls
-below the one in ExpectedOrders. Runtimes and memory footprints are recorded,
+below the one in ExpectedOrders, or if any build or run fails. A failure does
+not stop the other runs. Runtimes and memory footprints are recorded,
 but are not an acceptance criterion.
 
      python3 convergence-study.py --work-directory /scratch/gauge-wave
@@ -28,7 +30,10 @@ the run's directory (or results.json) to rerun it.
 ## Scheduling
 
 Every scheme is studied by a worker of its own, and all workers run at the same
-time. A worker walks through the meshes from coarse to fine. Runs on coarse meshes
+time. A worker walks through the meshes from coarse to fine, and runs all
+formulations on one mesh before it continues with the next one. The formulations
+share a worker, as twice as many workers would leave each large run with half
+the cores. Runs on coarse meshes
 cannot exploit many cores: With 27 mesh cells (the minimum, as Peano refines the
 root cell at least once) the scaling stagnates, and these runs use one thread.
 They are done long before the runs on the fine meshes get going, i.e. the biggest
@@ -50,6 +55,7 @@ import concurrent.futures
 import contextlib
 import glob
 import io
+import itertools
 import json
 import math
 import os
@@ -84,6 +90,9 @@ def patch_size_of(volumes_per_axis):
 
 
 Schemes = ["fv", "rk1fd4", "rk2fd4", "rk3fd4", "rk4fd4"]
+
+## CCZ4 formulations, see gauge-wave.py
+Formulations = ["fo", "so"]
 
 ## Number of volumes per axis. The meshes are regular and refined by factors
 ## of three, and the patch size is 9.
@@ -131,8 +140,8 @@ def mesh_cells(volumes_per_axis):
     return (volumes_per_axis // patch_size_of(volumes_per_axis)) ** 3
 
 
-def name_of(scheme, volumes_per_axis):
-    return f"{scheme}-{volumes_per_axis}"
+def name_of(scheme, formulation, volumes_per_axis):
+    return f"{scheme}-{formulation}-{volumes_per_axis}"
 
 
 def available_memory_in_kilobytes():
@@ -143,28 +152,39 @@ def available_memory_in_kilobytes():
     return sys.maxsize
 
 
-def build_and_run(scheme, volumes_per_axis, threads, work_directory):
+## Task graph compiler of gauge-wave.py; None keeps the script's default
+Compiler = None
+
+
+def build_and_run(scheme, formulation, volumes_per_axis, threads, work_directory):
     """!
 
     Generate, compile and run gauge-wave.py
 
     @return dict
       Runtime, memory footprint, threads and the error against the exact
-      solution at the last snapshot.
+      solution at the last snapshot. If the build or the run fails, or if the
+      run gets killed, the entry "failed" or "skipped" holds the reason instead.
 
     """
-    directory = os.path.join(work_directory, name_of(scheme, volumes_per_axis))
+    name = name_of(scheme, formulation, volumes_per_axis)
+    run_key = {
+        "scheme": scheme,
+        "formulation": formulation,
+        "volumes": volumes_per_axis,
+    }
+    directory = os.path.join(work_directory, name)
     # Start from scratch: A previous attempt that was killed leaves generated
     # files behind which clash with the new ones.
     shutil.rmtree(directory, ignore_errors=True)
     os.makedirs(directory)
-    print(f"build {name_of(scheme, volumes_per_axis)} ({threads} threads)", flush=True)
+    print(f"build {name} ({threads} threads)", flush=True)
     environment = dict(os.environ)
     environment["PYTHONPATH"] = (
         os.path.join(PeanoRoot, "src") + os.pathsep + environment.get("PYTHONPATH", "")
     )
     with BuildSlots:
-        subprocess.run(
+        generator = subprocess.run(
             [
                 sys.executable,
                 os.path.join(Here, "gauge-wave.py"),
@@ -172,6 +192,8 @@ def build_and_run(scheme, volumes_per_axis, threads, work_directory):
                 "release",
                 "--scheme",
                 scheme,
+                "--formulation",
+                formulation,
                 "--patch-size",
                 str(patch_size_of(volumes_per_axis)),
                 "--mesh-size",
@@ -183,14 +205,20 @@ def build_and_run(scheme, volumes_per_axis, threads, work_directory):
                 "--threads",
                 str(threads),
                 "--plot-along-x-axis",
-            ],
+            ]
+            + (["--compiler", Compiler] if Compiler else []),
             cwd=directory,
             env=environment,
-            check=True,
             stdout=open(os.path.join(directory, "generate.log"), "w"),
             stderr=subprocess.STDOUT,
         )
-    print(f"run {name_of(scheme, volumes_per_axis)}", flush=True)
+    # A failed compilation does not change the exit code of the generator
+    if generator.returncode != 0 or not os.path.exists(
+        os.path.join(directory, "gauge-wave")
+    ):
+        print(f"build of {name} failed", flush=True)
+        return {**run_key, "failed": f"build failed, see {directory}/generate.log"}
+    print(f"run {name}", flush=True)
     time_file = os.path.join(directory, "time.txt")
     with open(os.path.join(directory, "run.log"), "w") as log:
         process = subprocess.Popen(
@@ -198,30 +226,26 @@ def build_and_run(scheme, volumes_per_axis, threads, work_directory):
             cwd=directory,
             stdout=log,
         )
-        exceeded = watch_memory(process, name_of(scheme, volumes_per_axis))
+        exceeded = watch_memory(process, name)
     if exceeded is not None:
         return {
-            "scheme": scheme,
-            "volumes": volumes_per_axis,
+            **run_key,
             "skipped": f"killed at {exceeded / 1e6:.1f} GB, as the machine ran out of memory",
         }
     if process.returncode in (-9, 137):
         # SIGKILL: the kernel's out-of-memory killer was faster than our watchdog
         return {
-            "scheme": scheme,
-            "volumes": volumes_per_axis,
+            **run_key,
             "skipped": "killed by the operating system, i.e. the machine ran out of memory",
         }
     if process.returncode != 0:
-        raise RuntimeError(
-            f"{name_of(scheme, volumes_per_axis)} failed, see {directory}/run.log"
-        )
+        print(f"run of {name} failed", flush=True)
+        return {**run_key, "failed": f"run failed, see {directory}/run.log"}
     with open(time_file) as f:
         runtime, memory = f.read().split()[-2:]
     t, error = measure_error(directory, volumes_per_axis)
     return {
-        "scheme": scheme,
-        "volumes": volumes_per_axis,
+        **run_key,
         "threads": threads,
         "runtime": float(runtime),
         "memory": int(memory),
@@ -329,7 +353,7 @@ def watch_memory(process, name):
     return None
 
 
-def plot(results, schemes, meshes, output_file):
+def plot(results, schemes, formulations, meshes, output_file):
     """!
 
     Max error over the volume size
@@ -341,25 +365,37 @@ def plot(results, schemes, meshes, output_file):
 
     """
     figure, axes = plt.subplots(figsize=(7, 5))
+    # Solid lines for the first formulation, dashed ones for the second
+    line_styles = {"fo": "-", "so": "--"}
     markers = {"fv": "o", "rk1fd4": "s", "rk2fd4": "^", "rk3fd4": "D", "rk4fd4": "x"}
     sizes = {"rk3fd4": 9}
     volumes = set()
     errors = []
     for scheme in schemes:
-        points = sorted(
-            (r for r in results.values() if r["scheme"] == scheme and "error" in r),
-            key=lambda r: r["volumes"],
-        )
-        if points:
-            axes.loglog(
-                [1.0 / r["volumes"] for r in points],
-                [r["error"] for r in points],
-                marker=markers[scheme],
-                markersize=sizes.get(scheme, 6),
-                label=scheme,
+        colour = f"C{Schemes.index(scheme)}"
+        for formulation in formulations:
+            points = sorted(
+                (
+                    r
+                    for r in results.values()
+                    if r["scheme"] == scheme
+                    and r.get("formulation") == formulation
+                    and "error" in r
+                ),
+                key=lambda r: r["volumes"],
             )
-            volumes.update(r["volumes"] for r in points)
-            errors.extend(r["error"] for r in points)
+            if points:
+                axes.loglog(
+                    [1.0 / r["volumes"] for r in points],
+                    [r["error"] for r in points],
+                    marker=markers[scheme],
+                    markersize=sizes.get(scheme, 6),
+                    color=colour,
+                    linestyle=line_styles[formulation],
+                    label=f"{scheme} {formulation}",
+                )
+                volumes.update(r["volumes"] for r in points)
+                errors.extend(r["error"] for r in points)
     volumes = sorted(volumes)
     h = np.array([1.0 / volumes[0], 1.0 / volumes[-1]])
     for order in [1, 2, 3, 4]:
@@ -379,46 +415,65 @@ def plot(results, schemes, meshes, output_file):
     plt.close(figure)
 
 
-def table(results, schemes, meshes):
+def table(results, schemes, formulations, meshes):
     lines = [
-        "| scheme | volumes per axis | max error of lapse | order | runtime [s] | threads | memory [MB] |",
-        "|---|---|---|---|---|---|---|",
+        "| scheme | formulation | volumes per axis | max error of lapse | order | runtime [s] | threads | memory [MB] |",
+        "|---|---|---|---|---|---|---|---|",
     ]
-    for scheme in schemes:
+    for scheme, formulation in itertools.product(schemes, formulations):
         previous = None
         for volumes in meshes:
-            r = results.get(name_of(scheme, volumes))
+            r = results.get(name_of(scheme, formulation, volumes))
             if r is None:
                 continue
+            prefix = f"| {scheme} | {formulation} | {volumes} |"
             if "error" not in r:
-                lines.append(
-                    f"| {scheme} | {volumes} | skipped: {r['skipped']} | | | | |"
+                reason = (
+                    f"failed: {r['failed']}"
+                    if "failed" in r
+                    else f"skipped: {r['skipped']}"
                 )
+                lines.append(f"{prefix} {reason} | | | | |")
                 previous = None
                 continue
             order = "" if previous is None else f"{estimated_order(previous, r):.2f}"
             lines.append(
-                f"| {scheme} | {volumes} | {r['error']:.3e} | {order} | {r['runtime']:.0f} | {r['threads']} | {r['memory'] / 1024:.0f} |"
+                f"{prefix} {r['error']:.3e} | {order} | {r['runtime']:.0f} | {r['threads']} | {r['memory'] / 1024:.0f} |"
             )
             previous = r
     return "\n".join(lines) + "\n"
 
 
-def check_orders(results, schemes, meshes):
-    """! Return the list of schemes whose order between the two finest meshes is too low"""
+def check_orders(results, schemes, formulations, meshes):
+    """!
+
+    Return the list of failures: failed builds or runs, and combinations of
+    scheme and formulation whose order between the two finest meshes is too low.
+    Both formulations have to reach the order of the scheme.
+
+    """
     failures = []
-    for scheme in schemes:
-        done = [
-            results[name_of(scheme, v)]
+    for scheme, formulation in itertools.product(schemes, formulations):
+        label = f"{scheme} {formulation}"
+        runs = [
+            results[name_of(scheme, formulation, v)]
             for v in meshes
-            if name_of(scheme, v) in results and "error" in results[name_of(scheme, v)]
+            if name_of(scheme, formulation, v) in results
         ]
+        broken = [r for r in runs if "failed" in r]
+        if broken:
+            failures.extend(
+                f"{label}, {r['volumes']} volumes: {r['failed']}" for r in broken
+            )
+            continue
+        done = [r for r in runs if "error" in r]
         if len(done) < 2:
-            failures.append(f"{scheme}: fewer than two meshes")
+            failures.append(f"{label}: fewer than two meshes")
             continue
         order = estimated_order(done[-2], done[-1])
-        if order < ExpectedOrders[scheme]:
-            failures.append(f"{scheme}: order {order:.2f} < {ExpectedOrders[scheme]}")
+        # Negated, so that an order which is not a number fails
+        if not order >= ExpectedOrders[scheme]:
+            failures.append(f"{label}: order {order:.2f} < {ExpectedOrders[scheme]}")
     return failures
 
 
@@ -438,6 +493,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--schemes", nargs="+", default=Schemes, choices=Schemes)
     parser.add_argument(
+        "--formulations",
+        nargs="+",
+        default=Formulations,
+        choices=Formulations,
+        help="CCZ4 formulations (default: both)",
+    )
+    parser.add_argument(
         "--meshes",
         nargs="+",
         type=int,
@@ -446,12 +508,18 @@ if __name__ == "__main__":
     )
     parser.add_argument("--cores", type=int, default=os.cpu_count())
     parser.add_argument(
+        "--compiler",
+        default=None,
+        help="Task graph compiler, see gauge-wave.py (default: the script's default)",
+    )
+    parser.add_argument(
         "--concurrent-large-runs",
         type=int,
         default=2,
         help="Maximum number of runs on meshes with more than 27 cells that run at the same time",
     )
     args = parser.parse_args()
+    Compiler = args.compiler
 
     work_directory = os.path.abspath(args.work_directory)
     os.makedirs(work_directory, exist_ok=True)
@@ -466,12 +534,10 @@ if __name__ == "__main__":
             json.dump(results, f, indent=1)
 
     meshes = sorted(args.meshes)
-    todo = [
-        (s, v)
-        for s in args.schemes
-        for v in meshes
-        if name_of(s, v) not in results or "skipped" in results[name_of(s, v)]
-    ]
+
+    ## Skipped and failed runs are repeated
+    def is_completed(name):
+        return name in results and "error" in results[name]
 
     ## One worker per scheme, all of them at the same time. Each worker runs
     ## its meshes from coarse to fine. The runs on the coarse meshes do not
@@ -480,11 +546,9 @@ if __name__ == "__main__":
     ## time. The cores are shared among the workers that still run.
     def run_scheme(scheme):
         try:
-            for v in meshes:
-                if (
-                    name_of(scheme, v) in results
-                    and "skipped" not in results[name_of(scheme, v)]
-                ):
+            for v, formulation in itertools.product(meshes, args.formulations):
+                name = name_of(scheme, formulation, v)
+                if is_completed(name):
                     continue
                 with Workers.lock:
                     share = max(1, Workers.alive)
@@ -495,12 +559,12 @@ if __name__ == "__main__":
                 )
                 if mesh_cells(v) > StagnationCells:
                     with LargeRunSlots:
-                        results[name_of(scheme, v)] = build_and_run(
-                            scheme, v, threads, work_directory
+                        results[name] = build_and_run(
+                            scheme, formulation, v, threads, work_directory
                         )
                 else:
-                    results[name_of(scheme, v)] = build_and_run(
-                        scheme, v, threads, work_directory
+                    results[name] = build_and_run(
+                        scheme, formulation, v, threads, work_directory
                     )
                 store()
         finally:
@@ -517,15 +581,16 @@ if __name__ == "__main__":
     plot(
         results,
         args.schemes,
+        args.formulations,
         meshes,
         os.path.join(args.output_directory, "convergence.png"),
     )
-    markdown = table(results, args.schemes, meshes)
+    markdown = table(results, args.schemes, args.formulations, meshes)
     with open(os.path.join(args.output_directory, "convergence.md"), "w") as f:
         f.write(markdown)
     print(markdown)
 
-    failures = check_orders(results, args.schemes, meshes)
+    failures = check_orders(results, args.schemes, args.formulations, meshes)
     if failures:
         print("FAILED:\n  " + "\n  ".join(failures))
         sys.exit(1)

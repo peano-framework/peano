@@ -412,6 +412,9 @@ class CCZ4SolverBase(exahype2.api.Solver):
           Complete time step and, for IntermediateSteps, one task after each
           Prepare stage k on the stage input.
 
+        Finally, the routine removes the redundant edges of the time stepping
+        graph (@ref peano4.api.taskgraph.Graph.Graph.remove_redundant_edges()).
+
         The scheme's log of the time stepping graph does not show the
         enforcement. With TEXT or VISUALISATION logging, the routine hence
         logs the graph once more.
@@ -429,6 +432,7 @@ class CCZ4SolverBase(exahype2.api.Solver):
         )
         Enforce = CCZ4SolverBase.EnforceCCZ4Constraint
         if self._enforce_ccz4_constraint == Enforce.No:
+            time_step.remove_redundant_edges()
             return
 
         ## The patches which the tagged tasks write: The solution and, for
@@ -469,6 +473,8 @@ class CCZ4SolverBase(exahype2.api.Solver):
                 time_step, exahype2.api.Solver.IntermediateSolutionUpdateTag
             ):
                 self._insert_constraint_enforcement(time_step, [anchor], stage_input)
+
+        time_step.remove_redundant_edges()
 
         title = (
             f"Time stepping task graph for {self.name} with CCZ4 constraint enforcement"

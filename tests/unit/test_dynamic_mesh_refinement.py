@@ -45,16 +45,12 @@ def _last_task(solver, tmp_path):
     peano_project = peano4.api.Project(["probe"], "probe", str(tmp_path))
     time_step = peano4.api.taskgraph.Graph()
     solver.numerical_scheme.construct_output(exahype2_project, peano_project, time_step)
-    dependencies = {
-        id(dependency) for task in time_step.tasks for dependency in task.dependencies
-    }
     [last] = [
         task
         for task in time_step.tasks
-        if id(task) not in dependencies
-        and task.entity != Task.GridEntity.GLOBAL_END_OF_STEP
+        if task.name == f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}"
     ]
-    return last
+    return last, time_step
 
 
 def _criterion_body(action_set):
@@ -63,13 +59,20 @@ def _criterion_body(action_set):
 
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_last_task_evaluates_criterion_and_switches_on_load_balancing(scheme, tmp_path):
-    last = _last_task(_solver(scheme), tmp_path)
-    assert last.name == f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}"
-    assert last.entity == Task.GridEntity.CELL
-    dynamic_mesh_refinement, load_balancing = last.action_sets
+    last, time_step = _last_task(_solver(scheme), tmp_path)
+    assert last.entity & Task.GridEntity.CELL
+    [dynamic_mesh_refinement] = last.action_sets
     assert isinstance(
         dynamic_mesh_refinement, exahype2.api.blockstructured.DynamicMeshRefinement
     )
+    [enable_task] = [
+        task
+        for task in time_step.tasks
+        if task.name == f"Probe_{exahype2.api.Solver.NumericalScheme.ENABLE_LOAD_BALANCING_TASK_NAME}"
+    ]
+    assert enable_task.entity == Task.GridEntity.GLOBAL_END_OF_STEP
+    assert enable_task.dependencies == [last]
+    [load_balancing] = enable_task.action_sets
     assert isinstance(
         load_balancing, toolbox.loadbalancing.api.actionsets.LoadBalancing
     )
@@ -79,7 +82,7 @@ def test_last_task_evaluates_criterion_and_switches_on_load_balancing(scheme, tm
 
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_time_step_never_hands_events_to_peano(scheme, tmp_path):
-    [dynamic_mesh_refinement, _] = _last_task(_solver(scheme), tmp_path).action_sets
+    [dynamic_mesh_refinement] = _last_task(_solver(scheme), tmp_path)[0].action_sets
     assert "RefinementControlService" not in (
         dynamic_mesh_refinement.get_body_of_createGridControlEventsForNextTraversal()
     )
@@ -91,19 +94,16 @@ def test_time_step_never_hands_events_to_peano(scheme, tmp_path):
 
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_no_criterion_means_no_evaluation(scheme, tmp_path):
-    last = _last_task(_solver(scheme, criterion=False), tmp_path)
+    last, _ = _last_task(_solver(scheme, criterion=False), tmp_path)
     assert last.name == f"Probe_{exahype2.api.Solver.NumericalScheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}"
-    [load_balancing] = last.action_sets
-    assert isinstance(
-        load_balancing, toolbox.loadbalancing.api.actionsets.LoadBalancing
-    )
+    assert last.action_sets == []
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_gradient_criterion_yields_gradient_action_set(scheme, tmp_path):
     solver = _solver(scheme, criterion=False)
     solver.add_pde_term(exahype2.api.GradientRefinement(implementation=""))
-    [dynamic_mesh_refinement, _] = _last_task(solver, tmp_path).action_sets
+    [dynamic_mesh_refinement] = _last_task(solver, tmp_path)[0].action_sets
     assert isinstance(
         dynamic_mesh_refinement,
         exahype2.api.blockstructured.DynamicMeshRefinementWithGradients,
@@ -122,7 +122,7 @@ def test_gradient_criterion_yields_gradient_action_set(scheme, tmp_path):
 
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_time_step_does_not_veto_erase(scheme, tmp_path):
-    [dynamic_mesh_refinement, _] = _last_task(_solver(scheme), tmp_path).action_sets
+    [dynamic_mesh_refinement] = _last_task(_solver(scheme), tmp_path)[0].action_sets
     assert "RefinementCommand::Erase," in _criterion_body(dynamic_mesh_refinement)
 
 
@@ -134,7 +134,7 @@ def test_two_criteria_are_rejected(tmp_path):
 
 
 def test_mesh_size_is_unconstrained_by_default(tmp_path):
-    [dynamic_mesh_refinement, _] = _last_task(_solver("fv"), tmp_path).action_sets
+    [dynamic_mesh_refinement] = _last_task(_solver("fv"), tmp_path)[0].action_sets
     body = _criterion_body(dynamic_mesh_refinement)
     assert "tarch::la::max( marker.h() ) >=" not in body
     assert "3.0 * tarch::la::max( marker.h() ) <" not in body
@@ -143,7 +143,7 @@ def test_mesh_size_is_unconstrained_by_default(tmp_path):
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_numerical_scheme_bounds_mesh_size(scheme, tmp_path):
     solver = _solver(scheme, min_volume_size=0.25, max_volume_size=1.0)
-    [dynamic_mesh_refinement, _] = _last_task(solver, tmp_path).action_sets
+    [dynamic_mesh_refinement] = _last_task(solver, tmp_path)[0].action_sets
     body = _criterion_body(dynamic_mesh_refinement)
     # Volume sizes times patch size 4
     assert "tarch::la::max( marker.h() ) >= 1.0" in body

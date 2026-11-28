@@ -10,6 +10,7 @@ import peano4.api
 import peano4.api.toolbox
 
 from .PDETerm import PDETerm
+from .KernelVariants import KernelConfiguration
 
 VariableSpecification = Union[int, Dict[str, int]]
 
@@ -66,11 +67,15 @@ class Solver(abc.ABC):
 
         """
 
-        ## Name of the last task of each time step without the solver's name
-        ## as prefix, i.e. the task is called {SolverName}_ followed by this
-        ## string. It evaluates the adaptivity criterion and re-enables and
-        ## informs the load balancing.
-        DYNAMIC_MESH_REFINEMENT_TASK_NAME = "Dynamic mesh refinement and load balancing"
+        ## Names of the tasks which embed a time step into the load balancing
+        ## and AMR, without the solver's name as prefix, i.e. the tasks are
+        ## called {SolverName}_ followed by the string.
+        ## The refinement task is a cell task: It evaluates the adaptivity
+        ## criterion. The tasks that enable and disable the load balancing are
+        ## global tasks, as they act in the begin and end of the step.
+        DYNAMIC_MESH_REFINEMENT_TASK_NAME = "Dynamic mesh refinement"
+        DISABLE_LOAD_BALANCING_TASK_NAME = "Disable load balancing"
+        ENABLE_LOAD_BALANCING_TASK_NAME = "Enable load balancing"
 
         ## Name of the task that reconstructs the solution's patch with its
         ## halo from the cell and the faces, without the solver's name as
@@ -118,17 +123,21 @@ class Solver(abc.ABC):
 
             The routine adds two tasks to time_step:
 
-            - {SolverName}_Disable load balancing: switches the load
-              balancing off throughout the time step. All tasks of the graph
-              that do not depend on anything else wait for it.
-            - {SolverName}_Dynamic mesh refinement and load balancing
-              (DYNAMIC_MESH_REFINEMENT_TASK_NAME): evaluates the adaptivity
-              criterion if the solver has one, i.e. it collects the refine and
-              erase requests for the mesh adaptation phase, and then
-              switches the load balancing on again and informs it that the
-              time step has finished. It waits for all tasks of the graph that
+            - {SolverName}_Disable load balancing
+              (DISABLE_LOAD_BALANCING_TASK_NAME), a GLOBAL_START_OF_STEP task:
+              switches the load balancing off throughout the time step. All
+              tasks of the graph that do not depend on anything else wait for it.
+            - {SolverName}_Dynamic mesh refinement
+              (DYNAMIC_MESH_REFINEMENT_TASK_NAME), a cell task: evaluates the
+              adaptivity criterion if the solver has one, i.e. it collects the
+              refine and erase requests for the mesh adaptation phase.
+              It waits for all tasks of the graph that
               nothing else waits for. Global tasks do not count: The
               task runs last in the step, so no other task may wait for it.
+            - {SolverName}_Enable load balancing
+              (ENABLE_LOAD_BALANCING_TASK_NAME), a GLOBAL_END_OF_STEP task which
+              depends on the refinement: switches the load balancing on again
+              and informs it that the time step has finished.
 
             The tasks pick up whatever is in time_step when the routine is
             called. Consequently, construct_output() calls it last if its flag
@@ -173,7 +182,9 @@ class Solver(abc.ABC):
             ]
 
             disable_task = peano4.api.taskgraph.Task(
-                name=f"{solver.name}_Disable load balancing", entity=Entity.CELL
+                name=f"{solver.name}_{self.DISABLE_LOAD_BALANCING_TASK_NAME}",
+                entity=Entity.GLOBAL_START_OF_STEP,
+                may_spawn_background_tasks=False,
             )
             disable_task.add_action_set(
                 toolbox.loadbalancing.api.actionsets.ToggleLoadBalancing(
@@ -184,12 +195,6 @@ class Solver(abc.ABC):
                 source.add_dependency(disable_task)
             time_step.add_task(disable_task)
 
-            refinement_task = peano4.api.taskgraph.Task(
-                name=f"{solver.name}_{self.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
-                entity=Entity.CELL,
-                may_spawn_background_tasks=False,
-            )
-            refinement_task.use_cell(solver._patch, Access.READ_AND_WRITE)
             dynamic_mesh_refinement = create_dynamic_mesh_refinement_action_set(
                 solver,
                 self.patch_size,
@@ -197,16 +202,32 @@ class Solver(abc.ABC):
                 min_volume_size=self.min_volume_size,
                 max_volume_size=self.max_volume_size,
             )
+            refinement_task = peano4.api.taskgraph.Task(
+                name=f"{solver.name}_{self.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
+                entity=Entity.CELL
+                if dynamic_mesh_refinement is not None
+                else Entity.GLOBAL,
+                may_spawn_background_tasks=False,
+            )
             if dynamic_mesh_refinement is not None:
+                refinement_task.use_cell(solver._patch, Access.READ_AND_WRITE)
                 refinement_task.add_action_set(dynamic_mesh_refinement)
-            refinement_task.add_action_set(
+            for sink in sinks:
+                refinement_task.add_dependency(sink)
+            time_step.add_task(refinement_task)
+
+            enable_task = peano4.api.taskgraph.Task(
+                name=f"{solver.name}_{self.ENABLE_LOAD_BALANCING_TASK_NAME}",
+                entity=Entity.GLOBAL_END_OF_STEP,
+                may_spawn_background_tasks=False,
+            )
+            enable_task.add_action_set(
                 toolbox.loadbalancing.api.actionsets.LoadBalancing(
                     enable_load_balancing=True
                 )
             )
-            for sink in sinks:
-                refinement_task.add_dependency(sink)
-            time_step.add_task(refinement_task)
+            enable_task.add_dependency(refinement_task)
+            time_step.add_task(enable_task)
 
         def create_default_mesh_adaptation(self) -> "Solver.MeshAdaptation":
             """!
@@ -224,21 +245,24 @@ class Solver(abc.ABC):
         class NumericalSchemeGenerator(abc.ABC):
             """!
             Specify which versions of a numerical scheme should be generated here.
-            Each configuration specifies the target architecture and whether the variant 
+            Each configuration specifies the target architecture and whether the variant
             is stateless.
-            The multiple configurations can generate multiple verisons of a function for 
-            the purpose of microbenchmarking, but a kernel call is only generated for one 
+            The multiple configurations can generate multiple verisons of a function for
+            the purpose of microbenchmarking, but a kernel call is only generated for one
             at a time.
             """
-            def __init__(self, solver: Solver, configurations: list[tuple[Target, bool]]):
+
+            def __init__(
+                self, solver: Solver, configurations: list[KernelConfiguration]
+            ):
                 self._solver = solver
                 self._configurations = configurations
 
-            def reset_configurations(self, target: Target, stateless: bool):
+            def reset_configurations(self):
                 self._configurations.clear()
-            
-            def add_configuration(self, target: Target, stateless: bool):
-                self._configurations.append((target, stateless))
+
+            def add_configuration(self, new_configuration: KernelConfiguration):
+                self._configurations.append(new_configuration)
 
             def construct_output(
                 self, exahype2_project, peano_project, time_step, add_global_tasks=True
@@ -758,12 +782,12 @@ class Solver(abc.ABC):
 
     @property
     def auxiliary_variables(self) -> List["AuxiliaryVariables"]:
-        """! All sets of auxiliary variables in the order they have been attached """
+        """! All sets of auxiliary variables in the order they have been attached"""
         return list(self._auxiliary_variables)
 
     @property
     def number_of_auxiliary_variables(self) -> int:
-        """! Total number of entries of all sets of auxiliary variables """
+        """! Total number of entries of all sets of auxiliary variables"""
         return sum(auxiliary.size for auxiliary in self._auxiliary_variables)
 
     def auxiliary_variable_offset(self, auxiliary: "AuxiliaryVariables") -> int:
@@ -809,13 +833,15 @@ class Solver(abc.ABC):
                 f"Solver {self._name} has other auxiliary variables of name {auxiliary.name} already"
             )
         if auxiliary.argument_name == auxiliary.name:
-            raise ValueError(f"Auxiliary variables {auxiliary.name} are not distinguishable from their argument")
+            raise ValueError(
+                f"Auxiliary variables {auxiliary.name} are not distinguishable from their argument"
+            )
         if auxiliary.owner is None:
             auxiliary._owner = self
         self._auxiliary_variables.append(auxiliary)
 
     def signature_of(self, term: PDETerm) -> str:
-        """! The signature of a PDE term including the pointers to the auxiliary variables """
+        """! The signature of a PDE term including the pointers to the auxiliary variables"""
         from .AuxiliaryVariables import extend_signature
 
         return extend_signature(term.SIGNATURE, self)

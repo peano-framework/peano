@@ -1,5 +1,6 @@
 import exahype2.api.dslhype2 as dslhype
-from exahype2.api import Solver, Target, OutputLanguage, MemoryLayout, PDETerm
+from exahype2.api import Solver, Target, OutputLanguage, MemoryLayout, PDETerm, MLIRPass, \
+    IncludeMLIRFunctions, InlineFunctions, MoveMemRefAllocationsToStart, LowerAffineToScf
 import os
 from enum import Enum
 
@@ -23,6 +24,7 @@ def generate_namespace(output_language: OutputLanguage, target: Target, memory_l
 def translate_dslhype_function(
     solver: Solver,
     function,
+    function_arguments: list[dslhype.Argument],
     dimensions: int,
     function_map: dict[dslhype.Name, dslhype.TFunction],
     external_variables, 
@@ -34,6 +36,7 @@ def translate_dslhype_function(
     memory_layout: MemoryLayout = MemoryLayout.AoS_AllNested,
     function_name: str | None = None,
     output_directory: str = ".",
+    generate_timed_version: bool = True
 ):
     """!
     function_name: str
@@ -76,111 +79,44 @@ def translate_dslhype_function(
         dslhype.TArray.flatten_temporaries = True
     else:
         dslhype.TArray.flatten_temporaries = False
-    # Name the type according to the C++ type, since MLIR uses !llvm.ptr for structs
-    # Add fields in the order specified by the MLIR type since only MLIR needs this information
-    if output_language == OutputLanguage.MLIR:
-        if memory_layout == MemoryLayout.AoS_CellDataFlattened_TemporariesNested or memory_layout == MemoryLayout.AoS_AllFlattened:
-            cell_data_type = dslhype.TStruct("::exahype2::MLIRCellDataFlattened&")
-        else:
-            cell_data_type = dslhype.TStruct("::exahype2::MLIRCellDataNested&")
-    elif target == Target.Accelerator:
-        cell_data_type = dslhype.TStruct("::exahype2::CopyCellDataGPU<double, double>&")
-    elif memory_layout == MemoryLayout.AoS_CellDataFlattened_TemporariesNested or memory_layout == MemoryLayout.AoS_AllFlattened:
-        cell_data_type = dslhype.TStruct("::exahype2::CellDataFlattened<double, double>&")
-    else:
-        cell_data_type = dslhype.TStruct("::exahype2::CellData<double, double>&")
-
-    if memory_layout == MemoryLayout.AoS_AllNested or memory_layout == MemoryLayout.AoS_CellDataNested_TemporariesFlattened:
-        cell_data_type.add_field("QIn", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=False))
-        cell_data_type.add_field("QOut", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=False))
-    else:
-        cell_data_type.add_field("QIn", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=True))
-        cell_data_type.add_field("QOut", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=True))
-
-    cell_data_type.add_field("cellCentre", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=False))
-    cell_data_type.add_field("cellSize", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=False))
-    cell_data_type.add_field("t", dslhype.TArray(dslhype.TFloat(), 1))
-    cell_data_type.add_field("dt", dslhype.TArray(dslhype.TFloat(), 1))
-    #cell_data_type.add_field("id", dslhype.TArray(dslhype.TInteger(), 1))
-    cell_data_type.add_field("maxEigenvalue", dslhype.TArray(dslhype.TFloat(), 1))
-    cell_data_type.add_field("numberOfCells", dslhype.TInteger())
-
-    #nested_cpu_cell_data_type = dslhype.TStruct("::exahype2::CellData<double, double>&")
-    #nested_cpu_cell_data_type.add_field("QIn", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=False))
-    #nested_cpu_cell_data_type.add_field("QOut", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=False))
-    #nested_cpu_cell_data_type.add_field("cellCentre", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=False))
-    #nested_cpu_cell_data_type.add_field("cellSize", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=False))
-    #nested_cpu_cell_data_type.add_field("t", dslhype.TArray(dslhype.TFloat(), 1))
-    #nested_cpu_cell_data_type.add_field("dt", dslhype.TArray(dslhype.TFloat(), 1))
-    #nested_cpu_cell_data_type.add_field("id", dslhype.TArray(dslhype.TInteger(), 1))
-    #nested_cpu_cell_data_type.add_field("maxEigenvalue", dslhype.TArray(dslhype.TFloat(), 1))
-    #nested_cpu_cell_data_type.add_field("numberOfCells", dslhype.TInteger())
-
-    #gpu_cell_data_type = dslhype.TStruct("::exahype2::CopyCellDataGPU<double, double>&")
-    #gpu_cell_data_type.add_field("QIn", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=True))
-    #gpu_cell_data_type.add_field("QOut", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=True))
-    #gpu_cell_data_type.add_field("cellCentre", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=False))
-    #gpu_cell_data_type.add_field("cellSize", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=False))
-    #gpu_cell_data_type.add_field("t", dslhype.TArray(dslhype.TFloat(), 1))
-    #gpu_cell_data_type.add_field("dt", dslhype.TArray(dslhype.TFloat(), 1))
-    #gpu_cell_data_type.add_field("id", dslhype.TArray(dslhype.TInteger(), 1))
-    #gpu_cell_data_type.add_field("maxEigenvalue", dslhype.TArray(dslhype.TFloat(), 1))
-    #gpu_cell_data_type.add_field("numberOfCells", dslhype.TInteger())
-
-    #mlir_cell_data_type = dslhype.TStruct("::exahype2::MLIRCellDataFlattened&")
-    #mlir_cell_data_type.add_field("QIn", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=True))
-    #mlir_cell_data_type.add_field("QOut", dslhype.TDataBlock(2, dslhype.TFloat(), flatten_array=True))
-    #mlir_cell_data_type.add_field("cellCentre", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=True))
-    #mlir_cell_data_type.add_field("cellSize", dslhype.TDataBlock(1, dslhype.TVector(dslhype.TFloat(), dimensions), flatten_array=True))
-    #mlir_cell_data_type.add_field("numberOfCells", dslhype.TInteger())
-
+        
     cpp_printer = dslhype.CPPPrinter(4)
+    function_arguments = function_arguments.copy()
 
 
     if output_language == OutputLanguage.CPP:
         if target == Target.Accelerator:
             printer = dslhype.OMPTargetPrinter(4)
-            #dslhype.TArray.flatten_temporaries = True
-            arguments = [
-                dslhype.Argument(dslhype.Name("deviceNumber"), dslhype.TInteger()),
-                dslhype.Argument(dslhype.Name("patchData"), cell_data_type)
-            ]
+            function_arguments.insert(0, dslhype.Argument(dslhype.Name("deviceNumber"), dslhype.TInteger()))
         else:
-            printer = dslhype.CPPPrinter(4)
-            #dslhype.TArray.flatten_temporaries = False
-            arguments = [
-                dslhype.Argument(dslhype.Name("patchData"), cell_data_type)
-            ]
+            printer = cpp_printer
+    
     elif output_language == OutputLanguage.MLIR:
         printer = dslhype.MLIRPrinter(4, internal_name=function_name + ("_stateless" if stateless else "") + "_" +memory_layout.name.lower())
-        if target == Target.Accelerator:
-            raise Exception("MLIR output is not supported for the accelerator target yet")
-        else:
-            arguments = [
-                dslhype.Argument(dslhype.Name("patchData"), cell_data_type)
-            ]
 
     
     if not stateless and output_language == OutputLanguage.CPP:
-        arguments.extend(reduced_functor_parameters)
+        function_arguments.extend(reduced_functor_parameters)
 
     function_namespace = solver.numerical_scheme.kernel_namespace + generate_namespace(output_language, target, memory_layout)
     
     parser = dslhype.Parser()
-    function = parser.parse(function, function_id=function_name + ("Stateless" if stateless else ""), function_namespace=function_namespace, function_arguments=arguments, function_map=function_map, external_variables=external_variables, enabled_pde_terms=pde_terms, stateless=stateless)
+    function = parser.parse(function, dimensions, function_id=function_name + ("Stateless" if stateless else ""), function_namespace=function_namespace, function_arguments=function_arguments, function_map=function_map, external_variables=external_variables, enabled_pde_terms=pde_terms, stateless=stateless)
 
 
     function_declaration = function.print_declaration(printer)
     function_definition = function.print_definition(printer)
-    function_declaration_with_timer = function.print_declaration_with_timer(printer)
-    function_definition_with_timer = function.print_definition_with_timer(printer)
+    if generate_timed_version:
+        function_declaration_with_timer = function.print_declaration_with_timer(printer)
+        function_definition_with_timer = function.print_definition_with_timer(printer)
 
     if output_language == OutputLanguage.CPP:
         kernels_directory = os.path.join(output_directory, "kernels")
         os.makedirs(kernels_directory, exist_ok=True)
         file = open(os.path.join(kernels_directory, f"{output_file_name}.h"), "a")
         file.write(function_declaration)
-        file.write(function_declaration_with_timer)
+        if generate_timed_version:
+            file.write(function_declaration_with_timer)
 
         if stateless == True:
             file = open(os.path.join(kernels_directory, f"{output_file_name}.cpph"), "a")
@@ -188,7 +124,8 @@ def translate_dslhype_function(
             file = open(os.path.join(kernels_directory, f"{output_file_name}.cpp"), "a")
 
         file.write(function_definition)
-        file.write(function_definition_with_timer)
+        if generate_timed_version:
+            file.write(function_definition_with_timer)
         file.close()
 
     elif output_language == OutputLanguage.MLIR:
@@ -199,16 +136,18 @@ def translate_dslhype_function(
 
         file = open(os.path.join(kernels_directory, f"{output_file_name}.h"), "a")
         file.write(function_declaration)
-        file.write(function_declaration_with_timer)
+        if generate_timed_version:
+            file.write(function_declaration_with_timer)
         file.close()
 
-        file = open(os.path.join(kernels_directory, f"{output_file_name}_{memory_layout.name.lower()}.mlir"), "w")
+        file = open(os.path.join(kernels_directory, f"{output_file_name}_{memory_layout.name.lower()}_{target.name.lower()}.mlir"), "w")
         file.write(function_definition)
         file.close()
 
         file = open(os.path.join(kernels_directory, f"{output_file_name}.cpp"), "a")
         file.write(function_bridge)
-        file.write(function_definition_with_timer)
+        if generate_timed_version:
+            file.write(function_definition_with_timer)
         file.close()
 
 
@@ -283,3 +222,57 @@ extern "C" {
         file = open(os.path.join(kernels_directory, f"{output_file_name}.cpp"), "a")
         file.write(term_definitions)
         file.close()
+
+def construct_mlir_pipeline(target: Target, passes: list[MLIRPass]) -> str:
+
+    xdsl_pass_map: dict[type[MLIRPass], bool] = {
+        IncludeMLIRFunctions: True,
+        InlineFunctions: False,
+        MoveMemRefAllocationsToStart: True,
+        LowerAffineToScf: False
+    }
+    enabled_pass_map: dict[type[MLIRPass], MLIRPass] = {}
+    for mlir_pass in passes:
+        enabled_pass_map[type(mlir_pass)] = mlir_pass
+
+    optional_passes_in_order: list[MLIRPass] = []
+    if MoveMemRefAllocationsToStart in enabled_pass_map:
+        optional_passes_in_order.append(enabled_pass_map[MoveMemRefAllocationsToStart])
+    if IncludeMLIRFunctions in enabled_pass_map:
+        optional_passes_in_order.append(enabled_pass_map[IncludeMLIRFunctions])
+    if InlineFunctions in enabled_pass_map:
+        if IncludeMLIRFunctions not in enabled_pass_map:
+            raise Exception("IncludeMLIRFunctions must be enabled to enable InlineFunctions")
+        optional_passes_in_order.append(LowerAffineToScf())
+        optional_passes_in_order.append(enabled_pass_map[InlineFunctions])
+
+    # The passes also have to be organised into groups based on whether they require xdsl-opt or mlir-opt
+    grouped_passes: list[tuple[bool, list[MLIRPass]]] = []
+    current_group: list[MLIRPass] = []
+
+    if len(optional_passes_in_order) == 0:
+        if target == Target.Serial:
+            return "mlir-opt --pass-pipeline=\"builtin.module(inline,canonicalize,cse,loop-invariant-code-motion,canonicalize,cse,loop-invariant-code-motion,cse,canonicalize,expand-strided-metadata,fold-memref-alias-ops,lower-affine,finalize-memref-to-llvm,loop-invariant-code-motion,canonicalize,cse,finalize-memref-to-llvm,convert-scf-to-cf,convert-openmp-to-llvm,convert-math-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts,canonicalize,cse)\" $<"
+        elif target == Target.Accelerator:
+            return "xdsl-opt -p 'include-mlir-functions{mlir-file=\"euler_clean.mlir\" filename-being-modified=\"$<\"}' $< | mlir-opt --pass-pipeline=\"builtin.module(lower-affine,inline)\" | dslhype-opt --pass-pipeline=\"builtin.module(canonicalize,cse,loop-invariant-code-motion,inline,expand-strided-metadata,fold-memref-alias-ops,symbol-dce,canonicalize,func.func(gpu-map-parallel-loops),convert-parallel-loops-to-gpu,fold-memref-alias-ops,lower-affine,gpu-kernel-outlining,func.func(gpu-async-region),canonicalize,convert-arith-to-llvm{index-bitwidth=64},convert-scf-to-cf,convert-cf-to-llvm{index-bitwidth=64},nvvm-attach-target{chip=sm_90},gpu.module(inline,convert-gpu-to-nvvm,canonicalize,cse),gpu-to-llvm,gpu-module-to-binary,finalize-memref-to-llvm{index-bitwidth=64},reconcile-unrealized-casts)\""
+    else:
+        currently_using_xdsl = xdsl_pass_map[type(optional_passes_in_order[0])]
+        for optional_pass in optional_passes_in_order:
+            if currently_using_xdsl != xdsl_pass_map[type(optional_pass)]:
+                grouped_passes.append((currently_using_xdsl, current_group.copy()))
+                current_group.clear()
+                currently_using_xdsl = not currently_using_xdsl
+            current_group.append(optional_pass)
+        grouped_passes.append((currently_using_xdsl, current_group.copy()))
+
+        if grouped_passes[0][0] == True:
+            pipeline_command = f"xdsl-opt -p '{",".join([str(optional_pass) for optional_pass in grouped_passes[0][1]])}' $<"
+        else:
+            pipeline_command = f"mlir-opt --pass-pipeline=\"builtin.module({",".join([str(optional_pass) for optional_pass in grouped_passes[0][1]])})\" $<"
+
+        for pass_group in grouped_passes[1:]:
+            if pass_group[0] == True:
+                pipeline_command = f"{pipeline_command} | xdsl-opt -p '{",".join([str(optional_pass) for optional_pass in pass_group[1]])}'"
+            else:
+                pipeline_command = f"{pipeline_command} | mlir-opt --pass-pipeline=\"builtin.module({",".join([str(optional_pass) for optional_pass in pass_group[1]])})\""
+        return f"{pipeline_command} | mlir-opt --pass-pipeline=\"builtin.module(inline,canonicalize,cse,loop-invariant-code-motion,canonicalize,cse,loop-invariant-code-motion,cse,canonicalize,expand-strided-metadata,fold-memref-alias-ops,lower-affine,finalize-memref-to-llvm,loop-invariant-code-motion,canonicalize,cse,finalize-memref-to-llvm,convert-scf-to-cf,convert-openmp-to-llvm,convert-math-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts,canonicalize,cse)\" "

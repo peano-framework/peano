@@ -4,6 +4,7 @@ import peano4.api
 import exahype2
 import exagrype
 from exahype2.api.generators.KernelMicrobenchmarkMain import KernelMicrobenchmarkMain
+from exahype2.api import IncludeMLIRFunctions, InlineFunctions
 from applications import set_euler_pde_terms
 
 parser = argparse.ArgumentParser(
@@ -185,6 +186,16 @@ if args.gpu:
         localPatches
     );
     """
+    #function_calls += f"""
+    #assessKernel(wrapMLIRFlattenedDeviceKernel<
+    #    mlir::flattened::{solver_name}_timeStepWithRusanovStateless
+    #    >,
+    #    "device, AoS, parallel, omp",
+    #    launchingThreads,
+    #    0,
+    #    localPatches
+    #);
+    #"""
 
 project.mainfile_generator = KernelMicrobenchmarkMain(project, function_calls, addition_includes)
 
@@ -202,25 +213,25 @@ if args.application == "euler":
     for stateless in [True, False]:
         set_euler_pde_terms(thesolver, args.dimensions, stateless)
         
-    thesolver.add_pde_term(exahype2.api.InitPointWisely(implementation = """
-        constexpr double gamma       = 1.4;
-        constexpr double p           = 1.0;
-        constexpr double u           = 1.0;
-        constexpr double domainLeft  = -0.1;
-        constexpr double domainWidth = 0.2;
-        const double     rho         = 0.2 * std::sin(2.0 * M_PI * (x[0] - domainLeft) / domainWidth);
-        Q[0] = rho;
-        Q[1] = rho * u;
-        Q[2] = 0.0;
-        #if Dimensions == 2
-        Q[3] = p / (gamma - 1) + 0.5 * rho * u * u;
-        #else
-        Q[3] = 0.0;
-        Q[4] = p / (gamma - 1) + 0.5 * rho * u * u;
-        #endif
-        """,
-            stateless=False,
-        )
+        thesolver.add_pde_term(exahype2.api.InitPointWisely(implementation = """
+            constexpr double gamma       = 1.4;
+            constexpr double p           = 1.0;
+            constexpr double u           = 1.0;
+            constexpr double domainLeft  = -0.1;
+            constexpr double domainWidth = 0.2;
+            const double     rho         = 0.2 * std::sin(2.0 * M_PI * (x[0] - domainLeft) / domainWidth);
+            Q[0] = rho;
+            Q[1] = rho * u;
+            Q[2] = 0.0;
+            #if Dimensions == 2
+            Q[3] = p / (gamma - 1) + 0.5 * rho * u * u;
+            #else
+            Q[3] = 0.0;
+            Q[4] = p / (gamma - 1) + 0.5 * rho * u * u;
+            #endif
+            """,
+                stateless=stateless,
+            )
     )
 
 elif args.application == "ccz4":
@@ -229,17 +240,19 @@ elif args.application == "ccz4":
 thesolver.numerical_scheme = exahype2.api.fv.RusanovWithExplicitEuler(thesolver, args.patch_size)
 solver_variants = []
 if args.cpu == True or args.gpu == False:
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_AllNested))
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_CellDataFlattened_TemporariesNested))
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_CellDataNested_TemporariesFlattened))
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_AllFlattened))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_AllNested, []))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_CellDataFlattened_TemporariesNested, []))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_CellDataNested_TemporariesFlattened, []))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_AllFlattened, []))
 
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_AllNested))
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_CellDataFlattened_TemporariesNested))
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_CellDataNested_TemporariesFlattened))
-    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_AllFlattened))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_AllNested, [IncludeMLIRFunctions("euler2d.mlir"), InlineFunctions()]))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_CellDataFlattened_TemporariesNested, [IncludeMLIRFunctions("euler2d.mlir"), InlineFunctions()]))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_CellDataNested_TemporariesFlattened, [IncludeMLIRFunctions("euler2d.mlir"), InlineFunctions()]))
+    solver_variants.append((exahype2.api.Target.Serial, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_AllFlattened, [IncludeMLIRFunctions("euler2d.mlir"), InlineFunctions()]))
 if args.gpu == True:
-    solver_variants.append((exahype2.api.Target.Accelerator, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_AllFlattened))
+    solver_variants.append((exahype2.api.Target.Accelerator, True, exahype2.api.OutputLanguage.CPP, exahype2.api.MemoryLayout.AoS_AllFlattened, []))
+    #solver_variants.append((exahype2.api.Target.Accelerator, True, exahype2.api.OutputLanguage.MLIR, exahype2.api.MemoryLayout.AoS_AllFlattened, [IncludeMLIRFunctions("euler2d.mlir"), InlineFunctions()]))
+    
 
 thesolver.numerical_scheme._generator = exahype2.api.fv.RusanovWithExplicitEulerGenerator(thesolver, solver_variants)
 thesolver.grid_construction = exahype2.api.fv.SetupSimulationOverRegularGrid(
@@ -270,5 +283,9 @@ peano4_project.constants.export_const_with_type("NumberOfPatchesToStudy", str(fo
 peano4_project.constants.export_constexpr_with_type("NumberOfLaunchingThreads", str(1), "int")
 
 peano4_project.output.makefile.add_CXX_flag("-MD")
+#peano4_project.output.makefile.add_cpp_file("CUDAFunctions.cpp")
+#peano4_project.output.makefile.add_linker_flag("-lcuda")
+#peano4_project.output.makefile.add_linker_flag("-L/usr/local/cuda/lib64 -lcudart")
+#peano4_project.output.makefile.add_linker_flag("-lmlir_cuda_runtime")
 peano4_project.generate()
 peano4_project.build(make_clean_first=False)

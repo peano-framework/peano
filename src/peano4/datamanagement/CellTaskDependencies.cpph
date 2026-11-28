@@ -1,0 +1,59 @@
+#include "peano4/utils/Loop.h"
+#include "tarch/multicore/Task.h"
+#include "tarch/multicore/TaskEnumerator.h"
+
+inline int peano4::datamanagement::getIndexWithinParent(const tarch::la::Vector<Dimensions, int>& relativePositionWithinParent) {
+  for (int d = 0; d < Dimensions; d++) {
+    if (relativePositionWithinParent(d) < 0 or relativePositionWithinParent(d) >= 3) {
+      return -1;
+    }
+  }
+  return peano4::utils::dLinearised(relativePositionWithinParent, 3);
+}
+
+template <typename SetChildTask>
+void peano4::datamanagement::clearChildrenTasks(SetChildTask setChildTask) {
+  for (int i = 0; i < ThreePowerD; i++) {
+    setChildTask(i, tarch::multicore::TaskEnumerator::NoNumber);
+  }
+}
+
+inline std::set<tarch::multicore::TaskNumber> peano4::datamanagement::getInDependenciesOfFirstTask(int previousFirstTask, int parentFirstTask) {
+  std::set<tarch::multicore::TaskNumber> result;
+  if (previousFirstTask >= 0) {
+    result.insert(previousFirstTask);
+  }
+  if (parentFirstTask >= 0) {
+    result.insert(parentFirstTask);
+  }
+  return result;
+}
+
+template <typename GetChildTask>
+std::set<tarch::multicore::TaskNumber> peano4::datamanagement::getInDependenciesOfLastTask(
+  int firstTask, int previousLastTask, GetChildTask getChildTask
+) {
+  std::set<tarch::multicore::TaskNumber> result;
+  if (firstTask >= 0) {
+    result.insert(firstTask);
+  }
+  if (previousLastTask >= 0) {
+    result.insert(previousLastTask);
+  }
+  for (int i = 0; i < ThreePowerD; i++) {
+    if (getChildTask(i) >= 0) {
+      result.insert(getChildTask(i));
+    }
+  }
+  return result;
+}
+
+inline void peano4::datamanagement::spawnEmptyTask(
+  const std::set<tarch::multicore::TaskNumber>& inDependencies, tarch::multicore::TaskNumber taskNumber
+) {
+  tarch::multicore::spawnTask(
+    new tarch::multicore::TaskWithCopyOfFunctor(tarch::multicore::Task::DontFuse, tarch::multicore::Task::DefaultPriority, []() mutable {}),
+    inDependencies,
+    taskNumber
+  );
+}

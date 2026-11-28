@@ -31,13 +31,15 @@ class RestrictHangingFaces(ActionSet):
 
     ## Averaging and clearing
 
-    Averaging accumulates the fine grid values within the coarse face.
-    The action set therefore clears the face data in touchFaceFirstTime()
-    for each face which passes the clear guard. This clears both halves of
-    the face. Use the action set only in a mesh sweep where all face data
-    which are cleared are written again afterwards, e.g. by a projection
-    onto the faces. Injection overwrites the coarse values and hence does
-    not clear anything.
+    Averaging accumulates the fine grid values within the coarse face. The
+    face data have to be cleared before the projection writes them. The
+    action set does not do this itself, as it would act in
+    touchFaceFirstTime() and thus never share a mesh traversal with a
+    preceding cell task. The task graph gets a task of its own which clears
+    the faces
+    (@ref toolbox.blockstructured.api.ClearFaceProjections.add_clearing_tasks()).
+    Injection overwrites the coarse values and hence does not clear
+    anything.
 
     """
 
@@ -58,20 +60,6 @@ class RestrictHangingFaces(ActionSet):
 
         Averaging = "averaging"
         Inject = "inject"
-
-    TemplateTouchFaceFirstTime = jinja2.Template(
-        """
-  logTraceInWith1Argument( "touchFaceFirstTime(...)---RestrictHangingFaces", marker.toString() );
-  ::toolbox::blockstructured::clearHaloLayerAoS(
-    marker,
-    {{DOFS_PER_AXIS}},
-    {{OVERLAP}},
-    {{UNKNOWNS}},
-    fineGridFace{{FACE_NAME}}.value
-  );
-  logTraceOut( "touchFaceFirstTime(...)---RestrictHangingFaces" );
-"""
-    )
 
     TemplateDestroyHangingFace = jinja2.Template(
         """
@@ -113,8 +101,8 @@ class RestrictHangingFaces(ActionSet):
         @param clear_guard: str
           C++ boolean expression over a persistent face's
           peano4::datamanagement::FaceMarker marker. Only used for averaging:
-          The action set clears the face's data in touchFaceFirstTime() if
-          the expression holds.
+          The clearing of the face data by
+          @ref toolbox.blockstructured.api.ClearFaceProjections uses it.
 
         @param additional_includes: str
           Further include statements, e.g. required by the guards.
@@ -144,6 +132,7 @@ class RestrictHangingFaces(ActionSet):
             "FACE_NAME": patch_overlap.name,
             "SCHEME": self.scheme.value,
         }
+        self.patch_overlap = patch_overlap
         self.guard = guard
         self.clear_guard = clear_guard
         self.additional_includes = additional_includes
@@ -171,18 +160,11 @@ class RestrictHangingFaces(ActionSet):
     def get_body_of_operation(self, operation_name):
         if operation_name == ActionSet.OPERATION_DESTROY_HANGING_FACE:
             return self.TemplateDestroyHangingFace.render(**self.d)
-        if (
-            operation_name == ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME
-            and self.clears_faces
-        ):
-            return self.TemplateTouchFaceFirstTime.render(**self.d)
         return ""
 
     def get_guard_of_operation(self, operation_name):
         if operation_name == ActionSet.OPERATION_DESTROY_HANGING_FACE:
             return self.guard
-        if operation_name == ActionSet.OPERATION_TOUCH_FACE_FIRST_TIME:
-            return self.clear_guard
         return "true"
 
     def get_action_set_name(self):

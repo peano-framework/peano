@@ -1,5 +1,6 @@
 import ast_comments as ast, inspect
 from collections.abc import Sequence
+from collections import OrderedDict
 import exahype2.api.dslhype2.AbstractSyntaxTree as AST
 from exahype2.api.PDETerm import PDETerm
 
@@ -16,7 +17,12 @@ class Parser:
             field_name = AST.Name(sections[1])
             return AST.ExternalStructField(struct_name, struct_type, field_name)
         else:
-            return AST.External(string)
+            if AST.Name(string) in self.external_type_map:
+                return AST.External(AST.Name(string), self.external_type_map[AST.Name(string)])
+            elif AST.Name(string) in self.function_map:
+                return AST.External(AST.Name(string), self.function_map[AST.Name(string)])
+            else:
+                raise Exception("External value is not recognised")
     
     def _parse_constant(self, constant: ast.Constant) -> AST.Element | AST.External:
         if type(constant.value) == int:
@@ -54,7 +60,7 @@ class Parser:
 
         # Argument 2 is the source of the DataBlock's data
         source = self._parse_expression(constructor.args[1])
-        if not (isinstance(source, AST.Element) or isinstance(source, AST.ExternalStructField) or isinstance(source, AST.FunctionCall)):
+        if not (isinstance(source, AST.Element) or isinstance(source, AST.External) or isinstance(source, AST.FunctionCallStatement)):
             raise Exception(f"DataBlock source is not a supported: {type(source)}")
         
         if isinstance(source, AST.ExternalStructField):
@@ -64,16 +70,18 @@ class Parser:
 
         return AST.DataBlock(iteration_range, source, flatten=flatten_array_representation)
 
-    def _parse_evaluation(self, call: ast.Call) -> AST.FunctionCall:
-        function_name = self._parse_expression(call.args[0])
-        assert(isinstance(function_name, AST.External))
-        function_name = AST.Name(function_name.reference)
+    def _parse_evaluation(self, call: ast.Call) -> AST.FunctionCallStatement:
+        external_function = self._parse_expression(call.args[0])
+        assert(isinstance(external_function, AST.External))
+        assert(isinstance(external_function.type, AST.TFunction))
+        function_name = external_function.name
+
         if function_name not in self.function_map:
             raise Exception(f"Function name is not recognised: {function_name.id}")
         arguments = [self._parse_expression(argument) for argument in call.args[1:]]
-        return AST.FunctionCall(function_name, arguments, self.function_map[function_name], stateless = self.stateless)
+        return AST.FunctionCallStatement(function_name, arguments, self.function_map[function_name], stateless = self.stateless)
 
-    def parse_call(self, call: ast.Call) -> AST.Expression | AST.FunctionCall:
+    def parse_call(self, call: ast.Call) -> AST.Expression | AST.FunctionCallStatement | AST.FunctionCallExpression:
         assert(type(call.func) == ast.Name)
         match call.func.id:
             case "DataBlock":
@@ -99,7 +107,19 @@ class Parser:
                     else:
                         return AST.DataBlockBinaryOperation(AST.Operator.MAX, lhs, rhs)
                 raise Exception("Unknown format for max: 1 or 2 arguments expected")
-
+            case "getVolumeCentre":
+                if len(call.args) != 3:
+                    raise Exception("getVolumeCentre expects 3 arguments")
+                arguments = [self._parse_expression(argument) for argument in call.args]
+                arguments.append(AST.IndexVector(self.dimensions))
+                return AST.FunctionCallExpression(AST.Name("::exahype2::fv::getVolumeCentre"), AST.TVector(AST.TFloat(), self.dimensions), arguments, AST.TFunction(f"std::function<tarch::la::Vector<Dimensions,double>(const tarch::la::Vector<{self.dimensions},double>&, const tarch::la::Vector<{self.dimensions},double>&, int, const tarch::la::Vector<{self.dimensions},int>&)", 
+                    OrderedDict({
+                        AST.Name("x"): AST.TVector(AST.TFloat(), self.dimensions),
+                        AST.Name("h"): AST.TVector(AST.TFloat(), self.dimensions),
+                        AST.Name("numberOfGridCellsPerPatchPerAxis"): AST.TInteger(),
+                        AST.Name("index"): AST.TVector(AST.TInteger(), self.dimensions)
+                    })
+                ))
             case _:
                 if AST.Name(call.func.id) in AST.Variable.symbol_map:
                     assert(isinstance(AST.Variable.symbol_map[AST.Name(call.func.id)].get_type(), AST.TDataBlock))
@@ -233,7 +253,7 @@ class Parser:
             return [AST.DataBlockConstructionFromElement(lhs, rhs)]
         if isinstance(rhs.value, AST.External):
             return [AST.DataBlockConstructionFromExternal(lhs, rhs)]
-        if isinstance(rhs.value, AST.FunctionCall):
+        if isinstance(rhs.value, AST.FunctionCallStatement):
             return [AST.DataBlockConstructionFromFunctionCall(lhs, rhs)]
         if isinstance(rhs, AST.DataBlockBinaryOperation):
             return [AST.DataBlockConstructionFromOperation(lhs, rhs)]
@@ -322,12 +342,14 @@ class Parser:
 
         return parsed_function
     
-    def parse(self, function, function_id: str|None = None, function_namespace: list[str] = [], function_arguments: list[AST.Argument] = [], function_map: dict[AST.Name, AST.TFunction] = {}, enabled_pde_terms: list[PDETerm] = [], external_variables: dict[AST.Argument,int|float] = {}, stateless: bool = False) -> AST.Function:
+    def parse(self, function, dimensions: int, function_id: str|None = None, function_namespace: list[str] = [], function_arguments: list[AST.Argument] = [], function_map: dict[AST.Name, AST.TFunction] = {}, enabled_pde_terms: list[PDETerm] = [], external_variables: dict[AST.Argument,int|float] = {}, stateless: bool = False) -> AST.Function:
         self.line_number = 1
         self.enabled_pde_terms = enabled_pde_terms
         self.external_variables = external_variables
+        self.function_arguments = function_arguments
         self.function_map = function_map
         self.stateless = stateless
+        self.dimensions = dimensions
         
         AST.Variable.symbol_map = {}
         AST.ArrayAllocation.array_allocations = []
@@ -337,6 +359,11 @@ class Parser:
             if isinstance(argument.type, AST.TStruct):
                 self.struct_map.update({argument.name: argument.type})
 
+        self.external_type_map: dict[AST.Name, AST.Type] = {}
+        for argument in function_arguments:
+            self.external_type_map[argument.name] = argument.type
+            AST.Variable.symbol_map[argument.name] = AST.create_default_expression_from_type(argument.type)
+        
         source_code = inspect.getsource(function)
         module = ast.parse(source_code)
         assert (isinstance(module, ast.Module))

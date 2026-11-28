@@ -21,6 +21,27 @@ This is useful for a variety of challenges:
   rewriting compute for a coupled PDE system, we rely on existing building blocks and wire them 
   together. These different building blocks can now even run on different meshes.
 
+
+There are four different types of coupling strategies, explained by coupling solvers A and B:
+
+
+|             | Outer multiplicative | Outer additive | Inner multiplicative | Inner additive |
+| ----------- | -------------------- | -------------- | -------------------- | -------------- |
+| Description | Run one time step with solver A, followed by a time step of solver B | Run a time step of A parallel to a time step of B | Run a time integrator and per substep (e.g. Runge-Kutta) run substep of B after A | Per substep, the substep of A runs parallel to the substep of B |
+| Numerical scheme | A and B can have different numerical schemes (e.g. Runge-Kutta vs FV or two different mesh sizes) | A and B can have different numerical schemes | The same numerical scheme and discretisation is used for both A and B | The same numerical scheme and discretisation is used for both A and B |
+| Concurrency | No additional concurrency | Very weak coupling and massive increase of concurrency, as A and B only synchronise at end of time step | No additional concurrency | Concurrency per substep (e.g. Runge-Kutta substep) increases |
+| Memory overhead | No overhead | All memory holding Q_A and and Q_B, i.e. the actual unknowns, is duplicated throughout all of the time step | No overhead | Same as outer additive, but the increase is temporary per substep of a multi-step integrator |
+| Memory movements | No increase | At least doubled | No increase | Memory movements are multiplied with two times the number of intermediate (Runge-Kutta) steps |
+| Accuracy | Coupling is first-order | Coupling is first-order | Order of numerical scheme preserved | Order of numerical scheme preserved |
+
+
+All of them are described below after a brief explanation of how we technically realise the
+coupling of volumetric data, i.e. of cells informing other cells.
+The whole discussion is wrapped up by a section on how to synchronise solvers, i.e. how to 
+ensure that they all use the same time step sizes.
+
+
+
 ## Design decision: Coupling through auxiliary variables
 
 

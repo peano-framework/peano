@@ -1,0 +1,15 @@
+digraph events {
+  rankdir=LR;
+  node [shape=box, style="rounded,filled", fillcolor="#f5f0e6", fontname="Helvetica"];
+  prepare [label="prepare\nTraversal"];
+  begin [label="begin\nTraversal"];
+  vf [label="touchVertex\nFirstTime"];
+  ff [label="touchFace\nFirstTime"];
+  cf [label="touchCell\nFirstTime"];
+  cl [label="touchCell\nLastTime"];
+  fl [label="touchFace\nLastTime"];
+  vl [label="touchVertex\nLastTime"];
+  end [label="end\nTraversal"];
+  unprepare [label="unprepare\nTraversal"];
+  prepare -> begin -> vf -> ff -> cf -> cl -> fl -> vl -> end -> unprepare;
+}

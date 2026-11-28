@@ -91,4 +91,12 @@ The errors decrease with the fourth power of the mesh width. As the time
 step size is proportional to the mesh width, this confirms the order of the
 Runge-Kutta scheme, too.
 
+convergence-study.py also fails a scheme if the last snapshot of a run is older
+than the end time (compute-errors.py --end-time). As of 2026-11-28, rk1fd4 fails
+this way: on 243 grid cells per axis, the time step size collapses at
+@f$ t \approx 0.045 @f$. The simulation then terminates with exit code zero, and
+the last complete snapshot is the initial condition. Before the check, its
+round-off error yielded an order of 26.9, i.e. the study passed. We have not
+analysed why the run breaks down.
+
 */

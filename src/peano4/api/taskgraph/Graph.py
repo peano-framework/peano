@@ -205,6 +205,41 @@ class Graph:
                 pending += dependency.dependencies
         return False
 
+    def remove_redundant_edges(self) -> int:
+        """!
+
+        Remove dependencies which the remaining dependencies imply anyway
+
+        The routine searches for an edge A->C, i.e. C depends on A, while
+        there is already a chain of dependencies A->B1->B2->...->Bn->C with
+        n>=1. If this pattern arises, the routine removes A->C: Whoever runs
+        C after Bn, which runs after ... B1, which runs after A, runs C after A
+        anyway. The ordering of the tasks does not change, but the graph (and
+        its visualisation) gets simpler. The result is the transitive
+        reduction of the graph.
+
+        Only tasks of this graph are analysed, but chains may run through
+        tasks that are not part of the graph.
+
+        @return int
+          Number of edges removed
+        """
+        removed = 0
+        for task in self.tasks:
+            ## An edge A->C is redundant if another direct dependency B of C
+            ## depends on A, directly or indirectly
+            kept = [
+                dependency
+                for dependency in task.dependencies
+                if not any(
+                    other is not dependency and Graph._depends_on(other, dependency)
+                    for other in task.dependencies
+                )
+            ]
+            removed += len(task.dependencies) - len(kept)
+            task.dependencies = kept
+        return removed
+
     def ordered_tasks(self) -> List[Task]:
         """!
 
@@ -338,7 +373,7 @@ class Graph:
 
         lines = [f"Task graph '{title}':"]
         for task in ordered_tasks:
-            lines.append(f"- {task.name} «{task.entity.name.lower()}»")
+            lines.append(f"- {task.name} «{task.entity.label.lower()}»")
             if task.dependencies:
                 lines.append(
                     "    depends on: " + ", ".join(dependency.name for dependency in task.dependencies)
@@ -598,7 +633,7 @@ class Graph:
                 ha="center", va="center", zorder=3, fontsize=7.5, fontweight="bold",
             )
             axes.annotate(
-                f"«{task.entity.name.lower()}»",
+                f"«{task.entity.label.lower()}»",
                 (x, header_center_y - 0.13),
                 ha="center", va="center", zorder=3, fontsize=6, style="italic", color="dimgray",
             )
@@ -719,13 +754,13 @@ class Graph:
         title_height = TOP_CHROME - LEGEND_HEIGHT
         figure.suptitle(title, y=1.0 - 0.5 * title_height / figure_height, fontsize=10)
 
-        used_entities = [entity for entity in Task.GridEntity if any(task.entity == entity for task in self.tasks)]
+        used_entities = list(dict.fromkeys(task.entity for task in self.tasks))
         legend_handles = [
             Line2D(
                 [0], [0],
                 marker="o", linestyle="none", markersize=6,
                 markerfacecolor=entity_colour.get(entity, "tab:gray"), markeredgecolor="none",
-                label=f"«{entity.name.lower()}»",
+                label=f"«{entity.label.lower()}»",
             )
             for entity in used_entities
         ]

@@ -34,7 +34,7 @@ class exahype2::fv::rusanov::microbenchmark::AbstractEulerFVSmooth: public ::exa
   public:
     AbstractEulerFVSmooth();
 
-    static constexpr int    NumberOfUnknowns           = 5;
+    static constexpr int    NumberOfUnknowns           = 4;
     static constexpr int    NumberOfAuxiliaryVariables = 0;
     static constexpr int    PatchSize                  = 16;
     static constexpr int    HaloSize                   = 1;
@@ -57,6 +57,17 @@ static GPUCallableMethod void flux(
 #endif
 static GPUCallableMethod void maxEigenvalue(
   const double* __restrict__ Q, const tarch::la::Vector<Dimensions, double>& x, int normal, double* __restrict__ lambdaMax,
+  Offloadable
+);
+#if defined(GPUOffloadingOMP)
+#pragma omp end declare target
+#endif
+
+#if defined(GPUOffloadingOMP)
+#pragma omp declare target
+#endif
+static GPUCallableMethod void initPointWisely(
+  const tarch::la::Vector<Dimensions, double>& x, double* __restrict__ Q,
   Offloadable
 );
 #if defined(GPUOffloadingOMP)
