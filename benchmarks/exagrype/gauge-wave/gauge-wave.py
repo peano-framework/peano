@@ -55,8 +55,8 @@ task graphs. `--mesh-size` is the edge length h of one grid cell. The default is
 mesh cells with patches of 9x9x9 grid cells. The mesh is regular and refined by factors of
 three, i.e. h is rounded to patch size over 3^k (the patch size can be set via
 `--patch-size`, but the root cell is refined at least once). `--compiler` switches
-between the task graph compilers (sequential, fusion which is the default, and the
-producer-consumer variants of both), `--load-balancing` splits the domain into several
+between the task graph compilers of @ref peano4.api.taskgraph.compiler.Compilers (default:
+fusion), `--load-balancing` splits the domain into several
 trees (default: none, i.e. one tree), and `--end-time`, `--threads` and `--directory` do what
 they say.
 
@@ -83,7 +83,7 @@ is run via the skill `exahype2:integration-test` (see
 documentation/exahype2/integration-test/SKILL.md). Whenever you change a numerical scheme, the
 task graph, the kernels or the code generation, this is the test to rerun. It runs all
 setups with a single tree first and then with the load balancing SpreadOut, each with the
-task graph compilers fusion, assembly-fusion and assembly-concatenation-fusion.
+task graph compilers of @ref peano4.api.taskgraph.compiler.Compilers.
 
 The study runs both formulations (--formulation fo and so). The picture, the table and the
 discussion below stem from the first-order formulation. We have no reference results for the
@@ -221,8 +221,8 @@ parser.add_argument(
     choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
     help="Task graph compiler: one traversal per task (sequential), tasks fused "
-    "into as few traversals as possible (fusion, default), the same two "
-    "variants with cell tasks spawned as producer-consumer tasks, or the task graph assembly (assembly).",
+    "into as few traversals as possible (fusion, default), cell tasks spawned as "
+    "producer-consumer tasks (producer-consumer*), or the task graph assembly (assembly*).",
 )
 args = parser.parse_args()
 

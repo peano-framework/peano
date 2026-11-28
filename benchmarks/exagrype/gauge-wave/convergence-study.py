@@ -19,8 +19,14 @@ into a subdirectory <load balancing>/<task graph compiler> of the output directo
 correctness of the numerical schemes behind the benchmark: The script exits
 with a non-zero status if the estimated convergence order of a scheme falls
 below the one in ExpectedOrders, or if any build or run fails, for any of the
-compilers and load balancings. A failure does not stop the other runs. Runtimes and memory footprints are recorded,
+compilers and load balancings. Runtimes and memory footprints are recorded,
 but are not an acceptance criterion.
+
+A set, i.e. one task graph compiler with one numerical scheme, stops at its first
+failure: The study skips its remaining meshes and formulations, and it does not run
+it with the load balancings that follow. This includes sets which miss their order.
+All other sets continue. The study ends with a table of the verdicts of all sets,
+which it also writes into summary.md in the output directory.
 
      python3 convergence-study.py --work-directory /scratch/gauge-wave
 
@@ -43,14 +49,13 @@ or extends the configurations. All results of a configuration live in
 
 ## Task graph compilers
 
-For each load balancing, the study repeats all runs with each compiler in Compilers: the
-default one (fusion) and the task graph assembly
-(@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
-graph while it traverses the mesh, without and with concatenation. All of them
-have to reach the same orders. The compilers are studied one after another.
---compilers restricts or extends the list. The sequential assembly variants are
-not part of it, as the sequential compilers can hang (ADR 0001 of the task graph
-compilers).
+For each load balancing, the study repeats all runs with each task graph compiler of
+the registry @ref peano4.api.taskgraph.compiler.Compilers, i.e. a new compiler is
+studied without any change to this script. All of them have to reach the same orders.
+The compilers are studied one after another. --compilers restricts the list.
+The script has no timeout: If a run hangs (the sequential compilers can, see ADR 0001
+of the task graph compilers), terminate its executable with kill (SIGTERM), so the
+study records a failure and continues.
 
 
 ## Scheduling
@@ -93,7 +98,7 @@ import threading
 import time
 
 Here = os.path.dirname(os.path.abspath(__file__))
-PeanoRoot = os.path.abspath(os.path.join(Here, "..", "..", "..", ".."))
+PeanoRoot = os.path.abspath(os.path.join(Here, "..", "..", ".."))
 sys.path.insert(0, os.path.join(PeanoRoot, "src"))
 
 import matplotlib
@@ -102,6 +107,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+import peano4.api.taskgraph.compiler.Compilers
 import tarch.plotter.api.merge
 import tarch.plotter.api.output
 
@@ -119,8 +125,8 @@ def patch_size_of(volumes_per_axis):
 
 Schemes = ["fv", "rk1fd4", "rk2fd4", "rk3fd4", "rk4fd4"]
 
-## Task graph compilers the study checks, see gauge-wave.py
-Compilers = ["fusion", "assembly-fusion", "assembly-concatenation-fusion"]
+## Task graph compilers the study checks, i.e. all of them, see gauge-wave.py
+Compilers = list(peano4.api.taskgraph.compiler.Compilers.COMPILERS)
 
 ## CCZ4 formulations, see gauge-wave.py
 Formulations = ["fo", "so"]
@@ -165,6 +171,11 @@ StdoutRedirectLock = threading.Lock()
 
 ## Compiling is memory hungry, i.e. only a few builds run at the same time
 BuildSlots = threading.Semaphore(3)
+
+
+## Sets (task graph compiler, scheme) which have failed, mapped onto the load
+## balancing under which they have failed. The study does not continue them.
+FailedSets = {}
 
 
 class Workers:
@@ -615,8 +626,8 @@ def study(load_balancing, compiler, args, work_directory, output_directory):
     @param output_directory: str
       Directory for the configuration's plot and table.
 
-    @return [str]
-      The failures, see check_orders().
+    @return {str: str}
+      Verdict per scheme.
 
     """
     print(
@@ -634,6 +645,12 @@ def study(load_balancing, compiler, args, work_directory, output_directory):
             json.dump(results, f, indent=1)
 
     meshes = sorted(args.meshes)
+    ## Sets which have failed under a load balancing studied before
+    not_run = {
+        scheme: FailedSets[(compiler, scheme)]
+        for scheme in args.schemes
+        if (compiler, scheme) in FailedSets
+    }
 
     ## Skipped and failed runs are repeated
     def is_completed(name):
@@ -647,6 +664,8 @@ def study(load_balancing, compiler, args, work_directory, output_directory):
     def run_scheme(scheme):
         try:
             for v, formulation in itertools.product(meshes, args.formulations):
+                if (compiler, scheme) in FailedSets:
+                    break
                 name = name_of(scheme, formulation, v)
                 if is_completed(name):
                     continue
@@ -671,6 +690,9 @@ def study(load_balancing, compiler, args, work_directory, output_directory):
                         work_directory,
                     )
                 store()
+                if "failed" in results[name]:
+                    FailedSets[(compiler, scheme)] = load_balancing
+                    break
         finally:
             with Workers.lock:
                 Workers.alive -= 1
@@ -694,7 +716,50 @@ def study(load_balancing, compiler, args, work_directory, output_directory):
         f.write(markdown)
     print(markdown)
 
-    return check_orders(results, args.schemes, args.formulations, meshes)
+    verdicts = {}
+    for scheme in args.schemes:
+        if scheme in not_run:
+            verdicts[scheme] = f"not run (failed with {not_run[scheme]})"
+            continue
+        runs = [
+            results.get(name_of(scheme, formulation, v), {})
+            for formulation, v in itertools.product(args.formulations, meshes)
+        ]
+        # A broken run ends the set, i.e. there are no orders to check
+        failures = [
+            f"{r['formulation']}, {r['volumes']} volumes: {r['failed']}"
+            for r in runs
+            if "failed" in r
+        ] or check_orders(results, [scheme], args.formulations, meshes)
+        if failures:
+            FailedSets[(compiler, scheme)] = load_balancing
+            verdicts[scheme] = "FAILED: " + "; ".join(failures)
+        else:
+            verdicts[scheme] = "PASSED"
+    return verdicts
+
+
+def summary(verdicts, compilers, schemes, load_balancings):
+    """!
+
+    Table of the verdicts of all sets
+
+    @param verdicts: {(str, str): {str: str}}
+      Maps (load balancing, task graph compiler) onto the verdict per scheme,
+      see study().
+
+    @return str
+      Table in Markdown with one row per set and one column per load balancing.
+
+    """
+    lines = [
+        "| compiler | scheme | " + " | ".join(load_balancings) + " |",
+        "|---" * (len(load_balancings) + 2) + "|",
+    ]
+    for compiler, scheme in itertools.product(compilers, schemes):
+        columns = [verdicts[(lb, compiler)][scheme] for lb in load_balancings]
+        lines.append(f"| {compiler} | {scheme} | " + " | ".join(columns) + " |")
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":
@@ -728,6 +793,14 @@ if __name__ == "__main__":
     )
     parser.add_argument("--cores", type=int, default=os.cpu_count())
     parser.add_argument(
+        "--end-time",
+        type=float,
+        default=EndTime,
+        help=f"Simulated time of all runs (default: {EndTime}). ExpectedOrders stem "
+        "from the default. Use a work directory of its own per end time, as "
+        "completed runs are reused.",
+    )
+    parser.add_argument(
         "--load-balancing",
         nargs="+",
         default=LoadBalancings,
@@ -746,10 +819,11 @@ if __name__ == "__main__":
         help="Maximum number of runs on meshes with more than 27 cells that run at the same time",
     )
     args = parser.parse_args()
+    EndTime = args.end_time
     LargeRunSlots = threading.Semaphore(args.concurrent_large_runs)
 
-    failures = {
-        f"{load_balancing}/{compiler}": study(
+    verdicts = {
+        (load_balancing, compiler): study(
             load_balancing,
             compiler,
             args,
@@ -761,12 +835,11 @@ if __name__ == "__main__":
         for load_balancing in args.load_balancing
         for compiler in args.compilers
     }
-    for configuration, configuration_failures in failures.items():
-        if configuration_failures:
-            print(f"{configuration}: FAILED\n  " + "\n  ".join(configuration_failures))
-        else:
-            print(f"{configuration}: PASSED")
-    if any(failures.values()):
+    markdown = summary(verdicts, args.compilers, args.schemes, args.load_balancing)
+    with open(os.path.join(args.output_directory, "summary.md"), "w") as f:
+        f.write(markdown)
+    print(markdown)
+    if FailedSets:
         print("FAILED")
         sys.exit(1)
     print("PASSED")

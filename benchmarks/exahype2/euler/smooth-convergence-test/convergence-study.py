@@ -18,8 +18,12 @@ All of this is repeated for each task graph compiler in COMPILERS: the default
 one (fusion) and the task graph assembly
 (@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
 graph while it traverses the mesh, without and with concatenation. The runs of a
-compiler live in <work directory>/<load balancing>/<compiler>/<scheme>. A failed
-build or run fails its combination, and the study continues with the others.
+compiler live in <work directory>/<load balancing>/<compiler>/<scheme>.
+
+A set, i.e. one task graph compiler with one scheme, stops at its first failure:
+The study skips its remaining mesh widths, and it does not run it with the load
+balancings that follow. This includes sets which miss their order. All other sets
+continue. The study ends with a table of the verdicts of all sets.
 
 The study first runs all of this with a single tree (none), and then again with
 the load balancing toolbox::loadbalancing::strategies::SpreadOut (spread-out),
@@ -67,6 +71,12 @@ parser.add_argument(
     default=["rk1fd4", "rk2fd4", "rk3fd4", "rk4fd4"],
     choices=list(MINIMUM_ORDERS.keys()),
     help="Numerical schemes, see smooth-convergence-test.py (default: rk1fd4 rk2fd4 rk3fd4 rk4fd4)",
+)
+parser.add_argument(
+    "--end-time",
+    type=float,
+    default=END_TIME,
+    help=f"Simulated time of all runs (default: {END_TIME}). The minimum orders stem from the default. Use a work directory of its own per end time, as finished runs are reused",
 )
 parser.add_argument(
     "--minimum-order",
@@ -138,7 +148,46 @@ def tree_failure(load_balancing, trees):
     return None
 
 
+def compute_errors(runs, extra_arguments=[]):
+    """!
+    Run compute-errors.py on run directories
+
+    @param runs: [str]
+      Run directories, from the coarsest to the finest mesh.
+    @param extra_arguments: [str]
+      Further arguments of compute-errors.py besides the end time.
+    @return subprocess.CompletedProcess
+      Exit code and output of the script.
+    """
+    return subprocess.run(
+        [
+            sys.executable,
+            os.path.join(HERE, "compute-errors.py"),
+            "--end-time",
+            str(args.end_time),
+        ]
+        + extra_arguments
+        + runs,
+        capture_output=True,
+        text=True,
+    )
+
+
+def failure_of(process):
+    """! Reason why compute-errors.py has failed, from its output"""
+    lines = (process.stdout + process.stderr).strip().splitlines()
+    return next(
+        (line for line in lines if line.startswith("FAILED: ")), lines[-1]
+    ).replace("FAILED: ", "")
+
+
 def study(load_balancing, compiler, scheme):
+    """!
+    Run one set with one load balancing, and stop at its first failure
+
+    @return str
+      The failure, or None.
+    """
     minimum_order = (
         args.minimum_order if args.minimum_order is not None else MINIMUM_ORDERS[scheme]
     )
@@ -165,7 +214,7 @@ def study(load_balancing, compiler, scheme):
                     "--scheme",
                     scheme,
                     "--end-time",
-                    str(END_TIME),
+                    str(args.end_time),
                     "--build-jobs",
                     str(args.build_jobs),
                     "--verbosity",
@@ -194,49 +243,54 @@ def study(load_balancing, compiler, scheme):
                     stdout=log,
                     stderr=log,
                 )
-    trees_are_fine = True
-    for run in runs:
         trees = number_of_trees(os.path.join(run, "run.log"))
         print(f"{run}: {trees} tree(s)", flush=True)
         failure = tree_failure(load_balancing, trees)
+        if failure is None:
+            process = compute_errors([run])
+            if process.returncode != 0:
+                failure = failure_of(process)
         if failure:
-            print(f"{run}: {failure}", flush=True)
-            trees_are_fine = False
-    errors_are_fine = (
-        subprocess.run(
-            [
-                sys.executable,
-                os.path.join(HERE, "compute-errors.py"),
-                "--minimum-order",
-                str(minimum_order),
-                "--end-time",
-                str(END_TIME),
-            ]
-            + runs
-        ).returncode
-        == 0
-    )
-    return trees_are_fine and errors_are_fine
+            return f"{volume_size}: {failure}"
+    process = compute_errors(runs, ["--minimum-order", str(minimum_order)])
+    print(process.stdout + process.stderr, end="", flush=True)
+    return failure_of(process) if process.returncode != 0 else None
 
 
-def passes(load_balancing, compiler, scheme):
-    """! A failed build or run must not stop the study of the other combinations"""
+def verdict_of(load_balancing, compiler, scheme):
+    """! A failed build or run must not stop the study of the other sets"""
     try:
-        return study(load_balancing, compiler, scheme)
+        failure = study(load_balancing, compiler, scheme)
     except (subprocess.CalledProcessError, OSError) as exception:
-        print(f"{load_balancing} {compiler} {scheme}: {exception}", flush=True)
-        return False
+        failure = str(exception)
+    if failure:
+        print(f"{load_balancing} {compiler} {scheme}: FAILED: {failure}", flush=True)
+        return f"FAILED: {failure}"
+    return "PASSED"
 
 
-failed = [
-    f"{load_balancing} {compiler} {scheme}"
-    for load_balancing in args.load_balancing
-    for compiler in args.compilers
-    for scheme in args.schemes
-    if not passes(load_balancing, compiler, scheme)
-]
-if failed:
-    print(f"FAILED: {', '.join(failed)}")
-else:
-    print("PASSED")
-sys.exit(1 if failed else 0)
+## Sets (task graph compiler, scheme) which have failed, mapped onto the load
+## balancing under which they have failed. The study does not continue them.
+failed_sets = {}
+verdicts = {}
+for load_balancing in args.load_balancing:
+    for compiler in args.compilers:
+        for scheme in args.schemes:
+            key = (load_balancing, compiler, scheme)
+            if (compiler, scheme) in failed_sets:
+                verdicts[
+                    key
+                ] = f"not run (failed with {failed_sets[(compiler, scheme)]})"
+                continue
+            verdicts[key] = verdict_of(*key)
+            if verdicts[key] != "PASSED":
+                failed_sets[(compiler, scheme)] = load_balancing
+
+print("| compiler | scheme | " + " | ".join(args.load_balancing) + " |")
+print("|---" * (len(args.load_balancing) + 2) + "|")
+for compiler in args.compilers:
+    for scheme in args.schemes:
+        columns = [verdicts[(lb, compiler, scheme)] for lb in args.load_balancing]
+        print(f"| {compiler} | {scheme} | " + " | ".join(columns) + " |")
+print("FAILED" if failed_sets else "PASSED")
+sys.exit(1 if failed_sets else 0)

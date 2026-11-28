@@ -22,7 +22,12 @@ The check is repeated for each task graph compiler in COMPILERS: the default one
 (@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
 graph while it traverses the mesh, without and with concatenation. Each compiler
 is compared against its own run on the regular grid; its runs live in
-<work directory>/<load balancing>/<compiler>. A failure does not stop the others.
+<work directory>/<load balancing>/<compiler>.
+
+A set, i.e. one task graph compiler, stops at its first failure: If the run on the
+regular grid is broken, the check skips the run with AMR. A failed compiler does not
+run with the load balancings that follow. All other compilers continue. The check
+ends with a table of the verdicts of all sets.
 
 All of this is done first with a single tree (none), and then again with the load
 balancing toolbox::loadbalancing::strategies::SpreadOut (spread-out), so that
@@ -144,6 +149,19 @@ def tree_failure(load_balancing, trees):
     return None
 
 
+def run_failure(load_balancing: str, run_directory: str):
+    """!
+    Report the trees of a run and check them, see tree_failure()
+
+    @return str
+      The failure, or None.
+    """
+    trees = number_of_trees(os.path.join(run_directory, "run.log"))
+    print(f"{run_directory}: {trees} tree(s)")
+    failure = tree_failure(load_balancing, trees)
+    return f"{run_directory}: {failure}" if failure else None
+
+
 def mesh_over_time(run_directory: str):
     """!
     Number of leaf cells after each time step
@@ -229,10 +247,18 @@ def check(load_balancing: str, compiler: str, args):
         load_balancing,
     ]
     os.makedirs(work_directory, exist_ok=True)
+    start_cells = args.patch_count**2
     regular = run(work_directory, 0, extra)
+    _, reference, reference_cells = final_solution(regular, volumes_per_axis)
+    failure = run_failure(load_balancing, regular)
+    if failure:
+        return [failure]
+    if reference_cells != start_cells:
+        return [
+            f"the run without AMR holds {reference_cells} instead of {start_cells} cells"
+        ]
     adaptive = run(work_directory, args.amr_levels, extra)
 
-    start_cells = args.patch_count**2
     timeline = mesh_over_time(adaptive)
     print(
         f"Mesh of the run with {args.amr_levels} AMR level(s) (regular start grid: {start_cells} cells)"
@@ -252,19 +278,11 @@ def check(load_balancing: str, compiler: str, args):
         previous = cells
     print(f"total coarsened {coarsened} volumes, refined {refined} volumes")
 
-    _, reference, reference_cells = final_solution(regular, volumes_per_axis)
     time_stamp, solution, cells = final_solution(adaptive, volumes_per_axis)
     failures = []
-    for run_directory in [regular, adaptive]:
-        trees = number_of_trees(os.path.join(run_directory, "run.log"))
-        print(f"{run_directory}: {trees} tree(s)")
-        failure = tree_failure(load_balancing, trees)
-        if failure:
-            failures.append(f"{run_directory}: {failure}")
-    if reference_cells != start_cells:
-        failures.append(
-            f"the run without AMR holds {reference_cells} instead of {start_cells} cells"
-        )
+    failure = run_failure(load_balancing, adaptive)
+    if failure:
+        failures.append(failure)
     if not cells < start_cells:
         failures.append(
             f"the mesh has not coarsened ({cells} cells at the end, {start_cells} at the start)"
@@ -329,11 +347,17 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    failed = []
+    # Compilers which have failed, mapped onto the load balancing under which
+    # they have failed. The check does not continue them.
+    failed_sets = {}
+    verdicts = {}
     for load_balancing, compiler in itertools.product(
         args.load_balancing, args.compilers
     ):
         configuration = f"{load_balancing}/{compiler}"
+        if compiler in failed_sets:
+            verdicts[configuration] = f"not run (failed with {failed_sets[compiler]})"
+            continue
         print(
             f"load balancing {load_balancing}, task graph compiler {compiler}",
             flush=True,
@@ -343,13 +367,20 @@ if __name__ == "__main__":
         except Exception as exception:
             failures = [f"build, run or evaluation failed: {exception!r}"]
         if failures:
-            failed.append(configuration)
+            failed_sets[compiler] = load_balancing
+            verdicts[configuration] = "FAILED: " + "; ".join(failures)
             print(f"{configuration}: FAILED")
             for failure in failures:
                 print(" -", failure)
         else:
+            verdicts[configuration] = "PASSED"
             print(f"{configuration}: PASSED")
-    if failed:
-        print(f"FAILED: {', '.join(failed)}")
+    print("| compiler | " + " | ".join(args.load_balancing) + " |")
+    print("|---" * (len(args.load_balancing) + 1) + "|")
+    for compiler in args.compilers:
+        columns = [verdicts[f"{lb}/{compiler}"] for lb in args.load_balancing]
+        print(f"| {compiler} | " + " | ".join(columns) + " |")
+    if failed_sets:
+        print("FAILED")
         sys.exit(1)
     print("PASSED")
