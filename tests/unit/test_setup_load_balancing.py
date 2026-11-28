@@ -56,3 +56,25 @@ def test_task_waiting_for_the_load_balancing_informs_it(tmp_path, scheme):
             isinstance(action_set, toolbox.loadbalancing.api.actionsets.LoadBalancing)
             for action_set in task.action_sets
         ), task.name
+
+
+@pytest.mark.parametrize("scheme", ["fv", "rkfd4"])
+def test_refinement_terminates_only_after_a_sweep_which_may_refine(scheme, tmp_path):
+    """!
+
+    The refinement pauses while the load balancing has split recently, and a
+    paused refinement leaves the grid stationary. The repetition hence has to
+    wait for hasMeshBeenStationary(), which holds one sweep after the pause.
+
+    """
+    graph = _setup_graph(scheme, tmp_path)
+    [refine] = [
+        task
+        for task in graph.tasks
+        if task.has_to_repeat and "hasStagnated()" in task.has_to_repeat
+    ]
+    assert "not ::toolbox" in refine.has_to_repeat
+    assert "hasMeshBeenStationary()" in refine.has_to_repeat
+    assert "hasSplitRecently()" not in refine.has_to_repeat
+    guard = refine.action_sets[0].guard
+    assert "hasSplitRecently()" in guard

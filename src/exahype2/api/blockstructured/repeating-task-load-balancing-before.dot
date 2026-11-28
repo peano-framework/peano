@@ -9,7 +9,7 @@ digraph before {
 
   subgraph cluster_graph {
     label="Task graph"; fontsize=13; style=dashed;
-    refine  [label="Refine mesh / Adapt mesh  (cell task)\nmesh action sets\n\nrepeats while it waits for the load balancing:\nnot hasStagnated()  or  hasSplitRecently()"];
+    refine  [label="Refine mesh / Adapt mesh  (cell task)\nmesh action sets\n\nrepeats while it waits for the load balancing:\nsetup: not hasStagnated()  or  not hasMeshBeenStationary()\nmesh adaptation: hasSplitRecently()"];
     balance [label="Balance load  (global task)\nLoadBalancing: finishStep()"];
     refine -> balance [label="  is followed by (dependency)"];
   }

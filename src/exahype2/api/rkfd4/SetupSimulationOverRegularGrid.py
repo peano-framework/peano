@@ -43,7 +43,10 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
     ## Why the refinement task informs the load balancing itself
 
     The task Refine mesh repeats until the load balancing has stagnated and
-    has not split recently. Only finishStep() updates both, i.e. the action
+    reports that the mesh has been stationary
+    (@ref toolbox::loadbalancing::AbstractLoadBalancing::hasMeshBeenStationary()
+    explains why it must not terminate as soon as the load balancing has not
+    split recently anymore). Only finishStep() updates both, i.e. the action
     set toolbox.loadbalancing.api.actionsets.LoadBalancing which calls it has
     to be part of this very task. It used to sit in a task of its own which
     depended on the refinement. The setup then terminated only if the task
@@ -112,7 +115,7 @@ class SetupSimulationOverRegularGrid(Solver.GridConstruction):
                 "not peano4::grid::isGridStationary( peano4::parallel::SpacetreeSet::getInstance().getGridStatistics() )"
                 " or ( ::toolbox::loadbalancing::LoadBalancingService::getInstance().hasLoadBalancing()"
                 " and ( not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasStagnated()"
-                " or ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasSplitRecently() ) )"
+                " or not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasMeshBeenStationary() ) )"
             ),
         )
         consolidate_load_balancing_task = peano4.api.taskgraph.Task(

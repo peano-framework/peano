@@ -36,15 +36,21 @@ public:
   /**
    * Number of mesh sweeps a split needs until the mesh is consistent again
    *
-   * We need three sweeps to perform a proper split:
+   * A split needs three sweeps after the one at whose end the strategy has
+   * triggered it:
    *
-   * 1. Trigger the split,
-   * 2. split the mesh actually,
-   * 3. update all the stats.
+   * 1. The new trees are created. The statistics register the split at the end
+   *    of this sweep, i.e. they set the number of state updates without any
+   *    split to zero.
+   * 2. The new trees receive their cells.
+   * 3. The old tree hands over these cells, so the cell counts are consistent.
+   *
+   * The constant counts the state updates after the one which has registered
+   * the split, i.e. it stands for the sweeps two and three.
    *
    * @see hasSplitRecently()
    */
-  static constexpr int NumberOfMeshSweepsAfterSplitToMakeMeshConsistentAgain = 3;
+  static constexpr int NumberOfMeshSweepsAfterSplitToMakeMeshConsistentAgain = 2;
 
   /**
    * Constructor
@@ -124,6 +130,29 @@ public:
    * before the split has been carried out.
    */
   virtual bool hasSplitRecently() const;
+
+
+  /**
+   * Has the mesh been stationary with respect to splits
+   *
+   * Holds one state update after hasSplitRecently() has ceased to hold, and as
+   * long as this rank has not triggered a new split. It does not tell whether
+   * the grid itself is stationary (@ref peano4::grid::isGridStationary()).
+   *
+   * ## Why a mesh construction cannot use hasSplitRecently() to terminate
+   *
+   * A mesh construction pauses its refinement while hasSplitRecently() holds,
+   * as the new trees have to catch up first. A paused refinement leaves the
+   * grid stationary. Each sweep decides at its start whether it refines, while
+   * the repetition is checked after finishStep(), i.e. at its end. When
+   * hasSplitRecently() ceases to hold, the grid hence is stationary because
+   * the last sweep has not been allowed to refine. If the construction
+   * terminates now, it never resumes the refinement. With the strategy
+   * SpreadOut, which splits as soon as every thread can get a tree, the mesh
+   * stopped at nine cells. A construction therefore has to run until
+   * hasMeshBeenStationary() holds, which grants it one sweep with refinement.
+   */
+  virtual bool hasMeshBeenStationary() const;
 
 
   /**

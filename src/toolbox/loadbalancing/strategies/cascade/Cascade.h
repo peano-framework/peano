@@ -81,6 +81,20 @@ class toolbox::loadbalancing::strategies::cascade::Cascade: public toolbox::load
     }
 
 
+    virtual bool hasMeshBeenStationary() const override {
+      switch (_activeLoadBalancing) {
+        case 0:
+          return _hostedLoadBalancing0.hasMeshBeenStationary();
+        case 1:
+          return _hostedLoadBalancing1.hasMeshBeenStationary();
+        default:
+          assertion1(false,_activeLoadBalancing);
+          break;
+      }
+      return false;
+    }
+
+
     virtual bool hasSplitRecently() const override {
       switch (_activeLoadBalancing) {
         case 0:

@@ -238,7 +238,9 @@ class LoadCheckpoint(Solver.GridConstruction):
     ## Why the refinement task informs the load balancing itself
 
     The refinement sweep repeats until the load balancing has stagnated and
-    has not split recently. Only finishStep() updates both, i.e. the action
+    reports that the mesh has been stationary
+    (@ref toolbox::loadbalancing::AbstractLoadBalancing::hasMeshBeenStationary()).
+    Only finishStep() updates both, i.e. the action
     set toolbox.loadbalancing.api.actionsets.LoadBalancing which calls it has
     to be part of this very task. In a task of its own, the setup terminates
     only if the task graph compiler happens to fuse both tasks. We have
@@ -347,7 +349,7 @@ class LoadCheckpoint(Solver.GridConstruction):
                 "not peano4::grid::isGridStationary( peano4::parallel::SpacetreeSet::getInstance().getGridStatistics() )"
                 " or ( ::toolbox::loadbalancing::LoadBalancingService::getInstance().hasLoadBalancing()"
                 " and ( not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasStagnated()"
-                " or ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasSplitRecently() ) )"
+                " or not ::toolbox::loadbalancing::LoadBalancingService::getInstance().getLoadBalancing()->hasMeshBeenStationary() ) )"
             ),
         )
         refine_task.add_action_set(_RefineFromCheckpoint(reader, includes))
