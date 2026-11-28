@@ -1,18 +1,71 @@
 ---
 name: exahype2:integration-test
-description: Re-run the ExaHyPE 2 / ExaGRyPE integration test, i.e. the convergence study of the gauge wave benchmark (benchmarks/exagrype/gauge-wave) over the schemes fv, rk1fd4, rk2fd4, rk3fd4 and rk4fd4 and over several mesh sizes, plus the Euler entropy wave convergence study of the Finite Differences schemes rk1fd4 to rk4fd4 with adaptive time stepping (benchmarks/exahype2/euler/smooth-convergence-test), plus the AMR check of the Euler point source (benchmarks/exahype2/euler/point-source). Use when the user asks to run/re-run the integration test or the gauge wave convergence study, or to check that changes to the numerical schemes, task graph, kernels or code generation have not broken the numerical correctness. Runtimes are recorded, but they are not an acceptance criterion (that is the job of exahype2:performance-test).
+description: Re-run the ExaHyPE 2 / ExaGRyPE integration test, i.e. the convergence study of the gauge wave benchmark (benchmarks/exagrype/gauge-wave) over the schemes fv, rk1fd4, rk2fd4, rk3fd4 and rk4fd4 and over several mesh sizes, plus the Euler entropy wave convergence study of the Finite Differences schemes rk1fd4 to rk4fd4 with adaptive time stepping (benchmarks/exahype2/euler/smooth-convergence-test), plus the AMR check of the Euler point source (benchmarks/exahype2/euler/point-source). Use when the user asks to run/re-run the integration test or the gauge wave convergence study, or to check that changes to the numerical schemes, task graph, kernels or code generation have not broken the numerical correctness. All studies run first with a single tree and then with the load balancing SpreadOut, each with the default task graph compiler and with the task graph assembly. Runtimes are recorded, but they are not an acceptance criterion (that is the job of exahype2:performance-test).
 allowed-tools: [Bash, Read]
 ---
 
 # Integration test: convergence studies
 
-The integration test consists of two studies: the gauge wave (ExaGRyPE, CCZ4) and the Euler
-entropy wave (ExaHyPE 2, see the last section). Run both.
+The integration test consists of three parts: the convergence studies of the gauge wave
+(ExaGRyPE, CCZ4) and of the Euler entropy wave (ExaHyPE 2), and the AMR check of the Euler
+point source. Run all three.
+
+## Load balancing
+
+Every study runs everything first with only one tree (`none`), and then again with the load
+balancing `toolbox::loadbalancing::strategies::SpreadOut` (`spread-out`). The one-tree runs
+validate the numerics and the task graph compilers; the spread-out runs show that the domain
+decomposition does not introduce errors. Both have to pass with the same criteria. Never run
+spread-out only, and do not drop either unless the user asks for it. `--load-balancing`
+restricts or reorders the list. The comparison tells where to look: a configuration which
+passes with `none` but fails with `spread-out` for the same compiler points to the load
+balancing or to the domain boundaries (data exchange between trees, task dependencies).
+
+The scripts read the number of trees from the lines `N tree(s): ...` of each run's log, and
+fail a run with more than one tree for `none`, or which never splits for `spread-out`. The
+latter would test nothing. The load balancing never splits on a single thread, i.e. the coarse
+gauge wave runs get four threads with `spread-out`. `SpreadOut` does not limit the number of
+trees to the number of threads once the mesh is stable (see `SpreadOut.h`), so runs might
+use many more trees than threads. Report the trees (a column of the gauge wave table, printed
+per run by the other studies). `SpreadOutOnceGridStagnates`, which does limit them, is
+available as `--load-balancing none spread-out-once-grid-stagnates`, but it is not a
+replacement for the `spread-out` runs.
+
+## Task graph compilers
+
+All three scripts repeat their study with each of these compilers (see
+`src/peano4/api/taskgraph/compiler/Compilers.py`), and each compiler has to pass with the
+same criteria:
+
+- `fusion`, the default of the benchmarks;
+- `assembly-fusion`, the task graph assembly (`TaskGraphAssembly`), which spawns the touch
+  events as tasks and assembles the task graph while it traverses the mesh (ADR 0001 in
+  `src/peano4/api/taskgraph/compiler/adrs`);
+- `assembly-concatenation-fusion`, the same where task dependencies replace consumers, i.e.
+  the task graph spans several mesh traversals.
+
+Do not drop a compiler from the integration test unless the user asks for it. `--compilers`
+restricts or extends the list, e.g. `--compilers assembly-fusion`. The sequential assembly
+variants are not part of it, as the sequential compilers hang on benchmarks whose setup
+repeats a traversal until the grid is stationary (ADR 0001). Report one verdict per load balancing and compiler.
+If only the assembly compilers fail, the problem is in the assembly; if `fusion` fails, too,
+it is more likely in a part which all compilers share.
+
+Each combination has a subdirectory `<load balancing>/<compiler>` of its own in the work (and
+output) directory. The six combinations (two load balancings times three compilers) run one
+after another, i.e. expect about six times the runtimes given below, which refer to one
+combination (not measured yet). The expected values below stem from `fusion` (the gauge wave
+with one tree, the Euler studies with `SpreadOutOnceGridStagnates`); they have not been
+measured with the assembly compilers on all studies, nor with `SpreadOut`.
+
+A hanging run blocks its study, as the scripts have no timeout. Terminate the executable
+with `kill <pid>` (SIGTERM), so the study records a failure and continues. Do not use
+`kill -9`: the gauge wave study takes it for a run that ran out of memory.
 
 ## Gauge wave convergence study
 
 The gauge wave has a known exact solution. `benchmarks/exagrype/gauge-wave/convergence-study.py`
-builds and runs `gauge-wave.py` for every scheme, both CCZ4 formulations and every mesh. The
+builds and runs `gauge-wave.py` for every load balancing, compiler, scheme, both CCZ4 formulations and every mesh. The
 formulations are first-order (`fo`, `FOCCZ4Solver`) and first-order second-order (`so`,
 `FOSOSolver`); both have to pass, with the same minimum order per scheme. The study measures
 the maximum error of the lapse along the line y=z=0.5 at the end time against the exact
@@ -46,17 +99,17 @@ reference run are documented in the page on top of `gauge-wave.py`.
    Completed runs in the work directory are reused (`results.json`), so an interrupted study
    continues where it stopped, and runs that failed or were skipped for lack of memory are
    retried.
-   Delete the run's entry in `results.json` to force a rerun (a rerun starts from a clean
+   Delete the run's entry in `<work>/<load balancing>/<compiler>/results.json` to force a rerun (a rerun starts from a clean
    directory). Do not kill the study with `pkill -f` from the same shell that runs it.
 2. Watch the log (`build ...`, `run ...`, `skip ...`) with the Monitor tool instead of
    polling. All schemes run at the same time, each walking its meshes from coarse to
    fine. The coarse runs use one thread; at most two large runs go at once.
-3. The script prints the table and `PASSED` or `FAILED` plus the schemes whose order is too
-   low. On `FAILED`, look at the table first: a single scheme dropping in order points to that
+3. The script prints one table per combination, a verdict per combination (with the schemes whose
+   order is too low) and an overall `PASSED` or `FAILED`. On `FAILED`, look at the table first: a single scheme dropping in order points to that
    scheme's kernels or task graph; all schemes dropping points to the common parts (CCZ4
    solver, grid, plotting, time step size).
-4. Report the table and the verdict. If the user wants the documentation refreshed, copy
-   `<work>/out/convergence.png` to `benchmarks/exagrype/gauge-wave/example-output/` and update
+4. Report the tables and the verdicts. If the user wants the documentation refreshed, copy
+   `<work>/out/none/fusion/convergence.png` to `benchmarks/exagrype/gauge-wave/example-output/` and update
    the table in the page description on top of `gauge-wave.py`, then run the skill
    `peano:regen-docs`. Do not commit run directories or generated sources.
 
@@ -84,7 +137,7 @@ reference run are documented in the page on top of `gauge-wave.py`.
   piles up on Peano's stacks, i.e. an inconsistent access qualifier of a task's cell
   data (once found for a write-only first access to the Runge-Kutta estimates).
   Compare the peak memory of two runs with different end times.
-- Compile errors in the generated code usually show up in `<work>/<scheme>-<volumes>/generate.log`;
+- Compile errors in the generated code usually show up in `<work>/<load balancing>/<compiler>/<scheme>-<formulation>-<volumes>/generate.log`;
   the output of the simulation is in `run.log` of the same directory.
 
 ## Performance
@@ -107,7 +160,7 @@ python3 benchmarks/exahype2/euler/smooth-convergence-test/convergence-study.py \
     --work-directory <work2>
 ```
 
-Finished runs in the work directory are reused; delete `<work2>/<scheme>/run-<size>` to rerun one.
+Finished runs in the work directory are reused; delete `<work2>/<load balancing>/<compiler>/<scheme>/run-<size>` to rerun one.
 The study also fails a scheme if the last snapshot of any run is older than the end time:
 a run whose time step size collapses terminates with exit code zero, and its remaining initial
 snapshot yields a meaningless, huge order. As of 2026-11-28, rk1fd4 fails for this reason on 243
@@ -138,13 +191,13 @@ switched on (`--amr-levels 1`). It checks that (a) the dynamic AMR works, i.e. t
 and (b) the quality does not suffer, i.e. the density and the energy of the last snapshot differ
 from the regular-grid run by at most 2% of their ranges. It prints the table of coarsened and
 refined volumes over time, and `PASSED` or `FAILED`; it exits non-zero on `FAILED`. It needs the
-same prerequisites as above and about ten minutes per scheme (`--schemes rk4fd4` restricts it):
+same prerequisites as above and about ten minutes per combination of load balancing and compiler:
 
 ```sh
 python3 benchmarks/exahype2/euler/point-source/amr-study.py --work-directory <work3>
 ```
 
-Finished runs in the work directory are reused; delete `<work3>/levels-<l>` to rerun one.
+Finished runs in the work directory are reused; delete `<work3>/<load balancing>/<compiler>/levels-<l>` to rerun one.
 Expected (documented in the page on top of `point-source.py`): the mesh drops from 6561 to 1937
 cells in the first time steps, grows to 2801 cells at the end (43% of the regular grid), 374 544
 volumes are coarsened and 69 984 refined, the maximum differences are 1.4e-3 (density) and

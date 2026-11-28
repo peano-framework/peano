@@ -4,9 +4,9 @@
 
 Convergence study of the gauge wave benchmark
 
-The script builds and runs gauge-wave.py for several numerical schemes, both
-CCZ4 formulations (first-order, fo, and first-order second-order, so) and
-mesh sizes, measures the maximum error of the lapse along the line y=z=0.5
+The script builds and runs gauge-wave.py for several task graph compilers,
+numerical schemes, both CCZ4 formulations (first-order, fo, and first-order
+second-order, so) and mesh sizes, measures the maximum error of the lapse along the line y=z=0.5
 at the end of the simulation against the exact solution, estimates the
 convergence orders, and writes
 
@@ -14,17 +14,43 @@ convergence orders, and writes
 - convergence.md (table with errors, orders, runtimes and memory footprint),
 - results.json (everything in machine-readable form, in the work directory)
 
-into the output directory. The study is the integration test for the
+into a subdirectory <load balancing>/<task graph compiler> of the output directory
+(results.json goes into the same subdirectory of the work directory). The study is the integration test for the
 correctness of the numerical schemes behind the benchmark: The script exits
 with a non-zero status if the estimated convergence order of a scheme falls
-below the one in ExpectedOrders, or if any build or run fails. A failure does
-not stop the other runs. Runtimes and memory footprints are recorded,
+below the one in ExpectedOrders, or if any build or run fails, for any of the
+compilers and load balancings. A failure does not stop the other runs. Runtimes and memory footprints are recorded,
 but are not an acceptance criterion.
 
      python3 convergence-study.py --work-directory /scratch/gauge-wave
 
 Runs which have completed before in the work directory are reused. Remove
 the run's directory (or results.json) to rerun it.
+
+
+## Load balancing
+
+The study first runs everything with a single tree (none), and then again with
+the load balancing toolbox::loadbalancing::strategies::SpreadOut (spread-out),
+so that errors which the domain decomposition introduces show up as such. A run
+whose log does not report the expected trees fails: more than one tree without
+load balancing, or a single tree only with it. The coarse runs, which otherwise
+use one thread, get MinimumThreadsWithLoadBalancing threads with load balancing,
+as the load balancing does not split on one thread. --load-balancing restricts
+or extends the configurations. All results of a configuration live in
+<directory>/<load balancing>/<compiler>.
+
+
+## Task graph compilers
+
+For each load balancing, the study repeats all runs with each compiler in Compilers: the
+default one (fusion) and the task graph assembly
+(@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
+graph while it traverses the mesh, without and with concatenation. All of them
+have to reach the same orders. The compilers are studied one after another.
+--compilers restricts or extends the list. The sequential assembly variants are
+not part of it, as the sequential compilers can hang (ADR 0001 of the task graph
+compilers).
 
 
 ## Scheduling
@@ -59,6 +85,7 @@ import itertools
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -92,8 +119,19 @@ def patch_size_of(volumes_per_axis):
 
 Schemes = ["fv", "rk1fd4", "rk2fd4", "rk3fd4", "rk4fd4"]
 
+## Task graph compilers the study checks, see gauge-wave.py
+Compilers = ["fusion", "assembly-fusion", "assembly-concatenation-fusion"]
+
 ## CCZ4 formulations, see gauge-wave.py
 Formulations = ["fo", "so"]
+
+## Load balancing configurations, in the order in which they are studied: first
+## a single tree, then several trees, so errors which stem from the load balancing
+## show up as such
+LoadBalancings = ["none", "spread-out"]
+
+## Minimum threads of a run with load balancing, as there is no split on one thread
+MinimumThreadsWithLoadBalancing = 4
 
 ## Number of volumes per axis. The meshes are regular and refined by factors
 ## of three, and the patch size is 9.
@@ -119,6 +157,11 @@ ExpectedOrders = {
 ## Runs on fine meshes are memory hungry, too. Only a few of them run at once;
 ## main() sets the number.
 LargeRunSlots = threading.Semaphore(2)
+
+## redirect_stdout() affects the whole process, i.e. only one worker may use it at
+## a time. Otherwise, stdout can stay redirected, and the tables and the verdict
+## of the study get lost.
+StdoutRedirectLock = threading.Lock()
 
 ## Compiling is memory hungry, i.e. only a few builds run at the same time
 BuildSlots = threading.Semaphore(3)
@@ -153,11 +196,54 @@ def available_memory_in_kilobytes():
     return sys.maxsize
 
 
-## Task graph compiler of gauge-wave.py; None keeps the script's default
-Compiler = None
+def number_of_trees(log_file):
+    """!
+    Maximum number of trees which a run reports
+
+    The load balancing statistics write lines such as "8 tree(s): ..." into the
+    log. Without load balancing, there are no such lines and there is one tree.
+
+    @param log_file: str
+      Log of the run.
+    @return int
+      Maximum number of trees.
+    """
+    with open(log_file, errors="ignore") as log:
+        return max(
+            (int(n) for line in log for n in re.findall(r"(\d+) tree\(s\):", line)),
+            default=1,
+        )
 
 
-def build_and_run(scheme, formulation, volumes_per_axis, threads, work_directory):
+def tree_failure(load_balancing, trees):
+    """!
+    Check that a run has used the trees which its load balancing stands for
+
+    A run with load balancing which never splits the domain tests nothing.
+
+    @param load_balancing: str
+      Name of the load balancing, "none" stands for a single tree.
+    @param trees: int
+      Number of trees of the run, see number_of_trees().
+    @return str
+      The failure, or None.
+    """
+    if load_balancing == "none" and trees != 1:
+        return f"{trees} trees although there is no load balancing"
+    if load_balancing != "none" and trees < 2:
+        return "the load balancing never split the domain"
+    return None
+
+
+def build_and_run(
+    load_balancing,
+    compiler,
+    scheme,
+    formulation,
+    volumes_per_axis,
+    threads,
+    work_directory,
+):
     """!
 
     Generate, compile and run gauge-wave.py
@@ -179,7 +265,10 @@ def build_and_run(scheme, formulation, volumes_per_axis, threads, work_directory
     # files behind which clash with the new ones.
     shutil.rmtree(directory, ignore_errors=True)
     os.makedirs(directory)
-    print(f"build {name} ({threads} threads)", flush=True)
+    print(
+        f"build {name} with {compiler}, load balancing {load_balancing} ({threads} threads)",
+        flush=True,
+    )
     environment = dict(os.environ)
     environment["PYTHONPATH"] = (
         os.path.join(PeanoRoot, "src") + os.pathsep + environment.get("PYTHONPATH", "")
@@ -206,8 +295,11 @@ def build_and_run(scheme, formulation, volumes_per_axis, threads, work_directory
                 "--threads",
                 str(threads),
                 "--plot-along-x-axis",
-            ]
-            + (["--compiler", Compiler] if Compiler else []),
+                "--compiler",
+                compiler,
+                "--load-balancing",
+                load_balancing,
+            ],
             cwd=directory,
             env=environment,
             stdout=open(os.path.join(directory, "generate.log"), "w"),
@@ -242,12 +334,26 @@ def build_and_run(scheme, formulation, volumes_per_axis, threads, work_directory
     if process.returncode != 0:
         print(f"run of {name} failed", flush=True)
         return {**run_key, "failed": f"run failed, see {directory}/run.log"}
+    trees = number_of_trees(os.path.join(directory, "run.log"))
+    failure = tree_failure(load_balancing, trees)
+    if failure:
+        print(f"run of {name} failed: {failure}", flush=True)
+        return {**run_key, "failed": f"{failure}, see {directory}/run.log"}
     with open(time_file) as f:
         runtime, memory = f.read().split()[-2:]
-    t, error = measure_error(directory, volumes_per_axis)
+    # A run which terminates without a usable snapshot must not stop the study
+    try:
+        t, error = measure_error(directory, volumes_per_axis)
+    except Exception as exception:
+        print(f"evaluation of {name} failed", flush=True)
+        return {
+            **run_key,
+            "failed": f"evaluation failed ({exception!r}), see {directory}/run.log",
+        }
     return {
         **run_key,
         "threads": threads,
+        "trees": trees,
         "runtime": float(runtime),
         "memory": int(memory),
         "time": t,
@@ -270,7 +376,7 @@ def measure_error(directory, volumes_per_axis):
     meta_file = os.path.join(os.path.abspath(directory), PatchFile)
     last_snapshot = tarch.plotter.api.merge.count_total_snapshot_number(meta_file) - 1
     # The script writes the merged files next to the meta file
-    with contextlib.redirect_stdout(io.StringIO()):
+    with StdoutRedirectLock, contextlib.redirect_stdout(io.StringIO()):
         tarch.plotter.api.merge.read_meta_file(meta_file, last_snapshot, last_snapshot)
     merged_meta_file = os.path.join(
         os.path.dirname(meta_file), "merged_meta_file.peano-patch-file"
@@ -286,7 +392,7 @@ def measure_error(directory, volumes_per_axis):
             start=0,
             end=0,
         )
-        with contextlib.redirect_stdout(io.StringIO()):
+        with StdoutRedirectLock, contextlib.redirect_stdout(io.StringIO()):
             point_probe.display()
         with open(output_file) as f:
             header = f.readline().strip().split(",")
@@ -361,7 +467,7 @@ def watch_memory(process, name):
     return None
 
 
-def plot(results, schemes, formulations, meshes, output_file):
+def plot(results, schemes, formulations, meshes, configuration, output_file):
     """!
 
     Max error over the volume size
@@ -404,6 +510,10 @@ def plot(results, schemes, formulations, meshes, output_file):
                 )
                 volumes.update(r["volumes"] for r in points)
                 errors.extend(r["error"] for r in points)
+    if not volumes:
+        # All runs have failed, i.e. there is nothing to plot
+        plt.close(figure)
+        return
     volumes = sorted(volumes)
     h = np.array([1.0 / volumes[0], 1.0 / volumes[-1]])
     for order in [1, 2, 3, 4]:
@@ -415,7 +525,7 @@ def plot(results, schemes, formulations, meshes, output_file):
     axes.minorticks_off()
     axes.set_xlabel("volume size h")
     axes.set_ylabel(f"max error of the lapse at t={EndTime}")
-    axes.set_title("Gauge wave convergence")
+    axes.set_title(f"Gauge wave convergence ({configuration})")
     axes.grid(True, which="major", alpha=0.3)
     axes.legend()
     figure.tight_layout()
@@ -425,8 +535,8 @@ def plot(results, schemes, formulations, meshes, output_file):
 
 def table(results, schemes, formulations, meshes):
     lines = [
-        "| scheme | formulation | volumes per axis | max error of lapse | order | runtime [s] | threads | memory [MB] |",
-        "|---|---|---|---|---|---|---|---|",
+        "| scheme | formulation | volumes per axis | max error of lapse | order | runtime [s] | threads | trees | memory [MB] |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for scheme, formulation in itertools.product(schemes, formulations):
         previous = None
@@ -441,12 +551,12 @@ def table(results, schemes, formulations, meshes):
                     if "failed" in r
                     else f"skipped: {r['skipped']}"
                 )
-                lines.append(f"{prefix} {reason} | | | | |")
+                lines.append(f"{prefix} {reason} | | | | | |")
                 previous = None
                 continue
             order = "" if previous is None else f"{estimated_order(previous, r):.2f}"
             lines.append(
-                f"{prefix} {r['error']:.3e} | {order} | {r['runtime']:.0f} | {r['threads']} | {r['memory'] / 1024:.0f} |"
+                f"{prefix} {r['error']:.3e} | {order} | {r['runtime']:.0f} | {r['threads']} | {r['trees']} | {r['memory'] / 1024:.0f} |"
             )
             previous = r
     return "\n".join(lines) + "\n"
@@ -485,51 +595,33 @@ def check_orders(results, schemes, formulations, meshes):
     return failures
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Convergence study of the gauge wave benchmark"
-    )
-    parser.add_argument(
-        "--work-directory",
-        required=True,
-        help="Directory for builds, outputs and results.json",
-    )
-    parser.add_argument(
-        "--output-directory",
-        default=os.path.join(Here, "example-output"),
-        help="Directory for convergence.png and convergence.md",
-    )
-    parser.add_argument("--schemes", nargs="+", default=Schemes, choices=Schemes)
-    parser.add_argument(
-        "--formulations",
-        nargs="+",
-        default=Formulations,
-        choices=Formulations,
-        help="CCZ4 formulations (default: both)",
-    )
-    parser.add_argument(
-        "--meshes",
-        nargs="+",
-        type=int,
-        default=Meshes,
-        help="Volumes per axis (9, 27, 81, 243, ...)",
-    )
-    parser.add_argument("--cores", type=int, default=os.cpu_count())
-    parser.add_argument(
-        "--compiler",
-        default=None,
-        help="Task graph compiler, see gauge-wave.py (default: the script's default)",
-    )
-    parser.add_argument(
-        "--concurrent-large-runs",
-        type=int,
-        default=2,
-        help="Maximum number of runs on meshes with more than 27 cells that run at the same time",
-    )
-    args = parser.parse_args()
-    Compiler = args.compiler
+def study(load_balancing, compiler, args, work_directory, output_directory):
+    """!
 
-    work_directory = os.path.abspath(args.work_directory)
+    Run the convergence study with one load balancing and one task graph compiler
+
+    @param load_balancing: str
+      Name of the load balancing, see gauge-wave.py.
+
+    @param compiler: str
+      Name of the task graph compiler, see gauge-wave.py.
+
+    @param args: argparse.Namespace
+      Command line arguments of the study.
+
+    @param work_directory: str
+      Directory of the configuration's runs and its results.json.
+
+    @param output_directory: str
+      Directory for the configuration's plot and table.
+
+    @return [str]
+      The failures, see check_orders().
+
+    """
+    print(
+        f"load balancing {load_balancing}, task graph compiler {compiler}", flush=True
+    )
     os.makedirs(work_directory, exist_ok=True)
     results_file = os.path.join(work_directory, "results.json")
     results = {}
@@ -565,14 +657,18 @@ if __name__ == "__main__":
                     if mesh_cells(v) <= StagnationCells
                     else max(1, math.ceil(args.cores / share))
                 )
-                if mesh_cells(v) > StagnationCells:
-                    with LargeRunSlots:
-                        results[name] = build_and_run(
-                            scheme, formulation, v, threads, work_directory
-                        )
-                else:
+                if load_balancing != "none":
+                    threads = max(threads, MinimumThreadsWithLoadBalancing)
+                large_run = mesh_cells(v) > StagnationCells
+                with LargeRunSlots if large_run else contextlib.nullcontext():
                     results[name] = build_and_run(
-                        scheme, formulation, v, threads, work_directory
+                        load_balancing,
+                        compiler,
+                        scheme,
+                        formulation,
+                        v,
+                        threads,
+                        work_directory,
                     )
                 store()
         finally:
@@ -580,26 +676,97 @@ if __name__ == "__main__":
                 Workers.alive -= 1
 
     Workers.alive = len(args.schemes)
-    LargeRunSlots = threading.Semaphore(args.concurrent_large_runs)
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(args.schemes)) as pool:
         for future in [pool.submit(run_scheme, scheme) for scheme in args.schemes]:
             future.result()
 
-    os.makedirs(args.output_directory, exist_ok=True)
+    os.makedirs(output_directory, exist_ok=True)
     plot(
         results,
         args.schemes,
         args.formulations,
         meshes,
-        os.path.join(args.output_directory, "convergence.png"),
+        f"{compiler}, load balancing {load_balancing}",
+        os.path.join(output_directory, "convergence.png"),
     )
     markdown = table(results, args.schemes, args.formulations, meshes)
-    with open(os.path.join(args.output_directory, "convergence.md"), "w") as f:
+    with open(os.path.join(output_directory, "convergence.md"), "w") as f:
         f.write(markdown)
     print(markdown)
 
-    failures = check_orders(results, args.schemes, args.formulations, meshes)
-    if failures:
-        print("FAILED:\n  " + "\n  ".join(failures))
+    return check_orders(results, args.schemes, args.formulations, meshes)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Convergence study of the gauge wave benchmark"
+    )
+    parser.add_argument(
+        "--work-directory",
+        required=True,
+        help="Directory for builds, outputs and results.json",
+    )
+    parser.add_argument(
+        "--output-directory",
+        default=os.path.join(Here, "example-output"),
+        help="Directory for convergence.png and convergence.md",
+    )
+    parser.add_argument("--schemes", nargs="+", default=Schemes, choices=Schemes)
+    parser.add_argument(
+        "--formulations",
+        nargs="+",
+        default=Formulations,
+        choices=Formulations,
+        help="CCZ4 formulations (default: both)",
+    )
+    parser.add_argument(
+        "--meshes",
+        nargs="+",
+        type=int,
+        default=Meshes,
+        help="Volumes per axis (9, 27, 81, 243, ...)",
+    )
+    parser.add_argument("--cores", type=int, default=os.cpu_count())
+    parser.add_argument(
+        "--load-balancing",
+        nargs="+",
+        default=LoadBalancings,
+        help=f"Load balancings in the order they are studied, see gauge-wave.py (default: {' '.join(LoadBalancings)})",
+    )
+    parser.add_argument(
+        "--compilers",
+        nargs="+",
+        default=Compilers,
+        help=f"Task graph compilers, see gauge-wave.py (default: {' '.join(Compilers)})",
+    )
+    parser.add_argument(
+        "--concurrent-large-runs",
+        type=int,
+        default=2,
+        help="Maximum number of runs on meshes with more than 27 cells that run at the same time",
+    )
+    args = parser.parse_args()
+    LargeRunSlots = threading.Semaphore(args.concurrent_large_runs)
+
+    failures = {
+        f"{load_balancing}/{compiler}": study(
+            load_balancing,
+            compiler,
+            args,
+            os.path.join(
+                os.path.abspath(args.work_directory), load_balancing, compiler
+            ),
+            os.path.join(args.output_directory, load_balancing, compiler),
+        )
+        for load_balancing in args.load_balancing
+        for compiler in args.compilers
+    }
+    for configuration, configuration_failures in failures.items():
+        if configuration_failures:
+            print(f"{configuration}: FAILED\n  " + "\n  ".join(configuration_failures))
+        else:
+            print(f"{configuration}: PASSED")
+    if any(failures.values()):
+        print("FAILED")
         sys.exit(1)
     print("PASSED")

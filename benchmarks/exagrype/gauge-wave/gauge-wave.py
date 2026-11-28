@@ -56,7 +56,8 @@ mesh cells with patches of 9x9x9 grid cells. The mesh is regular and refined by 
 three, i.e. h is rounded to patch size over 3^k (the patch size can be set via
 `--patch-size`, but the root cell is refined at least once). `--compiler` switches
 between the task graph compilers (sequential, fusion which is the default, and the
-producer-consumer variants of both), `--end-time`, `--threads` and `--directory` do what
+producer-consumer variants of both), `--load-balancing` splits the domain into several
+trees (default: none, i.e. one tree), and `--end-time`, `--threads` and `--directory` do what
 they say.
 
 The script generates the C++ code, the Makefile, and compiles the executable. Run the
@@ -80,7 +81,9 @@ estimates the convergence order p ~ log(e(3h)/e(h))/log(3), and exits with a non
 status if the order between the two finest meshes of a scheme falls below a threshold. It
 is run via the skill `exahype2:integration-test` (see
 documentation/exahype2/integration-test/SKILL.md). Whenever you change a numerical scheme, the
-task graph, the kernels or the code generation, this is the test to rerun.
+task graph, the kernels or the code generation, this is the test to rerun. It runs all
+setups with a single tree first and then with the load balancing SpreadOut, each with the
+task graph compilers fusion, assembly-fusion and assembly-concatenation-fusion.
 
 The study runs both formulations (--formulation fo and so). The picture, the table and the
 discussion below stem from the first-order formulation. We have no reference results for the
@@ -206,6 +209,14 @@ parser.add_argument(
     "first derivatives instead of evolving them.",
 )
 parser.add_argument(
+    "--load-balancing",
+    choices=["none", "spread-out", "spread-out-once-grid-stagnates"],
+    default="none",
+    help="Load balancing: none, i.e. a single tree, or "
+    "toolbox::loadbalancing::strategies::SpreadOut or SpreadOutOnceGridStagnates "
+    "(default: none)",
+)
+parser.add_argument(
     "--compiler",
     choices=list(peano4.api.taskgraph.compiler.Compilers.COMPILERS),
     default="fusion",
@@ -324,6 +335,17 @@ project.set_global_simulation_parameters(
     max_end_time=end_time,
     periodic_BC=[True, True, True],
 )
+
+LOAD_BALANCING_STRATEGIES = {
+    "spread-out": "toolbox::loadbalancing::strategies::SpreadOut",
+    "spread-out-once-grid-stagnates": "toolbox::loadbalancing::strategies::SpreadOutOnceGridStagnates",
+}
+# Without a load balancing, the domain is never split, i.e. there is one tree
+if args.load_balancing != "none":
+    project.set_load_balancing(
+        LOAD_BALANCING_STRATEGIES[args.load_balancing],
+        "new ::exahype2::LoadBalancingConfiguration()",
+    )
 
 if args.threads is not None:
     project.set_number_of_threads(args.threads)

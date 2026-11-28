@@ -17,8 +17,22 @@ Generates, builds and runs the point source benchmark
 Prints a table of the mesh over time, the differences and PASSED or FAILED, and exits
 non-zero on FAILED. Finished runs in the work directory are reused.
 
+The check is repeated for each task graph compiler in COMPILERS: the default one
+(fusion) and the task graph assembly
+(@ref peano4.api.taskgraph.compiler.TaskGraphAssembly), which assembles the task
+graph while it traverses the mesh, without and with concatenation. Each compiler
+is compared against its own run on the regular grid; its runs live in
+<work directory>/<load balancing>/<compiler>. A failure does not stop the others.
+
+All of this is done first with a single tree (none), and then again with the load
+balancing toolbox::loadbalancing::strategies::SpreadOut (spread-out), so that
+errors which the domain decomposition introduces show up as such. A run whose log
+does not report the expected trees fails: more than one tree without load
+balancing, or a single tree only with it.
+
 """
 import argparse
+import itertools
 import math
 import os
 import re
@@ -33,6 +47,12 @@ from tarch.plotter.api.notebook import read_snapshots
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOLVER_NAME = "EulerPointSource"
 VOLUMES_PER_PATCH_AXIS = 9
+## Load balancing configurations, in the order in which they are studied: first
+## a single tree, then several trees, so errors which stem from the load balancing
+## show up as such
+LOAD_BALANCINGS = ["none", "spread-out"]
+## Task graph compilers the check covers, see point-source.py
+COMPILERS = ["fusion", "assembly-fusion", "assembly-concatenation-fusion"]
 
 
 def run(work_directory: str, levels: int, arguments):
@@ -83,6 +103,45 @@ def run(work_directory: str, levels: int, arguments):
         os.path.join(directory, "run.log.tmp"), os.path.join(directory, "run.log")
     )
     return directory
+
+
+def number_of_trees(log_file):
+    """!
+    Maximum number of trees which a run reports
+
+    The load balancing statistics write lines such as "8 tree(s): ..." into the
+    log. Without load balancing, there are no such lines and there is one tree.
+
+    @param log_file: str
+      Log of the run.
+    @return int
+      Maximum number of trees.
+    """
+    with open(log_file, errors="ignore") as log:
+        return max(
+            (int(n) for line in log for n in re.findall(r"(\d+) tree\(s\):", line)),
+            default=1,
+        )
+
+
+def tree_failure(load_balancing, trees):
+    """!
+    Check that a run has used the trees which its load balancing stands for
+
+    A run with load balancing which never splits the domain tests nothing.
+
+    @param load_balancing: str
+      Name of the load balancing, "none" stands for a single tree.
+    @param trees: int
+      Number of trees of the run, see number_of_trees().
+    @return str
+      The failure, or None.
+    """
+    if load_balancing == "none" and trees != 1:
+        return f"{trees} trees although there is no load balancing"
+    if load_balancing != "none" and trees < 2:
+        return "the load balancing never split the domain"
+    return None
 
 
 def mesh_over_time(run_directory: str):
@@ -142,6 +201,94 @@ def final_solution(run_directory: str, volumes_per_axis: int):
     return time_stamp, result, cells
 
 
+def check(load_balancing: str, compiler: str, args):
+    """!
+    Run and check the benchmark with one load balancing and one task graph compiler
+
+    @param load_balancing: str
+      Name of the load balancing, see point-source.py.
+    @param compiler: str
+      Name of the task graph compiler, see point-source.py.
+    @param args: argparse.Namespace
+      Command line arguments of the check.
+    @return [str]
+      The failures. Empty if the check has passed.
+    """
+    work_directory = os.path.join(args.work_directory, load_balancing, compiler)
+    volumes_per_axis = args.patch_count * VOLUMES_PER_PATCH_AXIS
+    extra = [
+        "--volume-size",
+        str(1.001 / volumes_per_axis),
+        "--end-time",
+        str(args.end_time),
+        "--plots",
+        "5",
+        "--compiler",
+        compiler,
+        "--load-balancing",
+        load_balancing,
+    ]
+    os.makedirs(work_directory, exist_ok=True)
+    regular = run(work_directory, 0, extra)
+    adaptive = run(work_directory, args.amr_levels, extra)
+
+    start_cells = args.patch_count**2
+    timeline = mesh_over_time(adaptive)
+    print(
+        f"Mesh of the run with {args.amr_levels} AMR level(s) (regular start grid: {start_cells} cells)"
+    )
+    print("| time stamp | cells | volumes | coarsened volumes | refined volumes |")
+    print("|------------|-------|---------|-------------------|-----------------|")
+    previous = start_cells
+    coarsened = refined = 0
+    for time_stamp, cells in timeline:
+        delta = (cells - previous) * VOLUMES_PER_PATCH_AXIS**2
+        coarsened += max(-delta, 0)
+        refined += max(delta, 0)
+        if delta != 0:
+            print(
+                f"| {time_stamp:10.4f} | {cells:5d} | {cells * VOLUMES_PER_PATCH_AXIS**2:7d} | {max(-delta, 0):17d} | {max(delta, 0):15d} |"
+            )
+        previous = cells
+    print(f"total coarsened {coarsened} volumes, refined {refined} volumes")
+
+    _, reference, reference_cells = final_solution(regular, volumes_per_axis)
+    time_stamp, solution, cells = final_solution(adaptive, volumes_per_axis)
+    failures = []
+    for run_directory in [regular, adaptive]:
+        trees = number_of_trees(os.path.join(run_directory, "run.log"))
+        print(f"{run_directory}: {trees} tree(s)")
+        failure = tree_failure(load_balancing, trees)
+        if failure:
+            failures.append(f"{run_directory}: {failure}")
+    if reference_cells != start_cells:
+        failures.append(
+            f"the run without AMR holds {reference_cells} instead of {start_cells} cells"
+        )
+    if not cells < start_cells:
+        failures.append(
+            f"the mesh has not coarsened ({cells} cells at the end, {start_cells} at the start)"
+        )
+    if coarsened == 0:
+        failures.append("the mesh never coarsened")
+    print(
+        f"final snapshot t={time_stamp:.4f}: {cells} cells ({100.0 * cells / start_cells:.0f}% of the regular grid)"
+    )
+    for name, unknown in [("density", 0), ("energy", 3)]:
+        difference = np.abs(solution[unknown] - reference[unknown])
+        value_range = np.nanmax(reference[unknown]) - np.nanmin(reference[unknown])
+        maximum = np.nanmax(difference)
+        rms = math.sqrt(np.nanmean(difference**2))
+        print(
+            f"{name}: range {value_range:.3f}, max difference {maximum:.3e}, rms difference {rms:.3e}"
+        )
+        if not np.isfinite(maximum) or maximum > args.tolerance * value_range:
+            failures.append(
+                f"{name} differs by {maximum:.3e}, which is more than {args.tolerance} of its range {value_range:.3f}"
+            )
+    return failures
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.strip().split("\n")[0])
     parser.add_argument(
@@ -169,77 +316,40 @@ if __name__ == "__main__":
         help="Allowed maximum difference relative to the range (default: 0.02)",
     )
     parser.add_argument(
-        "--compiler",
-        default=None,
-        help="Task graph compiler, see point-source.py (default: the script's default)",
+        "--load-balancing",
+        nargs="+",
+        default=LOAD_BALANCINGS,
+        help=f"Load balancings in the order they are checked, see point-source.py (default: {' '.join(LOAD_BALANCINGS)})",
+    )
+    parser.add_argument(
+        "--compilers",
+        nargs="+",
+        default=COMPILERS,
+        help=f"Task graph compilers, see point-source.py (default: {' '.join(COMPILERS)})",
     )
     args = parser.parse_args()
 
-    volumes_per_axis = args.patch_count * VOLUMES_PER_PATCH_AXIS
-    extra = [
-        "--volume-size",
-        str(1.001 / volumes_per_axis),
-        "--end-time",
-        str(args.end_time),
-        "--plots",
-        "5",
-    ] + (["--compiler", args.compiler] if args.compiler else [])
-    os.makedirs(args.work_directory, exist_ok=True)
-    regular = run(args.work_directory, 0, extra)
-    adaptive = run(args.work_directory, args.amr_levels, extra)
-
-    start_cells = args.patch_count**2
-    timeline = mesh_over_time(adaptive)
-    print(
-        f"Mesh of the run with {args.amr_levels} AMR level(s) (regular start grid: {start_cells} cells)"
-    )
-    print("| time stamp | cells | volumes | coarsened volumes | refined volumes |")
-    print("|------------|-------|---------|-------------------|-----------------|")
-    previous = start_cells
-    last_printed = None
-    coarsened = refined = 0
-    for time_stamp, cells in timeline:
-        delta = (cells - previous) * VOLUMES_PER_PATCH_AXIS**2
-        coarsened += max(-delta, 0)
-        refined += max(delta, 0)
-        if delta != 0:
-            print(
-                f"| {time_stamp:10.4f} | {cells:5d} | {cells * VOLUMES_PER_PATCH_AXIS**2:7d} | {max(-delta, 0):17d} | {max(delta, 0):15d} |"
-            )
-        previous = cells
-    print(f"total coarsened {coarsened} volumes, refined {refined} volumes")
-
-    _, reference, reference_cells = final_solution(regular, volumes_per_axis)
-    time_stamp, solution, cells = final_solution(adaptive, volumes_per_axis)
-    failures = []
-    if reference_cells != start_cells:
-        failures.append(
-            f"the run without AMR holds {reference_cells} instead of {start_cells} cells"
-        )
-    if not cells < start_cells:
-        failures.append(
-            f"the mesh has not coarsened ({cells} cells at the end, {start_cells} at the start)"
-        )
-    if coarsened == 0:
-        failures.append("the mesh never coarsened")
-    print(
-        f"final snapshot t={time_stamp:.4f}: {cells} cells ({100.0 * cells / start_cells:.0f}% of the regular grid)"
-    )
-    for name, unknown in [("density", 0), ("energy", 3)]:
-        difference = np.abs(solution[unknown] - reference[unknown])
-        value_range = np.nanmax(reference[unknown]) - np.nanmin(reference[unknown])
-        maximum = np.nanmax(difference)
-        rms = math.sqrt(np.nanmean(difference**2))
+    failed = []
+    for load_balancing, compiler in itertools.product(
+        args.load_balancing, args.compilers
+    ):
+        configuration = f"{load_balancing}/{compiler}"
         print(
-            f"{name}: range {value_range:.3f}, max difference {maximum:.3e}, rms difference {rms:.3e}"
+            f"load balancing {load_balancing}, task graph compiler {compiler}",
+            flush=True,
         )
-        if not np.isfinite(maximum) or maximum > args.tolerance * value_range:
-            failures.append(
-                f"{name} differs by {maximum:.3e}, which is more than {args.tolerance} of its range {value_range:.3f}"
-            )
-    if failures:
-        print("FAILED")
-        for failure in failures:
-            print(" -", failure)
+        try:
+            failures = check(load_balancing, compiler, args)
+        except Exception as exception:
+            failures = [f"build, run or evaluation failed: {exception!r}"]
+        if failures:
+            failed.append(configuration)
+            print(f"{configuration}: FAILED")
+            for failure in failures:
+                print(" -", failure)
+        else:
+            print(f"{configuration}: PASSED")
+    if failed:
+        print(f"FAILED: {', '.join(failed)}")
         sys.exit(1)
     print("PASSED")
