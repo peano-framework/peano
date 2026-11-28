@@ -63,12 +63,12 @@ class _RungeKuttaFD4(InnerCouplingGenerator):
 
 
 class RungeKuttaFD4InnerMultiplicative(_RungeKuttaFD4):
-    """! Runge-Kutta; in each stage, the scalar field's stage follows the one of CCZ4 """
+    """! Runge-Kutta; in each stage, the scalar field's stage follows the one of CCZ4"""
 
     MULTIPLICATIVE = True
 
 
 class RungeKuttaFD4InnerAdditive(_RungeKuttaFD4):
-    """! Runge-Kutta; in each stage, the stages of CCZ4 and the scalar field run in parallel """
+    """! Runge-Kutta; in each stage, the stages of CCZ4 and the scalar field run in parallel"""
 
     MULTIPLICATIVE = False

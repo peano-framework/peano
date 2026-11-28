@@ -24,6 +24,15 @@ class _FakeActionSet:
     def get_action_set_name(self):
         return self.name
 
+    def get_implementation_of_operation(self, operation_name):
+        return ""
+
+    def get_implementation_of_prepareTraversal(self):
+        return ""
+
+    def get_implementation_of_unprepareTraversal(self):
+        return ""
+
 
 class _FakeSubmodel:
     def __init__(self, name):

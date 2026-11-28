@@ -254,7 +254,7 @@ def test_solvers_build_separate_graphs_which_the_host_concatenates(tmp_path):
         for index, (name, _) in enumerate(recon_tasks)
     )
     # Concatenation: the project holds the tasks of both, wrapped into the global tasks
-    assert len(project_graphs[1].tasks) == len(ccz4_tasks) + len(recon_tasks) + 2
+    assert len(project_graphs[1].tasks) == len(ccz4_tasks) + len(recon_tasks) + 3
     # Both are intermediate steps: The host adds the global tasks afterwards
     assert ccz4_kwargs == {"add_global_tasks": False}
     assert recon_kwargs == {"add_global_tasks": False}
@@ -282,12 +282,14 @@ def test_host_reports_the_concatenated_graph(tmp_path, monkeypatch):
     assert not any("Reconstruct derivatives" in name for name in own_ccz4)
     assert len(own_reconstruction) == 4 * 4
     # The host adds the global tasks after it has concatenated the graphs
+    scheme = exahype2.api.Solver.NumericalScheme
     assert sorted(host) == sorted(
         own_ccz4
         + own_reconstruction
         + [
-            "SO_Disable load balancing",
-            "SO_Dynamic mesh refinement and load balancing",
+            f"SO_{scheme.DISABLE_LOAD_BALANCING_TASK_NAME}",
+            f"SO_{scheme.DYNAMIC_MESH_REFINEMENT_TASK_NAME}",
+            f"SO_{scheme.ENABLE_LOAD_BALANCING_TASK_NAME}",
         ]
     )
     assert not any("Disable load balancing" in name for name in own_ccz4)

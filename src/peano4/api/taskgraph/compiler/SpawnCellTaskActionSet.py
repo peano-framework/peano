@@ -6,20 +6,34 @@ from peano4.api.solversteps.ActionSet import ActionSet
 class SpawnCellTaskActionSet(ActionSet):
     """!
 
-    Producer-side wrapper around an action set, which spawns touchCellFirstTime() as a task
+    Producer-side wrapper around an action set, which spawns touchCellFirstTime() and touchCellLastTime() as tasks
 
     The wrapper delegates all events to the wrapped action set with the
     following exceptions:
 
-    - touchCellFirstTime() evaluates the wrapped action set's guard. If the
-      guard holds, the wrapper takes a new task number from the task
-      enumerator, stores it in the cell's task label and spawns the wrapped
-      action set's body as a task with this number. If the guard does not
-      hold, the task label is set to
-      tarch::multicore::TaskEnumerator::NoNumber.
-    - createCell() furthermore initialises the task label with NoNumber.
+    - touchCellFirstTime() empties the cell's array of children tasks. It
+      then takes two task numbers from the task enumerator: one for the task
+      of touchCellFirstTime(), one for the task of touchCellLastTime(), and
+      stores them in the cell's task labels. It writes the second number into
+      the entry of the cell's parent which belongs to the cell
+      (children tasks). If the wrapped action set's touchCellFirstTime()
+      has a body and its guard holds, the wrapper spawns the body as a task
+      with the first number. This task depends on the first task of the
+      parent cell, and on the task spawned by the previous wrapped action set
+      of the same producer. If the guard does not hold, the first label is
+      set to tarch::multicore::TaskEnumerator::NoNumber.
+    - touchCellLastTime() spawns the body as a task with the second number
+      if the wrapped action set's touchCellLastTime() has a body. The task
+      depends on the cell's first task, on the last tasks of all (up to 3^d)
+      children and on the last task of the previous wrapped action set. If
+      the guard does not hold, the wrapper spawns an empty task with the
+      number, as the parent might wait for this number.
+    - createCell() furthermore initialises both task labels with NoNumber.
 
-    The task enumerator is a static attribute of the task labels, i.e. it is
+    Both task numbers are reserved in touchCellFirstTime(), as the children
+    are visited before the parent's touchCellLastTime(), and they have to
+    tell their parent which task the parent has to wait for. The task
+    enumerator is a static attribute of the task labels, i.e. it is
     shared by all producers and consumers which use these labels.
 
     The spawned task captures its environment by value ([=]). Cell data
@@ -29,7 +43,7 @@ class SpawnCellTaskActionSet(ActionSet):
     copied deeply, i.e. writes are lost.
 
     Enumerators over vertices and faces hold pointers into Peano's stacks,
-    which are invalid once touchCellFirstTime() has terminated. The task
+    which are invalid once the event has terminated. The task
     therefore captures each enumerator which its body might use as
     peano4::datamanagement::FaceHeapDataEnumerator or
     peano4::datamanagement::VertexHeapDataEnumerator under the same name.
@@ -39,13 +53,8 @@ class SpawnCellTaskActionSet(ActionSet):
     @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer warns about
     data which is not managed via smart pointers.
 
-    All other events, including unprepareTraversal(), endTraversal() and the
-    touch...LastTime() events, remain within the producer. They are hence
+    All other events remain within the producer. They are hence
     invoked before the spawned tasks have necessarily terminated.
-    @ref peano4.api.taskgraph.compiler.CellTaskProducerConsumer therefore
-    only splits tasks whose action sets do not realise these events, unless
-    the task explicitly allows it
-    (@ref peano4.api.taskgraph.Task.Task.may_spawn_background_tasks).
 
     """
 
@@ -53,8 +62,11 @@ class SpawnCellTaskActionSet(ActionSet):
         self,
         action_set: ActionSet,
         task_labels_name: str,
-        task_number_attribute_name: str,
-        previous_task_number_attribute_name: str,
+        first_task_attribute_name: str,
+        last_task_attribute_name: str,
+        children_tasks_attribute_name: str,
+        previous_first_task_attribute_name: str,
+        previous_last_task_attribute_name: str,
         face_enumerators: list = [],
         vertex_enumerators: list = [],
     ):
@@ -65,18 +77,29 @@ class SpawnCellTaskActionSet(ActionSet):
 
         @param task_labels_name: str
           Name of the DaStGen2 cell data type holding the task labels. The
-          generated observer passes it into the event as fineGridCell<name>.
+          generated observer passes it into the event as fineGridCell<name>
+          and coarseGridCell<name>.
 
-        @param task_number_attribute_name: str
-          Name of the attribute within the task labels which holds the task
-          number.
+        @param first_task_attribute_name: str
+          Name of the attribute within the task labels which holds the number
+          of the task spawned by touchCellFirstTime().
 
-        @param previous_task_number_attribute_name: str or None
-          Name of the attribute holding the task number of the task spawned
-          by the previous action set of the same producer. The spawned task
-          depends on this task, so the action sets' bodies are executed in
-          their original order. If None, the task has no incoming
-          dependencies.
+        @param last_task_attribute_name: str
+          Name of the attribute which holds the number of the task spawned by
+          touchCellLastTime().
+
+        @param children_tasks_attribute_name: str
+          Name of the integer array attribute of size 3^d. Each child holds
+          its last task number in the entry which belongs to its position
+          within its parent.
+
+        @param previous_first_task_attribute_name: str or None
+          Name of the attribute holding the first task number of the previous
+          action set of the same producer. The first task depends on this
+          task. If None, there is no such dependency.
+
+        @param previous_last_task_attribute_name: str or None
+          Counterpart of previous_first_task_attribute_name for the last tasks.
 
         @param face_enumerators: [str]
           Names of the face enumerators, e.g. fineGridFacesQ, which the task
@@ -87,13 +110,22 @@ class SpawnCellTaskActionSet(ActionSet):
           task captures as peano4::datamanagement::VertexHeapDataEnumerator.
 
         """
-        super().__init__(descend_invocation_order=action_set.descend_invocation_order, parallel=action_set.parallel)
+        super().__init__(
+            descend_invocation_order=action_set.descend_invocation_order,
+            parallel=action_set.parallel,
+        )
         self.action_set = action_set
         self._task_labels_name = task_labels_name
-        self._task_number_attribute_name = task_number_attribute_name
-        self._previous_task_number_attribute_name = previous_task_number_attribute_name
+        self._first_task_attribute_name = first_task_attribute_name
+        self._last_task_attribute_name = last_task_attribute_name
+        self._children_tasks_attribute_name = children_tasks_attribute_name
+        self._previous_first_task_attribute_name = previous_first_task_attribute_name
+        self._previous_last_task_attribute_name = previous_last_task_attribute_name
         self._face_enumerators = list(face_enumerators)
         self._vertex_enumerators = list(vertex_enumerators)
+
+    def has_body_of(self, operation_name) -> bool:
+        return self.action_set.get_body_of_operation(operation_name).strip() != ""
 
     def _lambda_captures(self) -> str:
         """!
@@ -105,10 +137,12 @@ class SpawnCellTaskActionSet(ActionSet):
         """
         captures = ["="]
         captures += [
-            f"{name} = peano4::datamanagement::FaceHeapDataEnumerator({name})" for name in self._face_enumerators
+            f"{name} = peano4::datamanagement::FaceHeapDataEnumerator({name})"
+            for name in self._face_enumerators
         ]
         captures += [
-            f"{name} = peano4::datamanagement::VertexHeapDataEnumerator({name})" for name in self._vertex_enumerators
+            f"{name} = peano4::datamanagement::VertexHeapDataEnumerator({name})"
+            for name in self._vertex_enumerators
         ]
         return ", ".join(captures)
 
@@ -125,7 +159,9 @@ class SpawnCellTaskActionSet(ActionSet):
         return self.action_set.get_static_initialisations(full_qualified_classname)
 
     def get_body_of_createGridControlEventsForNextTraversal(self):
-        return self.action_set.get_implementation_of_createGridControlEventsForNextTraversal()
+        return (
+            self.action_set.get_implementation_of_createGridControlEventsForNextTraversal()
+        )
 
     def get_body_of_prepareTraversal(self):
         return self.action_set.get_implementation_of_prepareTraversal()
@@ -137,29 +173,8 @@ class SpawnCellTaskActionSet(ActionSet):
         # Not used, as get_implementation_of_operation() is overwritten
         return ""
 
-    def get_implementation_of_operation(self, operation_name):
-        """!
-
-        Delegate to the wrapped action set besides the events listed in the
-        class description
-
-        """
-        task_label = f"fineGridCell{self._task_labels_name}"
-        if operation_name == ActionSet.OPERATION_CREATE_CELL:
-            return (
-                self.action_set.get_implementation_of_operation(operation_name)
-                + f"\n  {task_label}.set{self._accessor(self._task_number_attribute_name)}( tarch::multicore::TaskEnumerator::NoNumber );\n"
-            )
-        elif operation_name == ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
-            if self._previous_task_number_attribute_name is None:
-                in_dependencies = "tarch::multicore::NoInDependencies"
-            else:
-                previous_task_number = f"{task_label}.get{self._accessor(self._previous_task_number_attribute_name)}()"
-                in_dependencies = f"{previous_task_number}>=0 ? std::set<tarch::multicore::TaskNumber>{{ {previous_task_number} }} : tarch::multicore::NoInDependencies"
-            return f"""
-  if ({self.action_set.get_guard_of_operation(operation_name)}) {{
-    const int taskNumber = {task_label}.getTaskEnumerator().getNumber();
-    {task_label}.set{self._accessor(self._task_number_attribute_name)}( taskNumber );
+    def _spawn(self, operation_name: str, number: str, in_dependencies: str) -> str:
+        return f"""
     tarch::multicore::spawnTask(
       new tarch::multicore::TaskWithCopyOfFunctor(
         tarch::multicore::Task::DontFuse,
@@ -169,13 +184,93 @@ class SpawnCellTaskActionSet(ActionSet):
         }}
       ),
       {in_dependencies},
-      taskNumber
+      {number}
     );
-  }}
-  else {{
-    {task_label}.set{self._accessor(self._task_number_attribute_name)}( tarch::multicore::TaskEnumerator::NoNumber );
+"""
+
+    def _touch_cell_first_time(self) -> str:
+        fine = f"fineGridCell{self._task_labels_name}"
+        coarse = f"coarseGridCell{self._task_labels_name}"
+        first = self._accessor(self._first_task_attribute_name)
+        last = self._accessor(self._last_task_attribute_name)
+        children = self._accessor(self._children_tasks_attribute_name)
+        no_number = "tarch::multicore::TaskEnumerator::NoNumber"
+        result = f"""
+  peano4::datamanagement::clearChildrenTasks( [&](int i, int value) {{ {fine}.set{children}( i, value ); }} );
+"""
+        if self.has_body_of(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME):
+            result += f"""
+  {fine}.set{last}( {fine}.getTaskEnumerator().getNumber() );
+  if ( const int childIndex = peano4::datamanagement::getIndexWithinParent( marker.getRelativePositionWithinFatherCell() ); childIndex>=0 ) {{
+    {coarse}.set{children}( childIndex, {fine}.get{last}() );
   }}
 """
+        else:
+            result += f"  {fine}.set{last}( {no_number} );\n"
+        if self.has_body_of(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME):
+            previous = (
+                no_number
+                if self._previous_first_task_attribute_name is None
+                else f"{fine}.get{self._accessor(self._previous_first_task_attribute_name)}()"
+            )
+            result += f"""
+  if ({self.action_set.get_guard_of_operation(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME)}) {{
+    const int taskNumber = {fine}.getTaskEnumerator().getNumber();
+    {fine}.set{first}( taskNumber );
+    const auto inDependencies = peano4::datamanagement::getInDependenciesOfFirstTask( {previous}, {coarse}.get{first}() );
+{self._spawn(ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME, "taskNumber", "inDependencies")}
+  }}
+  else {{
+    {fine}.set{first}( {no_number} );
+  }}
+"""
+        else:
+            result += f"  {fine}.set{first}( {no_number} );\n"
+        return result
+
+    def _touch_cell_last_time(self) -> str:
+        fine = f"fineGridCell{self._task_labels_name}"
+        first = self._accessor(self._first_task_attribute_name)
+        last = self._accessor(self._last_task_attribute_name)
+        children = self._accessor(self._children_tasks_attribute_name)
+        previous = (
+            "tarch::multicore::TaskEnumerator::NoNumber"
+            if self._previous_last_task_attribute_name is None
+            else f"{fine}.get{self._accessor(self._previous_last_task_attribute_name)}()"
+        )
+        return f"""
+  const auto inDependencies = peano4::datamanagement::getInDependenciesOfLastTask(
+    {fine}.get{first}(), {previous}, [&](int i) {{ return {fine}.get{children}( i ); }}
+  );
+  if ({self.action_set.get_guard_of_operation(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME)}) {{
+{self._spawn(ActionSet.OPERATION_TOUCH_CELL_LAST_TIME, f"{fine}.get{last}()", "inDependencies")}
+  }}
+  else {{
+    peano4::datamanagement::spawnEmptyTask( inDependencies, {fine}.get{last}() );
+  }}
+"""
+
+    def get_implementation_of_operation(self, operation_name):
+        """!
+
+        Delegate to the wrapped action set besides the events listed in the
+        class description
+
+        """
+        fine = f"fineGridCell{self._task_labels_name}"
+        if operation_name == ActionSet.OPERATION_CREATE_CELL:
+            return (
+                self.action_set.get_implementation_of_operation(operation_name)
+                + f"\n  {fine}.set{self._accessor(self._first_task_attribute_name)}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+                + f"  {fine}.set{self._accessor(self._last_task_attribute_name)}( tarch::multicore::TaskEnumerator::NoNumber );\n"
+            )
+        elif operation_name == ActionSet.OPERATION_TOUCH_CELL_FIRST_TIME:
+            return self._touch_cell_first_time()
+        elif (
+            operation_name == ActionSet.OPERATION_TOUCH_CELL_LAST_TIME
+            and self.has_body_of(operation_name)
+        ):
+            return self._touch_cell_last_time()
         else:
             return self.action_set.get_implementation_of_operation(operation_name)
 
@@ -193,6 +288,7 @@ class SpawnCellTaskActionSet(ActionSet):
             self.action_set.get_includes()
             + """
 #include <set>
+#include "peano4/datamanagement/CellTaskDependencies.h"
 #include "tarch/multicore/multicore.h"
 #include "tarch/multicore/Task.h"
 #include "tarch/multicore/TaskEnumerator.h"
